@@ -13,14 +13,11 @@ use std::io::{Write, Read, Error, SeekFrom, Seek};
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use ndarray::{Array, Axis};
-
-
-
+use std::collections::BTreeMap;
 
 struct Header {
 	file: File,
-	data: ndarray::ArrayBase<ndarray::OwnedRepr<u64>, ndarray::Dim<[usize; 2]>>,
+	data: BTreeMap<i64, u64>,
 	
 	last_timestamp: i64,
 	last_timestamp_numb: i64,
@@ -37,8 +34,11 @@ impl Header {
 		let mut numbers = vec![0u64; bytes.len()/8];
 		LittleEndian::read_u64_into(&bytes, numbers.as_mut_slice());
     
-    let a = Array::from_shape_vec((numbers.len()/2,2), numbers).unwrap();
-    let last_timestamp = a[[a.len()/2-1,0]] as i64;
+    let mut data = BTreeMap::new();
+    for i in (0..numbers.len() ).step_by(2) {
+			data.insert(numbers[i] as i64, numbers[i+1]);
+		}
+    let last_timestamp = numbers[numbers.len()-2] as i64;
 
 		//let mut buf = [0; 8]; //rewrite to use bufferd data
 		//let last_timestamp = if !file.seek(SeekFrom::End(-16)).is_err(){;
@@ -49,7 +49,7 @@ impl Header {
 		
 		Ok(Header {
 			file: file,
-			data: a,
+			data: data,
 			last_timestamp: last_timestamp as i64,
 			last_timestamp_numb: last_timestamp / (u16::max_value() as i64),
 		})
@@ -68,8 +68,8 @@ pub struct Timeseries {
 	first_time_in_data: DateTime<Utc>,
 	last_time_in_data: DateTime<Utc>,
 	
-	start_byte: usize,
-	stop_byte: usize,
+	start_byte: u64,
+	stop_byte: u64,
 }
 
 // ---------------------------------------------------------------------
@@ -98,7 +98,7 @@ impl Timeseries {
 			//these are set during: set_read_start, set_read_end then read is
 			//bound by these points
 			start_byte: 0,
-			stop_byte: i64::max_value() as usize,
+			stop_byte: i64::max_value() as u64,
 		})
 	}
 	
@@ -149,7 +149,7 @@ impl Timeseries {
 			
 			self.header.file.write(&self.time_buffer)?;
 			self.header.file.write(&line_start_buf)?;
-			self.header.data.
+			self.header.data.insert(timestamp, line_start);
 			
 			self.header.last_timestamp_numb = timestamp_numb;
 		}
@@ -161,15 +161,49 @@ impl Timeseries {
     self.header.file.sync_data().unwrap();
 	}
 	
-	fn set_read_start(&mut self, _start_time: DateTime<Utc>){
-		//self.header.data
-		self.start_byte = 0;
+	fn set_read_start(&mut self, start_time: DateTime<Utc>) -> Result<(),Error> {
+		
+		//maximum in map less/equeal then/to needed timestamp
+		let start_byte = if let Some(start_byte) = self.header.data.range(..start_time.timestamp()+1).next_back() {
+			*start_byte.1
+		} else { //not found -> search till the end of file
+			unimplemented!(); 0
+		};
+		//minimum in map greater then needed timestamp
+		let stop_byte = if let Some(stop_byte) = self.header.data.range(start_time.timestamp()+1..).next() {
+			*stop_byte.1
+		} else { //no minimum greater then needed timestamp -> search till the end of file
+			 self.data.metadata().unwrap().len()
+		};
+		
+		//compare partial (16 bit) timestamps in between these bounds
+		let mut buf = vec![0u8; (stop_byte-start_byte) as usize];
+		self.data.seek(SeekFrom::Start(start_byte)).unwrap();
+		self.data.read_exact(&mut buf);
+		
+		let mut partial_timestamp = [0u8,0u8];
+		LittleEndian::write_u16(&mut partial_timestamp, start_time.timestamp() as u16);
+    
+    for i in (0..buf.len() ).step_by(16) {
+			if Self::line_partial_timestamp_larger_then_given(&partial_timestamp, &buf[i..i+2]) {
+				if i >= 16 { self.start_byte = LittleEndian::read_u64(&buf[i-8..i]); return Ok(()); }
+				else if i >= 8 { self.start_byte = LittleEndian::read_u64(&buf[i..i+8]); return Ok(()); }
+				else { unimplemented!(); return Ok(()); }
+			}
+		}
+		self.start_byte = stop_byte; Ok(())
 	}
+	
 	fn set_read_end(&mut self, _end_time: DateTime<Utc>){
 		self.stop_byte = 0;
 		unimplemented!();
 	}
-
+	
+	fn line_partial_timestamp_larger_then_given(given: &[u8;2], line: &[u8]) -> bool {
+		if LittleEndian::read_u16(line) > LittleEndian::read_u16(given) {true}
+		else {false}
+	}
+	
 	fn i64_timestamp_to_u8_array(&mut self, x: i64){
 		//no support for sign bit since data will always be after 0 (1970)
 		let x = if x<0 {0} else {x as u64};
@@ -177,6 +211,20 @@ impl Timeseries {
 		//(least significant (lowest value) byte at lowest adress)	
 		LittleEndian::write_u64(&mut self.time_buffer, x);
 	}
+	//fn u8_array_to_i64_timestamp(&mut self, x: &mut [u8], header_time: i64){
+		////we store the number in little endian Signed magnitude representation
+		////(least significant (lowest value) byte at lowest adress)	
+		//let time_buffer = [0; 8];
+		
+		////write full 64 bit time into time buffer
+		//LittleEndian::write_u64(header_time, header_time as u64);
+		
+		////update last 16 bit
+		//time_buffer[0..2] = x[0..];
+		
+		////read back into u64
+		//LittleEndian::read_u64(&time_buffer) as i64
+	//}
 }
 
 impl Read for Timeseries {
@@ -224,12 +272,9 @@ mod tests {
 
 	#[test]
 	fn read() {
-		let _buffer = [0; 10];
-		let now = Utc::now();
-		
 		let mut data = Timeseries::open("test",10).unwrap();
 		
-		data.set_read_start(now);
+		data.set_read_start( Utc::now() );
 		
 		let mut buffer = Vec::new();
     // read the whole file
