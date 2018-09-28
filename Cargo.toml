@@ -8,3 +8,7 @@ chrono = "0.4.6"
 log = "0.4.5"
 byteorder = "1.2.6"
 ndarray = "0.12.0"
+num-traits = "0.2.6"
+
+#used for tests only
+fxhash = "0.2.1"
