@@ -39,10 +39,10 @@ impl Header {
         let mut data = BTreeMap::new();
 
         let last_timestamp = if bytes.len() == 0 {
-                let timestamp = Utc::now().timestamp()  as i64;
-                data.insert(timestamp, 0);
-                file.write_u64::<LittleEndian>(timestamp as u64)?;
-                file.write_u64::<LittleEndian>(0)?;
+                let timestamp = 0 as i64;
+                //data.insert(timestamp, 0);
+                //file.write_u64::<LittleEndian>(timestamp as u64)?;
+                //file.write_u64::<LittleEndian>(0)?;
                 
                 timestamp
             } else {
@@ -164,13 +164,13 @@ impl Timeseries {
         //write 16 bit timestamp and then the line to file
         let timestamp = self.time_to_line_timestamp(time);
         self.data.write(&timestamp)?;
-        self.data.write(line)?;
+        self.data.write(&line[..self.line_size])?;
 
         //write 64 bit timestamp to header
         //(needed no more then once every 18 hours)
         self.update_header()?;
-
         self.force_write_to_disk(); //FIXME should this be exposed to the user?
+
         self.last_time_in_data = time;
         Ok(())
     }
@@ -179,6 +179,7 @@ impl Timeseries {
         let new_timestamp_numb = self.timestamp / (u16::max_value() as i64);
         if new_timestamp_numb > self.header.last_timestamp_numb {
             info!("updating file header");
+            println!("{}",self.data.metadata().unwrap().len());
             let line_start = self.data.metadata().unwrap().len() - self.full_line_size as u64;
             self.header.update(self.timestamp, line_start, new_timestamp_numb)?;
         }
@@ -190,8 +191,10 @@ impl Timeseries {
         self.header.file.sync_data().unwrap();
     }
 
-	fn get_search_bounds(&mut self, start_time: DateTime<Utc>) -> (u64,u64,i64,i64,u64) {
-		//maximum in map less/equeal then/to needed timestamp
+	fn get_search_bounds_and_timestampInfo(&mut self, start_time: DateTime<Utc>)
+     -> (u64,u64,i64,i64,u64) {
+        println!("header data {:?}",self.header.data);
+        //maximum in map less/equeal then/to needed timestamp
         let (start_search, current_timestamp) = if let Some(header_line) = self
             .header
             .data
@@ -219,10 +222,50 @@ impl Timeseries {
         (start_search, stop_search, current_timestamp, next_timestamp, next_timestamp_pos)
 	}
 
+	fn get_search_bounds(&mut self, start_time: DateTime<Utc>)
+     -> (u64,u64,i64) {
+		//maximum in map less/equeal then/to needed timestamp
+        let (start_search, current_timestamp) = if let Some(header_line) = self
+            .header
+            .data
+            .range(..(start_time.timestamp() + 1))
+            .next_back()
+        {
+            (*header_line.1, *header_line.0)
+        } else {
+            //not found -> search till the end of file
+            unimplemented!();
+            #[allow(unreachable_code)] (0, 0)
+        };
+        //minimum in map greater then needed timestamp
+        let stop_search =
+            if let Some(header_line) = self.header.data.range(start_time.timestamp() + 1..).next() {
+                *header_line.1
+            } else {
+                //no minimum greater then needed timestamp -> search till the end of file
+                let end_of_file = self.data.metadata().unwrap().len();
+                end_of_file
+            };
+        
+        (start_search, stop_search, current_timestamp)
+	}
+
+    pub fn set_bounds(&mut self, start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> Result<(), Error> {
+        self.set_read_stop(end_time)?;
+        //setting the read start also positions the file seek 
+        //it is thus called last
+        self.set_read_start(start_time)?;
+        
+        //set filepointer so read operations start at the right place
+        self.data.seek(SeekFrom::Start(self.start_byte) )?;
+        Ok(())
+    }
+
     fn set_read_start(&mut self, start_time: DateTime<Utc>) -> Result<(), Error> {
         //maximum in map less/equeal then/to needed timestamp
         let (start_search, stop_search, current_timestamp, next_timestamp, next_timestamp_pos)
-         = self.get_search_bounds(start_time);
+         = self.get_search_bounds_and_timestampInfo(start_time);
+        println!("start_search: {}",start_search);
 
         //set start full timestamp
         self.header.current_timestamp = current_timestamp;
@@ -232,46 +275,64 @@ impl Timeseries {
         self.header.next_timestamp_pos = next_timestamp_pos;
         trace!("set next full ts to: {}",next_timestamp);
 
+        //compare partial (16 bit) timestamps in between the bounds
+        let mut buf = vec![0u8; (stop_search - start_search) as usize];
+        self.data.seek(SeekFrom::Start(start_search))?;
+        self.data.read_exact(&mut buf)?;
+
+        self.start_byte = start_search;	//if we do not find anything pass the end of the search area
+        for line_start in (0..buf.len()).step_by(self.full_line_size) {
+            if LittleEndian::read_u16(&buf[line_start..line_start + 2]) >= start_time.timestamp() as u16 {
+                println!("setting start_byte from liniar search, pos: {}", line_start);
+                self.start_byte = start_search+ line_start as u64; break;
+            }
+        }
+
+        let line = &buf[self.start_byte as usize..(self.start_byte + 2) as usize];
+		let timestamp_low = LittleEndian::read_u16(line) as u64;
+		let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
+		let timestamp = timestamp_high | timestamp_low;
+        println!("starting read at ts: {}", timestamp);
+        
+        Ok(())
+    }
+
+    fn set_read_stop(&mut self, end_time: DateTime<Utc>) -> Result<(), Error> {
+        let (start_search, stop_search, current_timestamp) = self.get_search_bounds(end_time);
+        println!("stop_search {}", stop_search);
+        println!("start_search {}", start_search);
         //compare partial (16 bit) timestamps in between these bounds
         let mut buf = vec![0u8; (stop_search - start_search) as usize];
         self.data.seek(SeekFrom::Start(start_search))?;
         self.data.read_exact(&mut buf)?;
 
-        let mut partial_timestamp = [0u8, 0u8];
-        LittleEndian::write_u16(&mut partial_timestamp, start_time.timestamp() as u16);
-			
-        for line_start in (0..buf.len()).step_by(self.full_line_size) {
-            if Self::line_timestamp_larger_then_given(&partial_timestamp, &buf[line_start..line_start + 2]) {
-                //return position just before the requested value //TODO what if large jump in time between 2 datapoints
-                if line_start >= self.full_line_size {//use previous value
-					trace!("setting start_byte from liniar search, pos: {}", line_start);
-                    self.start_byte = start_search+ (line_start - self.full_line_size) as u64; break;
-                } else { //at beginning of file use this value
-					trace!("setting start_byte from liniar search, start of search area");
-                    self.start_byte = start_search+ line_start as u64; break;
-                }
+        //
+        if (current_timestamp as u64 >> 16) << 16
+         != (end_time.timestamp() as u64 >> 16) << 16 {
+            warn!("no data younger then requested ts, returning most recent data");
+            self.stop_byte = stop_search;
+            return Ok(())
+        }
+
+        for line_start in (0..buf.len()-self.full_line_size+1).rev().step_by(self.full_line_size) {
+            println!("{}",line_start);
+            if LittleEndian::read_u16(&buf[line_start..line_start + 2]) <= end_time.timestamp() as u16 {
+                trace!("setting start_byte from liniar search, start of search area");
+                self.stop_byte = start_search+ line_start as u64; break;
             } else {
-                trace!("could not find data older then requested ts, returning oldest data");
-                self.start_byte = start_search;	
+                trace!("could not find data younger then requested ts, returning most recent data");
+                self.stop_byte = stop_search;	
             }
         }
-        //set filepointer so read operations start at the right place
-        self.data.seek(SeekFrom::Start(self.start_byte) )?;
+        
+        let line = &buf[self.stop_byte as usize..(self.stop_byte + 2) as usize];
+		let timestamp_low = LittleEndian::read_u16(line) as u64;
+		let timestamp_high = (current_timestamp as u64 >> 16) << 16;
+		let timestamp = timestamp_high | timestamp_low;
+        
+        println!("stopping read after ts: {}", timestamp);
         
         Ok(())
-    }
-
-    fn set_read_stop(&mut self, _end_time: DateTime<Utc>) {
-        self.stop_byte = self.data.metadata().unwrap().len();
-        error!("not implemented yet, reading to end of file");
-    }
-
-    fn line_timestamp_larger_then_given(given: &[u8; 2], line: &[u8]) -> bool {
-        if LittleEndian::read_u16(line) > LittleEndian::read_u16(given) {
-            true
-        } else {
-            false
-        }
     }
 
     fn time_to_line_timestamp(&mut self, time: DateTime<Utc>) -> [u8;2]{
@@ -322,7 +383,7 @@ impl Read for Timeseries {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
 		let mut nread = self.data.read(buf)?;
 
-		nread = if self.start_byte+nread as u64 > self.stop_byte {
+		nread = if self.start_byte+nread as u64 >= self.stop_byte {
 			println!("diff: {}, {}, {}",self.start_byte as i64, self.stop_byte as i64, self.stop_byte as i64- self.start_byte as i64);
 			(self.stop_byte - self.start_byte) as usize
 		} else {
@@ -343,7 +404,7 @@ impl Timeseries {
 		let mut decoded: Vec<u8> = Vec::with_capacity(lines_to_read);
 		
 		let n_read = self.data.read(&mut buf).unwrap() as usize;
-        //println!("read: {} bytes",n_read);
+        println!("read: {} bytes",n_read);
 		let mut file_pos = self.start_byte;
 		for (_i,line) in buf[..n_read].chunks(self.full_line_size).enumerate() {
 			file_pos += self.full_line_size as u64;
@@ -383,190 +444,276 @@ extern crate fxhash;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::chrono::{DateTime, NaiveDateTime, Utc};
+    use super::byteorder::{NativeEndian};
     
-    use self::chrono::{DateTime, NaiveDateTime, Utc};
-	use std::fs;
-	use std::path::Path;
-	use self::byteorder::{NativeEndian, WriteBytesExt};
-	use self::fxhash::hash64;
-
-	fn insert_uniform_arrays(data: &mut Timeseries, n_to_insert: u32, _step: i64, time: DateTime<Utc>) {
-		let mut timestamp = time.timestamp();
-		for i in 0..n_to_insert {
-			let buffer = [i as u8; 10];
-		
-			let dt = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-			data.append(dt, &buffer).unwrap();
-			timestamp += 5;
-		}
-	}
-	
-	fn insert_timestamp_hashes(data: &mut Timeseries, n_to_insert: u32, step: i64, time: DateTime<Utc>) {
-		let mut timestamp = time.timestamp();
-			
-		for _ in 0..n_to_insert {
-			let hash = hash64::<i64>(&timestamp);
-			
-			let mut buffer = Vec::with_capacity(8);
-			&buffer.write_u64::<NativeEndian>(hash).unwrap();
-			
-			let dt = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-			data.append(dt, buffer.as_slice()).unwrap();
-			timestamp += step;
-		}
-	}
-
-	fn insert_timestamp_arrays(data: &mut Timeseries, n_to_insert: u32, step: i64, time: DateTime<Utc>) {
-		let mut timestamp = time.timestamp();
-			
-		for _ in 0..n_to_insert {
-			let mut buffer = Vec::with_capacity(8);
-			
-			let dt = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-            &buffer.write_i64::<NativeEndian>(timestamp).unwrap();
-            
-            data.append(dt, buffer.as_slice()).unwrap();
-			timestamp += step;
-		}
-	}
-
-    #[test]
-    fn append() {
-		if Path::new("test_append.h").exists() {fs::remove_file("test_append.h").unwrap();}
-		if Path::new("test_append.data").exists() {fs::remove_file("test_append.data").unwrap();}
-		const LINE_SIZE: usize = 10; 
-		const STEP: i64 = 5;
-        const N_TO_INSERT: u32 = 100;
-				
-		let time = Utc::now();
-				
-        let mut data = Timeseries::open("test_append", LINE_SIZE).unwrap();
-		insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, time);
+    fn insert_uniform_arrays(data: &mut Timeseries, n_to_insert: u32, _step: i64, line_size: usize, time: DateTime<Utc>) {
+        let mut timestamp = time.timestamp();
+        for i in 0..n_to_insert {
+            let buffer = vec!(i as u8; line_size);
         
-		assert_eq!(data.data.metadata().unwrap().len(), ((LINE_SIZE+2) as u32*N_TO_INSERT) as u64);
-        assert_eq!(data.header.file.metadata().unwrap().len(), 16);
+            let dt = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+            data.append(dt, buffer.as_slice() ).unwrap();
+            timestamp += 5;
+        }
     }
-
-    #[test]
-    fn test_set_read() {
-		if Path::new("test_set_read.h").exists() {fs::remove_file("test_set_read.h").unwrap();}
-		if Path::new("test_set_read.data").exists() {fs::remove_file("test_set_read.data").unwrap();}
-		const LINE_SIZE: usize = 10; 
-		const STEP: i64 = 5;
-        const N_TO_INSERT: u32 = 100;
-            	
-		let time = Utc::now(); let timestamp = time.timestamp();
-		//println!("now: {}, u8_ts: {}", time, timestamp as u8 );
-				
-        let mut data = Timeseries::open("test_set_read", LINE_SIZE).unwrap();
-		insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, time);
-		//println!("data length: {}",data.data.metadata().unwrap().len());
-
-		let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp+2*STEP, 0), Utc);
-       
-		data.set_read_start(t1).unwrap(); //println!("start_byte: {}",data.start_byte);
-        assert_eq!(data.start_byte, ((data.line_size+2)*2) as u64);
-    }
-
-    //#[test]
-    //fn append_then_read() {
-		//if Path::new("test.h").exists() {fs::remove_file("test.h").unwrap();}
-		//if Path::new("test.data").exists() {fs::remove_file("test.data").unwrap();}
-				
-		//let time = Utc::now();
-		//println!("now: {}, u8_ts: {}", time, time.timestamp() as u8 );
-				
-        //let mut data = Timeseries::open("test", 10).unwrap();
-		//insert_uniform_arrays(&mut data, 10, 5, time);
-		//println!("data length: {}",data.data.metadata().unwrap().len());
-
-		//let timestamp = time.timestamp();
-		//let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(data.last_time_in_data.timestamp()-5, 0), Utc);
-		//let _t2 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp+30, 0), Utc);
+    
+    mod appending {
+        use super::*;
+        use std::fs;
+        use std::path::Path;
+        use super::fxhash::hash64;
         
-        //data.set_read_start(t1).unwrap(); println!("start_byte: {}",data.start_byte);
-        //data.set_read_stop( Utc::now() ); println!("stop_byte: {}",data.stop_byte);
-
-        //let mut buffer = Vec::new();
-        //data.read_to_end(&mut buffer).unwrap();
-        
-        //println!("buffer: {:?}", buffer);
-        //assert_eq!(2 + 2, 4);
-    //}
-
-    #[test]
-    fn append_hashes_then_verify() {
-		const NUMBER_TO_INSERT: i64 = 8_00; 
-		const PERIOD: i64 = 5;
-		
-		if Path::new("test_append_hashes_then_verify.h").exists()    {fs::remove_file("test_append_hashes_then_verify.h").unwrap();   }
-		if Path::new("test_append_hashes_then_verify.data").exists() {fs::remove_file("test_append_hashes_then_verify.data").unwrap();}
-		
-		let time = Utc::now();
-				
-        let mut data = Timeseries::open("test_append_hashes_then_verify", 8).unwrap();
-		insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
-        //println!("inserted test data");
-
-		let timestamp = time.timestamp();
-		let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-		let t2 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT*PERIOD, 0), Utc);
-        
-        data.set_read_start(t1).unwrap();
-        data.set_read_stop( t2);
-		assert_eq!((data.stop_byte-data.start_byte)/((data.line_size+2) as u64), (NUMBER_TO_INSERT) as u64);
-
-		let n = 8_000;
-		let loops_to_check_everything = NUMBER_TO_INSERT/n + if NUMBER_TO_INSERT % n > 0 {1} else {0};
-		for _ in 0..loops_to_check_everything {
-            //println!("loop, {} at the time",n);
-			let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
-            //println!("timestamps: {:?}", timestamps);
-            for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
-				let hash1 = hash64::<i64>(&(*timestamp as i64));
-				let hash2 = NativeEndian::read_u64(decoded);
-				assert_eq!(hash1, hash2);
-			}
-		}
-    }
-
-    #[test]
-    fn append_timestamps_then_verify() {
-		const NUMBER_TO_INSERT: i64 = 8_00; 
-		const PERIOD: i64 = 5;
-		
-		if Path::new("test_append_timestamps_then_verify.h").exists()    {fs::remove_file("test_append_timestamps_then_verify.h").unwrap();   }
-		if Path::new("test_append_timestamps_then_verify.data").exists() {fs::remove_file("test_append_timestamps_then_verify.data").unwrap();}
-		
-		let time = Utc::now();
-				
-        let mut data = Timeseries::open("test_append_timestamps_then_verify", 8).unwrap();
-		insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
-        //println!("inserted test data");
-
-		let timestamp = time.timestamp();
-		let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-		let t2 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT*PERIOD, 0), Utc);
-        
-        data.set_read_start(t1).unwrap();
-        data.set_read_stop( t2);
-		assert_eq!((data.stop_byte-data.start_byte)/((data.line_size+2) as u64), (NUMBER_TO_INSERT) as u64);
-
-		let n = 8_000;
-		let loops_to_check_everything = NUMBER_TO_INSERT/n + if NUMBER_TO_INSERT % n > 0 {1} else {0};
-		for _ in 0..loops_to_check_everything {
-            //println!("loop, {} at the time",n);
-			let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
-            //println!("timestamps: {:?}", timestamps);
-            for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
-				let ts_from_decode = *timestamp as i64;
-				let ts_from_data = NativeEndian::read_i64(decoded);
+        fn insert_timestamp_hashes(data: &mut Timeseries, n_to_insert: u32, step: i64, time: DateTime<Utc>) {
+            let mut timestamp = time.timestamp();
                 
-                //println!("ts_from_decode: {}, ts_from_data: {}",ts_from_decode,ts_from_data);
-				assert_eq!(ts_from_decode, ts_from_data);
-			}
-		}
-        assert_eq!(2 + 2, 4);
+            for _ in 0..n_to_insert {
+                let hash = hash64::<i64>(&timestamp);
+                
+                let mut buffer = Vec::with_capacity(8);
+                &buffer.write_u64::<NativeEndian>(hash).unwrap();
+                
+                let dt = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+                data.append(dt, buffer.as_slice()).unwrap();
+                timestamp += step;
+            }
+        }
+
+        fn insert_timestamp_arrays(data: &mut Timeseries, n_to_insert: u32, step: i64, time: DateTime<Utc>) {
+            let mut timestamp = time.timestamp();
+                
+            for _ in 0..n_to_insert {
+                let mut buffer = Vec::with_capacity(8);
+                
+                let dt = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+                &buffer.write_i64::<NativeEndian>(timestamp).unwrap();
+                
+                data.append(dt, buffer.as_slice()).unwrap();
+                timestamp += step;
+            }
+        }
+
+        #[test]
+        fn basic() {
+            if Path::new("test_append.h").exists() {fs::remove_file("test_append.h").unwrap();}
+            if Path::new("test_append.data").exists() {fs::remove_file("test_append.data").unwrap();}
+            const LINE_SIZE: usize = 10; 
+            const STEP: i64 = 5;
+            const N_TO_INSERT: u32 = 100;
+                    
+            let time = Utc::now();
+                    
+            let mut data = Timeseries::open("test_append", LINE_SIZE).unwrap();
+            insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
+            
+            assert_eq!(data.data.metadata().unwrap().len(), ((LINE_SIZE+2) as u32*N_TO_INSERT) as u64);
+            assert_eq!(data.header.file.metadata().unwrap().len(), 16);
+        }
+
+        #[test]
+        fn test_set_read() {
+            if Path::new("test_set_read.h").exists() {fs::remove_file("test_set_read.h").unwrap();}
+            if Path::new("test_set_read.data").exists() {fs::remove_file("test_set_read.data").unwrap();}
+            const LINE_SIZE: usize = 10; 
+            const STEP: i64 = 5;
+            const N_TO_INSERT: u32 = 100;
+                    
+            let time = Utc::now(); let timestamp = time.timestamp();
+            //println!("now: {}, u8_ts: {}", time, timestamp as u8 );
+                    
+            let mut data = Timeseries::open("test_set_read", LINE_SIZE).unwrap();
+            insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
+            //println!("data length: {}",data.data.metadata().unwrap().len());
+
+            let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp+2*STEP, 0), Utc);
+           
+            data.set_read_start(t1).unwrap(); //println!("start_byte: {}",data.start_byte);
+            assert_eq!(data.start_byte, ((data.line_size+2)*2) as u64);
+        }
+
+        #[test]
+        fn hashes_then_verify() {
+            const NUMBER_TO_INSERT: i64 = 8_00; 
+            const PERIOD: i64 = 5;
+            
+            if Path::new("test_append_hashes_then_verify.h").exists()    {fs::remove_file("test_append_hashes_then_verify.h").unwrap();   }
+            if Path::new("test_append_hashes_then_verify.data").exists() {fs::remove_file("test_append_hashes_then_verify.data").unwrap();}
+            
+            let time = Utc::now();
+                    
+            let mut data = Timeseries::open("test_append_hashes_then_verify", 8).unwrap();
+            insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
+            //println!("inserted test data");
+
+            let timestamp = time.timestamp();
+            let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+            let t2 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT*PERIOD, 0), Utc);
+            
+            data.set_read_start(t1).unwrap();
+            data.set_read_stop( t2);
+            assert_eq!((data.stop_byte-data.start_byte)/((data.line_size+2) as u64), (NUMBER_TO_INSERT) as u64);
+
+            let n = 8_000;
+            let loops_to_check_everything = NUMBER_TO_INSERT/n + if NUMBER_TO_INSERT % n > 0 {1} else {0};
+            for _ in 0..loops_to_check_everything {
+                //println!("loop, {} at the time",n);
+                let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
+                //println!("timestamps: {:?}", timestamps);
+                for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
+                    let hash1 = hash64::<i64>(&(*timestamp as i64));
+                    let hash2 = NativeEndian::read_u64(decoded);
+                    assert_eq!(hash1, hash2);
+                }
+            }
+        }
+
+        #[test]
+        fn timestamps_then_verify() {
+            const NUMBER_TO_INSERT: i64 = 8_00; 
+            const PERIOD: i64 = 5;
+            
+            if Path::new("test_append_timestamps_then_verify.h").exists()    {fs::remove_file("test_append_timestamps_then_verify.h").unwrap();   }
+            if Path::new("test_append_timestamps_then_verify.data").exists() {fs::remove_file("test_append_timestamps_then_verify.data").unwrap();}
+            
+            let time = Utc::now();
+                    
+            let mut data = Timeseries::open("test_append_timestamps_then_verify", 8).unwrap();
+            insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
+            //println!("inserted test data");
+
+            let timestamp = time.timestamp();
+            let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+            let t2 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT*PERIOD, 0), Utc);
+            
+            data.set_read_start(t1).unwrap();
+            data.set_read_stop( t2);
+            assert_eq!((data.stop_byte-data.start_byte)/((data.line_size+2) as u64), (NUMBER_TO_INSERT) as u64);
+
+            let n = 8_000;
+            let loops_to_check_everything = NUMBER_TO_INSERT/n + if NUMBER_TO_INSERT % n > 0 {1} else {0};
+            for _ in 0..loops_to_check_everything {
+                //println!("loop, {} at the time",n);
+                let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
+                //println!("timestamps: {:?}", timestamps);
+                for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
+                    let ts_from_decode = *timestamp as i64;
+                    let ts_from_data = NativeEndian::read_i64(decoded);
+                    
+                    //println!("ts_from_decode: {}, ts_from_data: {}",ts_from_decode,ts_from_data);
+                    assert_eq!(ts_from_decode, ts_from_data);
+                }
+            }
+            assert_eq!(2 + 2, 4);
+        }
+        
+        /*#[test]
+        fn multiple_hashes_then_verify() {
+            const NUMBER_TO_INSERT: i64 = 8_00; 
+            const PERIOD: i64 = 5;
+            
+            if Path::new("test_multiple_append_hashes_then_verify.h").exists()    {fs::remove_file("test_multiple_append_hashes_then_verify.h").unwrap();   }
+            if Path::new("test_multiple_append_hashes_then_verify.data").exists() {fs::remove_file("test_multiple_append_hashes_then_verify.data").unwrap();}
+            let time = Utc::now();
+                    
+            let mut data = Timeseries::open("test_multiple_append_hashes_then_verify", 8).unwrap();
+            insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32 /3 , PERIOD, time);
+            let last_time_in_data = data.last_time_in_data;
+            insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32 /3 , PERIOD, last_time_in_data);
+            //println!("inserted test data");
+
+            let timestamp = time.timestamp();
+            let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+            let t2 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp + (2*NUMBER_TO_INSERT/3-20)*PERIOD, 0), Utc);
+            
+            data.set_read_start(t1).unwrap();
+            data.set_read_stop( t2);
+            assert_eq!((data.stop_byte-data.start_byte)/((data.line_size+2) as u64), (2*NUMBER_TO_INSERT/3) as u64);
+
+            let n = 8_000;
+            let loops_to_check_everything = 2*NUMBER_TO_INSERT/3/n + if 2*NUMBER_TO_INSERT/3 % n > 0 {1} else {0};
+            for _ in 0..loops_to_check_everything {
+                //println!("loop, {} at the time",n);
+                let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
+                //println!("timestamps: {:?}", timestamps);
+                for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
+                    let ts_from_decode = *timestamp as i64;
+                    let ts_from_data = NativeEndian::read_i64(decoded);
+                    
+                    //println!("ts_from_decode: {}, ts_from_data: {}",ts_from_decode,ts_from_data);
+                    assert_eq!(ts_from_decode, ts_from_data);
+                }
+            }
+
+            let last_time_in_data = data.last_time_in_data;        
+            insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32 /3, PERIOD, last_time_in_data);
+
+            data.set_read_start(t2).unwrap();
+            let t3 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp + (3*NUMBER_TO_INSERT)*PERIOD+1000, 0), Utc);
+            data.set_read_stop( t3);
+            assert_eq!((data.stop_byte-data.start_byte)/((data.line_size+2) as u64), (NUMBER_TO_INSERT) as u64);
+
+            let n = 8_000;
+            let loops_to_check_everything = NUMBER_TO_INSERT/3/n + if NUMBER_TO_INSERT/3 % n > 0 {1} else {0};
+            for _ in 0..loops_to_check_everything {
+                //println!("loop, {} at the time",n);
+                let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
+                //println!("timestamps: {:?}", timestamps);
+                for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
+                    let ts_from_decode = *timestamp as i64;
+                    let ts_from_data = NativeEndian::read_i64(decoded);
+                    
+                    //println!("ts_from_decode: {}, ts_from_data: {}",ts_from_decode,ts_from_data);
+                    assert_eq!(ts_from_decode, ts_from_data);
+                }
+            }
+        }*/
     }
 
+    mod seek {
+        use super::*;
+        use std::fs;
+        use std::path::Path;
+
+        #[test]
+        fn varing_length() {
+            if Path::new("test_varing_length.h").exists() {fs::remove_file("test_varing_length.h").unwrap();}
+            if Path::new("test_varing_length.data").exists() {fs::remove_file("test_varing_length.data").unwrap();}
+            const LINE_SIZE: usize = 8; 
+            const STEP: i64 = 5;
+            const N_TO_INSERT: u32 = 100;
+            let start_read_inlines = 10;
+            let read_length_inlines = 10;
+                
+            //let time = Utc::now(); 
+            let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1539180000, 0), Utc);
+            let timestamp = time.timestamp();
+            println!("start timestamp {}",timestamp);
+            let mut data = Timeseries::open("test_varing_length", LINE_SIZE).unwrap();
+            
+            insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
+
+            //TODO for loop this over random sizes
+            let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp+start_read_inlines*STEP, 0), Utc);
+            let t2 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp+(start_read_inlines+read_length_inlines)*STEP, 0), Utc);
+            
+            data.set_bounds(t1,t2);
+            println!("t1: {}, t2: {}, start_byte: {}, stop_byte: {}",t1.timestamp(),t2.timestamp(),data.start_byte,data.stop_byte);
+            let (timestamps, decoded) = data.decode_sequential_time_only(read_length_inlines as usize).unwrap();
+            //println!("timestamps: {:?}", timestamps);
+            
+            assert_eq!(data.start_byte, (start_read_inlines*(LINE_SIZE as i64+2)) as u64);
+            assert_eq!((data.stop_byte-data.start_byte)/((LINE_SIZE as u64+2) as u64), read_length_inlines as u64);            
+            
+            let (timestamps, decoded) = data.decode_sequential_time_only(10).unwrap();
+            assert!(timestamps[0] as i64 >= timestamp+10*STEP && timestamps[0] as i64 <= timestamp+20*STEP);
+        }
+        
+        #[test]        
+        fn correct_data() {
+            
+            
+            
+        }
+
+    }
 }
