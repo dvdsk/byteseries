@@ -196,7 +196,7 @@ impl Timeseries {
         self.header.file.sync_data().unwrap();
     }
 
-    fn get_search_bounds_and_timestampInfo(
+    fn startread_search_bound(
         &mut self,
         start_time: DateTime<Utc>,
     ) -> (u64, u64, i64, i64, u64) {
@@ -211,9 +211,10 @@ impl Timeseries {
             (*header_line.1, *header_line.0)
         } else {
             //not found -> search till the end of file
-            unimplemented!();
-            #[allow(unreachable_code)]
-            (0, 0)
+            warn!("no data older then start bound, clipping to start of file");
+            //unimplemented!();
+            //#[allow(unreachable_code)]
+            (0, self.first_time_in_data.timestamp() )
         };
         //minimum in map greater then needed timestamp
         let (stop_search, next_timestamp, next_timestamp_pos) = if let Some(header_line) =
@@ -225,7 +226,8 @@ impl Timeseries {
             let end_of_file = self.data.metadata().unwrap().len();
             //-1 prevents overflow
             //+2 makes sure we never switch to the next timestamp
-            (end_of_file, i64::max_value() - 1, end_of_file + 2)
+            
+            (end_of_file.saturating_sub(self.full_line_size as u64), i64::max_value() - 1, end_of_file + 2)
         };
 
         (
@@ -237,7 +239,7 @@ impl Timeseries {
         )
     }
 
-    fn get_search_bounds(&mut self, start_time: DateTime<Utc>) -> (u64, u64, i64) {
+    fn stopread_search_bounds(&mut self, start_time: DateTime<Utc>) -> (u64, u64, i64) {
         //maximum in map less/equeal then/to needed timestamp
         println!("header: {:?}",self.header.data);
         let (start_search, current_timestamp) = 
@@ -249,10 +251,12 @@ impl Timeseries {
         {
             (*header_line.1, *header_line.0)
         } else {
-            //not found -> search till the end of file
-            unimplemented!();
-            #[allow(unreachable_code)]
-            (0, 0)
+            //no timestamp smaller then given found
+            //this means the entire search request lies
+            //outside the given data
+            warn!("requested data older then oldest availible data");
+            let end_of_file = self.data.metadata().unwrap().len();
+            (end_of_file, 0)
         };
         //minimum in map greater then needed timestamp
         let stop_search = if let Some(header_line) =
@@ -286,7 +290,7 @@ impl Timeseries {
     fn set_read_start(&mut self, start_time: DateTime<Utc>) -> Result<(), Error> {
         //maximum in map less/equeal then/to needed timestamp
         let (start_search, stop_search, current_timestamp, next_timestamp, next_timestamp_pos) =
-            self.get_search_bounds_and_timestampInfo(start_time);
+            self.startread_search_bound(start_time);
         println!("start_search: {}", start_search);
 
         //set start full timestamp
@@ -302,7 +306,8 @@ impl Timeseries {
         self.data.seek(SeekFrom::Start(start_search))?;
         self.data.read_exact(&mut buf)?;
 
-        self.start_byte = start_search; //if we do not find anything pass the end of the search area
+		//if we do not find anything pass the end of the search area, 
+        self.start_byte = stop_search; 
         for line_start in (0..buf.len()).step_by(self.full_line_size) {
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
                 >= start_time.timestamp() as u16
@@ -313,18 +318,18 @@ impl Timeseries {
             }
         }
 
-        let line = &buf[(self.start_byte-start_search) as usize..(self.start_byte-start_search + 2) as usize];
-        let timestamp_low = LittleEndian::read_u16(line) as u64;
-        let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
-        let timestamp = timestamp_high | timestamp_low;
-        println!("starting read at ts: {}", timestamp);
+        //let line = &buf[(self.start_byte-start_search) as usize..(self.start_byte-start_search + 2) as usize];
+        //let timestamp_low = LittleEndian::read_u16(line) as u64;
+        //let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
+        //let timestamp = timestamp_high | timestamp_low;
+        //println!("starting read at ts: {}", timestamp);
 
         Ok(())
     }
 
     fn set_read_stop(&mut self, end_time: DateTime<Utc>) -> Result<(), Error> {
-        let (start_search, stop_search, current_timestamp) = self.get_search_bounds(end_time);
-        println!("stop_search {}", stop_search);
+        let (start_search, stop_search, current_timestamp) = self.stopread_search_bounds(end_time);
+        println!("stop_search {}, ls: {}", stop_search, self.full_line_size);
         println!("start_search {}", start_search);
         //compare partial (16 bit) timestamps in between these bounds
         let mut buf = vec![0u8; (stop_search - start_search) as usize];
@@ -339,15 +344,18 @@ impl Timeseries {
         }
 
         for line_start in (0..buf.len() - self.full_line_size + 1)
-            .rev()
+           .rev()
             .step_by(self.full_line_size)
         {
-            println!("{}", line_start);
+            println!("line: {}, {}", line_start, LittleEndian::read_u16(&buf[line_start..line_start + 2]));
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
                 <= end_time.timestamp() as u16
             {
+				println!("TS that was found: {}", LittleEndian::read_u16(&buf[line_start..line_start + 2]) );
+				println!("TS that we seek: {}", end_time.timestamp() as u16 );
                 trace!("setting start_byte from liniar search, start of search area");
                 self.stop_byte = start_search + line_start as u64;
+                println!("stop_byte: {}", self.stop_byte);
                 break;
             } else {
                 trace!("could not find data younger then requested ts, returning most recent data");
@@ -415,9 +423,10 @@ impl Timeseries {
 impl Read for Timeseries {
     //guarantees we always discrete lines
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+        println!("INSIDE READ");
         let mut nread = self.data.read(buf)?;
 
-        nread = if self.start_byte + nread as u64 >= self.stop_byte {
+        nread = if (self.start_byte + nread as u64) >= self.stop_byte {
             println!(
                 "diff: {}, {}, {}",
                 self.start_byte as i64,
@@ -426,8 +435,10 @@ impl Read for Timeseries {
             );
             (self.stop_byte - self.start_byte) as usize
         } else {
+			println!("nread: {}, {}, {}", nread, self.start_byte, self.stop_byte);
             nread
         };
+        println!("nread: {}",nread);
         self.start_byte += nread as u64;
         Ok(nread - nread % self.full_line_size)
     }
@@ -443,8 +454,8 @@ impl Timeseries {
 
         let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
         let mut decoded: Vec<u8> = Vec::with_capacity(lines_to_read);
-
-        let n_read = self.data.read(&mut buf).unwrap() as usize;
+		println!("nani?");
+        let n_read = self.read(&mut buf).unwrap() as usize;
         println!("read: {} bytes", n_read);
         let mut file_pos = self.start_byte;
         for (_i, line) in buf[..n_read].chunks(self.full_line_size).enumerate() {
@@ -556,8 +567,8 @@ mod tests {
             if Path::new("test_append.h").exists() {
                 fs::remove_file("test_append.h").unwrap();
             }
-            if Path::new("test_append.data").exists() {
-                fs::remove_file("test_append.data").unwrap();
+            if Path::new("test_append.dat").exists() {
+                fs::remove_file("test_append.dat").unwrap();
             }
             const LINE_SIZE: usize = 10;
             const STEP: i64 = 5;
@@ -580,8 +591,8 @@ mod tests {
             if Path::new("test_set_read.h").exists() {
                 fs::remove_file("test_set_read.h").unwrap();
             }
-            if Path::new("test_set_read.data").exists() {
-                fs::remove_file("test_set_read.data").unwrap();
+            if Path::new("test_set_read.dat").exists() {
+                fs::remove_file("test_set_read.dat").unwrap();
             }
             const LINE_SIZE: usize = 10;
             const STEP: i64 = 5;
@@ -612,8 +623,8 @@ mod tests {
             if Path::new("test_append_hashes_then_verify.h").exists() {
                 fs::remove_file("test_append_hashes_then_verify.h").unwrap();
             }
-            if Path::new("test_append_hashes_then_verify.data").exists() {
-                fs::remove_file("test_append_hashes_then_verify.data").unwrap();
+            if Path::new("test_append_hashes_then_verify.dat").exists() {
+                fs::remove_file("test_append_hashes_then_verify.dat").unwrap();
             }
 
             let time = Utc::now();
@@ -631,10 +642,9 @@ mod tests {
 
             data.set_read_start(t1).unwrap();
             data.set_read_stop(t2);
-            assert_eq!(
-                (data.stop_byte - data.start_byte) / ((data.line_size + 2) as u64),
-                (NUMBER_TO_INSERT) as u64
-            );
+            println!("stop: {}, start: {}",data.stop_byte, data.start_byte);
+            let lines_in_range = (data.stop_byte - data.start_byte) / ((data.line_size + 2) as u64) +1;
+            assert_eq!(lines_in_range, (NUMBER_TO_INSERT) as u64);
 
             let n = 8_000;
             let loops_to_check_everything =
@@ -659,8 +669,8 @@ mod tests {
             if Path::new("test_append_timestamps_then_verify.h").exists() {
                 fs::remove_file("test_append_timestamps_then_verify.h").unwrap();
             }
-            if Path::new("test_append_timestamps_then_verify.data").exists() {
-                fs::remove_file("test_append_timestamps_then_verify.data").unwrap();
+            if Path::new("test_append_timestamps_then_verify.dat").exists() {
+                fs::remove_file("test_append_timestamps_then_verify.dat").unwrap();
             }
 
             let time = Utc::now();
@@ -678,8 +688,10 @@ mod tests {
 
             data.set_read_start(t1).unwrap();
             data.set_read_stop(t2);
+            println!("stop: {}, start: {}",data.stop_byte, data.start_byte);
+            let lines_in_range = (data.stop_byte - data.start_byte) / ((data.line_size + 2) as u64) +1;
             assert_eq!(
-                (data.stop_byte - data.start_byte) / ((data.line_size + 2) as u64),
+                lines_in_range,
                 (NUMBER_TO_INSERT) as u64
             );
 
@@ -774,8 +786,8 @@ mod tests {
             if Path::new("test_varing_length.h").exists() {
                 fs::remove_file("test_varing_length.h").unwrap();
             }
-            if Path::new("test_varing_length.data").exists() {
-                fs::remove_file("test_varing_length.data").unwrap();
+            if Path::new("test_varing_length.dat").exists() {
+                fs::remove_file("test_varing_length.dat").unwrap();
             }
             const LINE_SIZE: usize = 8;
             const STEP: i64 = 5;
@@ -812,11 +824,7 @@ mod tests {
                 data.start_byte,
                 data.stop_byte
             );
-            let (timestamps, decoded) = data
-                .decode_sequential_time_only(read_length_inlines as usize)
-                .unwrap();
-            //println!("timestamps: {:?}", timestamps);
-
+ 
             assert_eq!(
                 data.start_byte,
                 (start_read_inlines * (LINE_SIZE as i64 + 2)) as u64
@@ -825,6 +833,11 @@ mod tests {
                 (data.stop_byte - data.start_byte) / ((LINE_SIZE as u64 + 2) as u64),
                 read_length_inlines as u64
             );
+ 
+            //let (timestamps, decoded) = data
+                //.decode_sequential_time_only(read_length_inlines as usize)
+                //.unwrap();
+            //println!("timestamps: {:?}", timestamps);
 
             let (timestamps, decoded) = data.decode_sequential_time_only(10).unwrap();
             assert!(
@@ -834,7 +847,56 @@ mod tests {
         }
 
         #[test]
-        fn correct_data() {}
+        fn beyond_range() {
+            if Path::new("test_beyond_range.h").exists() {
+                fs::remove_file("test_beyond_range.h").unwrap();
+            }
+            if Path::new("test_beyond_range.dat").exists() {
+                fs::remove_file("test_beyond_range.dat").unwrap();
+            }
+            const LINE_SIZE: usize = 8;
+            const STEP: i64 = 5;
+            const N_TO_INSERT: u32 = 100;
+            let start_read_inlines = 101;
+            let read_length_inlines = 10;
+
+            //let time = Utc::now();
+            let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1539180000, 0), Utc);
+            let timestamp = time.timestamp();
+            println!("start timestamp {}", timestamp);
+            let mut data = Timeseries::open("test_beyond_range", LINE_SIZE).unwrap();
+
+            insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
+
+            let t1 = DateTime::<Utc>::from_utc(
+                NaiveDateTime::from_timestamp(timestamp + start_read_inlines * STEP, 0),
+                Utc,
+            );
+            let t2 = DateTime::<Utc>::from_utc(
+                NaiveDateTime::from_timestamp(
+                    timestamp + (start_read_inlines + read_length_inlines) * STEP,
+                    0,
+                ),
+                Utc,
+            );
+
+            data.set_bounds(t1, t2).unwrap();
+            println!(
+                "t1: {}, t2: {}, start_byte: {}, stop_byte: {}",
+                t1.timestamp(),
+                t2.timestamp(),
+                data.start_byte,
+                data.stop_byte
+            );
+
+			//verify no data will be read
+            assert_eq!(data.start_byte,  data.stop_byte);
+            
+            let (timestamps, decoded) = data.decode_sequential_time_only(1000).unwrap();
+            assert_eq!(timestamps.len(), 0);
+            assert_eq!(decoded.len(), 0);
+            
+        }
 
     }
 }
