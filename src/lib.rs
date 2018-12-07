@@ -32,7 +32,7 @@ struct Header {
 
 impl Header {
     fn open<P: AsRef<Path>>(name: P) -> Result<Header, Error> {
-        let mut file = open_and_check(name.as_ref().with_extension("h"), 16)?;
+        let (mut file, _) = open_and_check(name.as_ref().with_extension("h"), 16)?;
 
         //read in the entire file
         let mut bytes = Vec::new();
@@ -105,6 +105,7 @@ pub struct Timeseries {
     first_time_in_data: DateTime<Utc>,
     last_time_in_data: DateTime<Utc>,
 
+		pub data_size: u64,
     pub start_byte: u64,
     pub stop_byte: u64,
 
@@ -117,7 +118,8 @@ pub struct Timeseries {
 
 impl Timeseries {
     pub fn open<P: AsRef<Path>>(name: P, line_size: usize) -> Result<Timeseries, Error> {
-        let mut data = open_and_check(name.as_ref().with_extension("dat"), line_size)?;
+        let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
+        let (mut data, size) = open_and_check(name.as_ref().with_extension("dat"), line_size+2)?;
         let header = Header::open(name)?;
 
         let first_time = Self::get_first_time_in_data(&mut data);
@@ -128,7 +130,7 @@ impl Timeseries {
             header: header, // add triple headers
 
             line_size: line_size,
-            full_line_size: line_size + 2, //+2 accounts for u16 timestamp
+            full_line_size: full_line_size, //+2 accounts for u16 timestamp
             timestamp: 0,
 
             first_time_in_data: first_time,
@@ -136,6 +138,7 @@ impl Timeseries {
 
             //these are set during: set_read_start, set_read_end then read is
             //bound by these points
+            data_size: size,
             start_byte: 0,
             stop_byte: i64::max_value() as u64,
 
@@ -174,7 +177,7 @@ impl Timeseries {
         //(needed no more then once every 18 hours)
         self.update_header()?;
         self.force_write_to_disk(); //FIXME should this be exposed to the user?
-
+				self.data_size += self.full_line_size as u64;
         self.last_time_in_data = time;
         Ok(())
     }
@@ -277,6 +280,11 @@ impl Timeseries {
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
     ) -> Result<(), Error> {
+    		if self.data_size == 0 {
+    			self.start_byte = 0;
+          self.stop_byte = 0;
+          return Ok(());
+    		}
         self.set_read_stop(end_time)?;
         //setting the read start also positions the file seek
         //it is thus called last
@@ -306,9 +314,9 @@ impl Timeseries {
         self.data.seek(SeekFrom::Start(start_search))?;
         self.data.read_exact(&mut buf)?;
 
-		//if we do not find anything pass the end of the search area, 
+				//if we do not find anything pass the end of the search area,
         self.start_byte = stop_search; 
-        for line_start in (0..buf.len()).step_by(self.full_line_size) {
+        for line_start in (0..buf.len().saturating_sub(2)).step_by(self.full_line_size) {
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
                 >= start_time.timestamp() as u16
             {
@@ -342,17 +350,16 @@ impl Timeseries {
             self.stop_byte = stop_search;
             return Ok(());
         }
-
+				println!("buf.len(): {}",buf.len());
         for line_start in (0..buf.len() - self.full_line_size + 1)
            .rev()
-            .step_by(self.full_line_size)
+           .step_by(self.full_line_size)
         {
             println!("line: {}, {}", line_start, LittleEndian::read_u16(&buf[line_start..line_start + 2]));
-            if LittleEndian::read_u16(&buf[line_start..line_start + 2])
-                <= end_time.timestamp() as u16
+            if LittleEndian::read_u16(&buf[line_start..line_start + 2]) <= end_time.timestamp() as u16
             {
-				println!("TS that was found: {}", LittleEndian::read_u16(&buf[line_start..line_start + 2]) );
-				println!("TS that we seek: {}", end_time.timestamp() as u16 );
+								println!("TS that was found: {}", LittleEndian::read_u16(&buf[line_start..line_start + 2]) );
+								println!("TS that we seek: {}", end_time.timestamp() as u16 );
                 trace!("setting start_byte from liniar search, start of search area");
                 self.stop_byte = start_search + line_start as u64;
                 println!("stop_byte: {}", self.stop_byte);
@@ -470,7 +477,7 @@ impl Timeseries {
 //open file and check if it has the right lenght
 //(an interger multiple of the line lenght) if it
 //has not warn and repair by truncating
-fn open_and_check(path: PathBuf, full_line_size: usize) -> Result<File, Error> {
+fn open_and_check(path: PathBuf, full_line_size: usize) -> Result<(File,u64), Error> {
     let file = OpenOptions::new()
         .read(true)
         .append(true)
@@ -483,7 +490,7 @@ fn open_and_check(path: PathBuf, full_line_size: usize) -> Result<File, Error> {
         warn!("Last write incomplete, truncating to largest multiple of the line size");
         file.set_len(metadata.len() - rest)?;
     }
-    Ok(file)
+    Ok((file, metadata.len()))
 }
 
 //----------------------------------------------------------------------
