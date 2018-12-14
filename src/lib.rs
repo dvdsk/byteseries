@@ -199,48 +199,122 @@ impl Timeseries {
         self.header.file.sync_data().unwrap();
     }
 
-    fn startread_search_bound(
-        &mut self,
-        start_time: DateTime<Utc>,
-    ) -> (u64, u64, i64, i64, u64) {
+
+		struct startBound {
+      start_search: u64,
+      stop_search: u64,
+      current_timestamp: i64,
+      next_timestamp: i64,
+      next_timestamp_pos: u64,
+    }
+
+		enum sbResult {
+			Clipped,
+			SearchBounds(startBound),
+			NotInData,
+		}
+
+		//Search for start bounds
+		//
+		// Finds the requested TS, depending on if it is in the data do the following:
+		//
+		// case_A -- start_of_data -- case_B -- ?case_C?-- end_of_data -- ?case_C?--  case_D
+		//
+		// case A: requested TS before start of data
+		//	-> SET_READ [read]
+		// case B: requested TS guaranteed within data
+		//	-> SEARCH [largest header before B time, entry after B or EOF]
+		// case C: requested TS might be within data or after
+		//	-> SEARCH [largest header before B time, entry after B or EOF]
+		// case D: requested TS guaranteed outside of data
+		//	-> ERROR
+		//
+    fn startread_search_bound( &mut self,start_time: DateTime<Utc>, ) -> sbResult {
         println!("header data {:?}", self.header.data);
-        //maximum in map less/equeal then/to needed timestamp
-        let (start_search, current_timestamp) = if let Some(header_line) = self
+        //get header timestamp =< timestamp, marks begin of search area
+        if let Some(header_line) = self
             .header
             .data
             .range(..(start_time.timestamp() + 1))
             .next_back()
         {
-            (*header_line.1, *header_line.0)
-        } else {
-            //not found -> search till the end of file
-            warn!("no data older then start bound, clipping to start of file");
-            //unimplemented!();
-            //#[allow(unreachable_code)]
-            (0, self.first_time_in_data.timestamp() )
-        };
-        //minimum in map greater then needed timestamp
-        let (stop_search, next_timestamp, next_timestamp_pos) = if let Some(header_line) =
-            self.header.data.range(start_time.timestamp() + 1..).next()
-        {
-            (*header_line.1, *header_line.0, *header_line.1)
-        } else {
-            //no minimum greater then needed timestamp -> search till the end of file
-            let end_of_file = self.data.metadata().unwrap().len();
-            //-1 prevents overflow
-            //+2 makes sure we never switch to the next timestamp
-            
-            (end_of_file.saturating_sub(self.full_line_size as u64), i64::max_value() - 1, end_of_file + 2)
-        };
+						//Case B or C
+            let start_search = *header_line.1;
+            let start_timestamp = *header_line.0;
 
-        (
-            start_search,
-            stop_search,
-            current_timestamp,
-            next_timestamp,
-            next_timestamp_pos,
-        )
+            //timestamp in header >= then sought timestamp, marks end of search area
+				    if let Some(header_line) = self.header.data.range(start_time.timestamp() + 1..).next(){
+				    		//Case B -> return search area
+				        let next_timestamp = *header_line.0;
+				        let next_timestamp_pos = *header_line.1;
+				        let stop_search = next_timestamp_pos;
+						    return sbResult::SearchBounds;
+				    } else {
+				        //Case B or C -> determine which
+				        let last_in_data = self.timestamp();
+				        if start_time.timestamp() =< last_in_data {
+									//Case B ->return search area
+						      let next_timestamp = i64::max_value() - 1;
+						      //search at the most to the end of the file
+									let end_of_file = self.data.metadata().unwrap().len();
+						      let stop_search = end_of_file.saturating_sub(self.full_line_size as u64);
+						      //never switch to a new full timestamp as there are non
+						      let next_timestamp_pos = end_of_file + 2; //TODO refactor try stop_search = next timestamp pos
+						      return sbResult::SearchBounds;
+				        } else {
+				        	//Case C -> no data within user requested interval
+						      return sbResult::NotInData;
+				        }
+				    };
+        } else {
+            //Case A -> clip to start of file
+            warn!("start TS earlier then start of data -> start_byte = 0");
+            self.start_byte = 0;
+            return sbResult::Clipped;
+        };
     }
+
+    fn set_read_start(&mut self, start_time: DateTime<Utc>) -> Result<(), Error> {
+        //maximum in map less/equeal then/to needed timestamp
+        let (start_search, stop_search, current_timestamp, next_timestamp, next_timestamp_pos) =
+            self.startread_search_bound(start_time);
+        println!("start_search: {}", start_search);
+
+        //set start full timestamp
+        self.header.current_timestamp = current_timestamp;
+        trace!("set first full ts to: {}", current_timestamp);
+        //set next full timestamp
+        self.header.next_timestamp = next_timestamp;
+        self.header.next_timestamp_pos = next_timestamp_pos;
+        trace!("set next full ts to: {}", next_timestamp);
+
+        //compare partial (16 bit) timestamps in between the bounds
+        let mut buf = vec![0u8; (stop_search - start_search) as usize];
+        self.data.seek(SeekFrom::Start(start_search))?;
+        self.data.read_exact(&mut buf)?;
+
+				//if we do not find anything pass the end of the search area,
+        self.start_byte = stop_search;
+        for line_start in (0..buf.len().saturating_sub(2)).step_by(self.full_line_size) {
+            if LittleEndian::read_u16(&buf[line_start..line_start + 2])
+                >= start_time.timestamp() as u16
+            {
+                println!("setting start_byte from liniar search, pos: {}", line_start);
+                self.start_byte = start_search + line_start as u64;
+                break;
+            }
+        }
+
+        //let line = &buf[(self.start_byte-start_search) as usize..(self.start_byte-start_search + 2) as usize];
+        //let timestamp_low = LittleEndian::read_u16(line) as u64;
+        //let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
+        //let timestamp = timestamp_high | timestamp_low;
+        //println!("starting read at ts: {}", timestamp);
+
+        Ok(())
+    }
+
+
 
     fn stopread_search_bounds(&mut self, start_time: DateTime<Utc>) -> (u64, u64, i64) {
         //maximum in map less/equeal then/to needed timestamp
@@ -289,49 +363,10 @@ impl Timeseries {
         //setting the read start also positions the file seek
         //it is thus called last
         self.set_read_start(start_time)?;
-
+				info!("start time: {}, {}; end_time: {}, {}",start_time, start_time.timestamp(), end_time, end_time.timestamp());
         //set filepointer so read operations start at the right place
         self.data.seek(SeekFrom::Start(self.start_byte))?;
-        Ok(())
-    }
-
-    fn set_read_start(&mut self, start_time: DateTime<Utc>) -> Result<(), Error> {
-        //maximum in map less/equeal then/to needed timestamp
-        let (start_search, stop_search, current_timestamp, next_timestamp, next_timestamp_pos) =
-            self.startread_search_bound(start_time);
-        println!("start_search: {}", start_search);
-
-        //set start full timestamp
-        self.header.current_timestamp = current_timestamp;
-        trace!("set first full ts to: {}", current_timestamp);
-        //set next full timestamp
-        self.header.next_timestamp = next_timestamp;
-        self.header.next_timestamp_pos = next_timestamp_pos;
-        trace!("set next full ts to: {}", next_timestamp);
-
-        //compare partial (16 bit) timestamps in between the bounds
-        let mut buf = vec![0u8; (stop_search - start_search) as usize];
-        self.data.seek(SeekFrom::Start(start_search))?;
-        self.data.read_exact(&mut buf)?;
-
-				//if we do not find anything pass the end of the search area,
-        self.start_byte = stop_search; 
-        for line_start in (0..buf.len().saturating_sub(2)).step_by(self.full_line_size) {
-            if LittleEndian::read_u16(&buf[line_start..line_start + 2])
-                >= start_time.timestamp() as u16
-            {
-                println!("setting start_byte from liniar search, pos: {}", line_start);
-                self.start_byte = start_search + line_start as u64;
-                break;
-            }
-        }
-
-        //let line = &buf[(self.start_byte-start_search) as usize..(self.start_byte-start_search + 2) as usize];
-        //let timestamp_low = LittleEndian::read_u16(line) as u64;
-        //let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
-        //let timestamp = timestamp_high | timestamp_low;
-        //println!("starting read at ts: {}", timestamp);
-
+        println!("start_byte: {}", self.start_byte);
         Ok(())
     }
 
@@ -346,7 +381,7 @@ impl Timeseries {
 
         //
         if (current_timestamp as u64 >> 16) << 16 != (end_time.timestamp() as u64 >> 16) << 16 {
-            warn!("no data younger then requested ts, returning most recent data");
+            info!("no data younger then requested stop ts, returning most recent data");
             self.stop_byte = stop_search;
             return Ok(());
         }
@@ -398,8 +433,9 @@ impl Timeseries {
     {
         //update full timestamp when needed
         //println!("self.header.current_timestamp: {}, ",self.header.current_timestamp);
+        //println!("pos: {}", pos);
         if pos + 1 > self.header.next_timestamp_pos {
-            //println!("next ts pos: {}", self.header.next_timestamp_pos);
+            println!("updating ts, pos: {}, next ts pos: {}", pos, self.header.next_timestamp_pos);
             //update current timestamp
             self.header.current_timestamp = self.header.next_timestamp;
 
@@ -442,7 +478,7 @@ impl Read for Timeseries {
             );
             (self.stop_byte - self.start_byte) as usize
         } else {
-			println!("nread: {}, {}, {}", nread, self.start_byte, self.stop_byte);
+						println!("nread: {}, {}, {}", nread, self.start_byte, self.stop_byte);
             nread
         };
         println!("nread: {}",nread);
@@ -461,7 +497,7 @@ impl Timeseries {
 
         let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
         let mut decoded: Vec<u8> = Vec::with_capacity(lines_to_read);
-		println!("nani?");
+				println!("nani?");
         let n_read = self.read(&mut buf).unwrap() as usize;
         println!("read: {} bytes", n_read);
         let mut file_pos = self.start_byte;
