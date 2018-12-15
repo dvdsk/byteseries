@@ -256,8 +256,7 @@ impl Timeseries {
 								));
 				    } else {
 				        //Case C or D -> determine which
-				        let last_in_data = self.timestamp;
-				        if start_time.timestamp() <= last_in_data {
+				        if start_time <= self.last_time_in_data {
 									//Case C ->return search area clipped at EOF
 						      let next_timestamp = i64::max_value() - 1;
 						      //search at the most to the end of the file
@@ -270,6 +269,7 @@ impl Timeseries {
 										ReadParams {start_timestamp, next_timestamp, next_timestamp_pos }
 									));
 				        } else {
+				        	println!("start_time: {}, last_in_data: {}", start_time, self.last_time_in_data);
 				        	//Case D -> no data within user requested interval
 						      return None;
 				        }
@@ -360,8 +360,7 @@ impl Timeseries {
 						    return Some(SbResult::Bounded(SearchBounds {start: start_search, stop: stop_search}));
 				    } else {
 				        //Case D or C -> determine which
-				        let last_in_data = self.timestamp;
-				        if start_time.timestamp() <= last_in_data {
+				        if start_time <= self.last_time_in_data {
 									//Case D ->return search area
 						      //search at the most to the end of the file
 									let end_of_file = self.data.metadata().unwrap().len();
@@ -392,13 +391,13 @@ impl Timeseries {
           return Ok(());
     		}
 
-				let start_bounds = self.startread_search_bound(end_time);
+				let start_bounds = self.startread_search_bound(start_time);
 				if start_bounds.is_none() {
 					let error = Error::new(ErrorKind::NotFound, "start_time TS more recent then last data");
 					return Err(error);
 				}
 
-				let stop_bounds = self.stopread_search_bounds(start_time);
+				let stop_bounds = self.stopread_search_bounds(end_time);
 				if stop_bounds.is_none() {
 					let error = Error::new(ErrorKind::NotFound, "end_time older then oldest data");
 					return Err(error);
@@ -699,7 +698,7 @@ mod tests {
                 Utc,
             );
 
-            data.set_read_start(t1).unwrap(); //println!("start_byte: {}",data.start_byte);
+            data.set_bounds(t1, Utc::now()).unwrap(); //println!("start_byte: {}",data.start_byte);
             assert_eq!(data.start_byte, ((data.line_size + 2) * 2) as u64);
         }
 
@@ -728,8 +727,7 @@ mod tests {
                 Utc,
             );
 
-            data.set_read_start(t1).unwrap();
-            data.set_read_stop(t2);
+            data.set_bounds(t1,t2).unwrap();
             println!("stop: {}, start: {}",data.stop_byte, data.start_byte);
             let lines_in_range = (data.stop_byte - data.start_byte) / ((data.line_size + 2) as u64) +1;
             assert_eq!(lines_in_range, (NUMBER_TO_INSERT) as u64);
@@ -768,14 +766,12 @@ mod tests {
             //println!("inserted test data");
 
             let timestamp = time.timestamp();
-            let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+            let t1 = time;
             let t2 = DateTime::<Utc>::from_utc(
-                NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0),
-                Utc,
-            );
+                NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0), Utc, );
 
-            data.set_read_start(t1).unwrap();
-            data.set_read_stop(t2);
+						println!("t1: {}, t2: {}",t1,t2);
+            data.set_bounds(t1,t2).unwrap();
             println!("stop: {}, start: {}",data.stop_byte, data.start_byte);
             let lines_in_range = (data.stop_byte - data.start_byte) / ((data.line_size + 2) as u64) +1;
             assert_eq!(
@@ -904,7 +900,7 @@ mod tests {
                 Utc,
             );
 
-            data.set_bounds(t1, t2);
+            data.set_bounds(t1, t2).unwrap();
             println!(
                 "t1: {}, t2: {}, start_byte: {}, stop_byte: {}",
                 t1.timestamp(),
@@ -927,7 +923,7 @@ mod tests {
                 //.unwrap();
             //println!("timestamps: {:?}", timestamps);
 
-            let (timestamps, decoded) = data.decode_sequential_time_only(10).unwrap();
+            let (timestamps, _decoded) = data.decode_sequential_time_only(10).unwrap();
             assert!(
                 timestamps[0] as i64 >= timestamp + 10 * STEP
                     && timestamps[0] as i64 <= timestamp + 20 * STEP
@@ -968,23 +964,9 @@ mod tests {
                 Utc,
             );
 
-            data.set_bounds(t1, t2).unwrap();
-            println!(
-                "t1: {}, t2: {}, start_byte: {}, stop_byte: {}",
-                t1.timestamp(),
-                t2.timestamp(),
-                data.start_byte,
-                data.stop_byte
-            );
-
-			//verify no data will be read
-            assert_eq!(data.start_byte,  data.stop_byte);
-            
-            let (timestamps, decoded) = data.decode_sequential_time_only(1000).unwrap();
-            assert_eq!(timestamps.len(), 0);
-            assert_eq!(decoded.len(), 0);
-            
-        }
-
+            let bounds_res = data.set_bounds(t1, t2);
+            let bounds_error = bounds_res.unwrap_err();
+						assert_eq!(bounds_error.kind(), ErrorKind::NotFound);
+				}
     }
 }
