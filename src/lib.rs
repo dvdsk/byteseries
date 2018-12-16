@@ -446,7 +446,7 @@ impl Timeseries {
            .rev()
            .step_by(self.full_line_size)
         {
-            trace!("line: {}, {}", line_start, LittleEndian::read_u16(&buf[line_start..line_start + 2]));
+            //trace!("line: {}, {}", line_start, LittleEndian::read_u16(&buf[line_start..line_start + 2]));
             if LittleEndian::read_u16(&buf[line_start..line_start + 2]) <= end_time.timestamp() as u16
             {
                 debug!("setting start_byte from liniar search, start of search area");
@@ -500,17 +500,6 @@ impl Timeseries {
         let timestamp_low = LittleEndian::read_u16(line) as u64;
         let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
         let timestamp = timestamp_high | timestamp_low;
-
-				println!("{}", timestamp_low);
-
-        //TEMP DEBUGGING BIT //TODO remove from here
-				use byteorder::NativeEndian;
-				let ts_from_data = NativeEndian::read_i64(&line[2..]);
-				assert_eq!(timestamp, ts_from_data as u64,
-				"current full ts_high: {}, ts_high_shifted: {}, pos: {}, low: {}",
-				self.header.current_timestamp as u64, timestamp_high, pos, timestamp_low);
-
-        //till here
 
         T::from_u64(timestamp).unwrap()
     }
@@ -799,7 +788,7 @@ mod tests {
             const NUMBER_TO_INSERT: i64 = 1_00;
             const PERIOD: i64 = 24*3600/NUMBER_TO_INSERT;
 
-						setup_debug_logging(2).unwrap();
+						//setup_debug_logging(2).unwrap();
 
             if Path::new("test_append_timestamps_then_verify.h").exists() {
                 fs::remove_file("test_append_timestamps_then_verify.h").unwrap();
