@@ -203,7 +203,7 @@ impl Timeseries {
         let new_timestamp_numb = self.timestamp / (u16::max_value() as i64);
         if new_timestamp_numb > self.header.last_timestamp_numb {
             info!("updating file header");
-            println!("{}", self.data.metadata().unwrap().len());
+            trace!("{}", self.data.metadata().unwrap().len());
             let line_start = self.data.metadata().unwrap().len() - self.full_line_size as u64;
             self.header
                 .update(self.timestamp, line_start, new_timestamp_numb)?;
@@ -232,7 +232,7 @@ impl Timeseries {
 		//	-> ERROR
 		//
     fn startread_search_bound( &mut self,start_time: DateTime<Utc>, ) -> Option<(SbResult, ReadParams)> {
-        println!("header data {:?}", self.header.data);
+        debug!("header data {:?}", self.header.data);
         //get header timestamp =< timestamp, marks begin of search area
         if let Some(header_line) = self
             .header
@@ -269,7 +269,7 @@ impl Timeseries {
 										ReadParams {start_timestamp, next_timestamp, next_timestamp_pos }
 									));
 				        } else {
-				        	println!("start_time: {}, last_in_data: {}", start_time, self.last_time_in_data);
+				        	debug!("start_time: {}, last_in_data: {}", start_time, self.last_time_in_data);
 				        	//Case D -> no data within user requested interval
 						      return None;
 				        }
@@ -341,7 +341,7 @@ impl Timeseries {
 		//	-> CLIP, clipping to end
 		//
     fn stopread_search_bounds(&mut self, start_time: DateTime<Utc>) -> Option<SbResult> {
-        println!("header data {:?}", self.header.data);
+        debug!("header data {:?}", self.header.data);
         //get header timestamp =< timestamp, marks begin of search area
         if let Some(header_line) = self
             .header
@@ -430,6 +430,10 @@ impl Timeseries {
         self.start_byte =	start_byte;
         self.stop_byte =	stop_byte;
 
+				debug!("current_timestamp: {}, next_timestamp: {}, next_timestamp_pos: {}, start_byte: {}, stop_byte: {}",
+					self.header.current_timestamp, self.header.next_timestamp,
+					self.header.next_timestamp_pos, self.start_byte, self.stop_byte);
+
         self.data.seek(SeekFrom::Start(start_byte))?;
         Ok(())
     }
@@ -440,19 +444,16 @@ impl Timeseries {
         self.data.seek(SeekFrom::Start(search_params.start))?;
         self.data.read_exact(&mut buf)?;
 
-				println!("buf.len(): {}",buf.len());
+				trace!("buf.len(): {}",buf.len());
         for line_start in (0..buf.len() - self.full_line_size + 1)
            .rev()
            .step_by(self.full_line_size)
         {
-            println!("line: {}, {}", line_start, LittleEndian::read_u16(&buf[line_start..line_start + 2]));
+            trace!("line: {}, {}", line_start, LittleEndian::read_u16(&buf[line_start..line_start + 2]));
             if LittleEndian::read_u16(&buf[line_start..line_start + 2]) <= end_time.timestamp() as u16
             {
-								println!("TS that was found: {}", LittleEndian::read_u16(&buf[line_start..line_start + 2]) );
-								println!("TS that we seek: {}", end_time.timestamp() as u16 );
-                trace!("setting start_byte from liniar search, start of search area");
+                debug!("setting start_byte from liniar search, start of search area");
                 let stop_byte = search_params.start + line_start as u64;
-                println!("stop_byte: {}", stop_byte);
                 return Ok(stop_byte);
             }
         }
@@ -476,10 +477,8 @@ impl Timeseries {
         T: FromPrimitive,
     {
         //update full timestamp when needed
-        //println!("self.header.current_timestamp: {}, ",self.header.current_timestamp);
-        //println!("pos: {}", pos);
         if pos + 1 > self.header.next_timestamp_pos {
-            println!("updating ts, pos: {}, next ts pos: {}", pos, self.header.next_timestamp_pos);
+            debug!("updating ts, pos: {}, next ts pos: {}", pos, self.header.next_timestamp_pos);
             //update current timestamp
             self.header.current_timestamp = self.header.next_timestamp;
 
@@ -510,22 +509,19 @@ impl Timeseries {
 impl Read for Timeseries {
     //guarantees we always discrete lines
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
-        println!("INSIDE READ");
         let mut nread = self.data.read(buf)?;
 
         nread = if (self.start_byte + nread as u64) >= self.stop_byte {
-            println!(
-                "diff: {}, {}, {}",
+            trace!("diff: {}, {}, {}",
                 self.start_byte as i64,
                 self.stop_byte as i64,
                 self.stop_byte as i64 - self.start_byte as i64
             );
             (self.stop_byte - self.start_byte) as usize
         } else {
-						println!("nread: {}, {}, {}", nread, self.start_byte, self.stop_byte);
+						trace!("nread: {}, {}, {}", nread, self.start_byte, self.stop_byte);
             nread
         };
-        println!("nread: {}",nread);
         self.start_byte += nread as u64;
         Ok(nread - nread % self.full_line_size)
     }
@@ -541,10 +537,10 @@ impl Timeseries {
 
         let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
         let mut decoded: Vec<u8> = Vec::with_capacity(lines_to_read);
-				println!("nani?");
-        let n_read = self.read(&mut buf).unwrap() as usize;
-        println!("read: {} bytes", n_read);
+				//save file pos indicator before read call moves it around
         let mut file_pos = self.start_byte;
+        let n_read = self.read(&mut buf).unwrap() as usize;
+        trace!("read: {} bytes", n_read);
         for (_i, line) in buf[..n_read].chunks(self.full_line_size).enumerate() {
             file_pos += self.full_line_size as u64;
             timestamps.push(self.get_timestamp::<u64>(line, file_pos));
@@ -581,9 +577,50 @@ extern crate fxhash;
 
 #[cfg(test)]
 mod tests {
+
+		extern crate fern;
+		use tests::fern::colors::{Color, ColoredLevelConfig};
+
     use super::byteorder::NativeEndian;
     use super::chrono::{DateTime, NaiveDateTime, Utc};
     use super::*;
+
+		fn setup_debug_logging(verbosity: u8) -> Result<(), fern::InitError> {
+			let mut base_config = fern::Dispatch::new();
+			let colors = ColoredLevelConfig::new()
+						       .info(Color::Green)
+						       .debug(Color::Yellow)
+						       .warn(Color::Magenta);
+
+			base_config = match verbosity {
+				0 =>
+					// Let's say we depend on something which whose "info" level messages are too
+					// verbose to include in end-user output. If we don't need them,
+					// let's not include them.
+					base_config
+					.level(log::LevelFilter::Info),
+				1 => base_config
+					.level(log::LevelFilter::Debug),
+				2 => base_config
+					.level(log::LevelFilter::Trace),
+				_3_or_more => base_config.level(log::LevelFilter::Trace),
+			};
+
+			let stdout_config = fern::Dispatch::new()
+				.format(move |out, message, record| {
+						out.finish(format_args!(
+								"[{}][{}][{}] {}",
+							chrono::Local::now().format("%H:%M"),
+							record.target(),
+							colors.color(record.level()),
+							message
+						))
+				})
+				.chain(std::io::stdout());
+
+			base_config.chain(stdout_config).apply()?;
+			Ok(())
+		}
 
     fn insert_uniform_arrays(
         data: &mut Timeseries,
@@ -752,6 +789,8 @@ mod tests {
             const NUMBER_TO_INSERT: i64 = 8_00;
             const PERIOD: i64 = 5;
 
+						setup_debug_logging(2).unwrap();
+
             if Path::new("test_append_timestamps_then_verify.h").exists() {
                 fs::remove_file("test_append_timestamps_then_verify.h").unwrap();
             }
@@ -770,9 +809,9 @@ mod tests {
             let t2 = DateTime::<Utc>::from_utc(
                 NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0), Utc, );
 
-						println!("t1: {}, t2: {}",t1,t2);
+						//println!("t1: {}, t2: {}",t1,t2);
             data.set_bounds(t1,t2).unwrap();
-            println!("stop: {}, start: {}",data.stop_byte, data.start_byte);
+            //println!("stop: {}, start: {}",data.stop_byte, data.start_byte);
             let lines_in_range = (data.stop_byte - data.start_byte) / ((data.line_size + 2) as u64) +1;
             assert_eq!(
                 lines_in_range,
