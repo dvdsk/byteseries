@@ -40,12 +40,7 @@ impl Header {
         let mut data = BTreeMap::new();
 
         let last_timestamp = if bytes.len() == 0 {
-            let timestamp = 0 as i64;
-            //data.insert(timestamp, 0);
-            //file.write_u64::<LittleEndian>(timestamp as u64)?;
-            //file.write_u64::<LittleEndian>(0)?;
-
-            timestamp
+            0 as i64
         } else {
             let mut numbers = vec![0u64; bytes.len() / 8];
             LittleEndian::read_u64_into(&bytes, numbers.as_mut_slice());
@@ -80,6 +75,7 @@ impl Header {
         let ts = timestamp as u64;
         self.file.write_u64::<LittleEndian>(ts)?;
         self.file.write_u64::<LittleEndian>(line_start)?;
+        trace!("wrote headerline: {}, {}", ts, line_start);
 
         self.data.insert(timestamp, line_start);
         self.last_timestamp_numb = new_timestamp_numb;
@@ -200,10 +196,11 @@ impl Timeseries {
     }
 
     fn update_header(&mut self) -> Result<(), Error> {
-        let new_timestamp_numb = self.timestamp / (u16::max_value() as i64);
+        let new_timestamp_numb = self.timestamp / 2i64.pow(16);
+        //println!("inserting; ts_low: {}, ts_numb: {}",self.timestamp as u16, new_timestamp_numb);
         if new_timestamp_numb > self.header.last_timestamp_numb {
             info!("updating file header");
-            trace!("{}", self.data.metadata().unwrap().len());
+            //println!("updating header");
             let line_start = self.data.metadata().unwrap().len() - self.full_line_size as u64;
             self.header
                 .update(self.timestamp, line_start, new_timestamp_numb)?;
@@ -478,6 +475,7 @@ impl Timeseries {
     {
         //update full timestamp when needed
         if pos + 1 > self.header.next_timestamp_pos {
+        		println!("loading new full TS");
             debug!("updating ts, pos: {}, next ts pos: {}", pos, self.header.next_timestamp_pos);
             //update current timestamp
             self.header.current_timestamp = self.header.next_timestamp;
@@ -494,6 +492,7 @@ impl Timeseries {
                 self.header.next_timestamp_pos = *next.1;
             } else {
                 //TODO handle edge case, last full timestamp
+                debug!("loaded last timestamp in header, no next TS, current pos: {}",pos);
                 self.header.next_timestamp = 0;
                 self.header.next_timestamp_pos = u64::max_value();
             }
@@ -501,7 +500,18 @@ impl Timeseries {
         let timestamp_low = LittleEndian::read_u16(line) as u64;
         let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
         let timestamp = timestamp_high | timestamp_low;
-        //print!("decoded TS: {}, ",timestamp);
+
+				println!("{}", timestamp_low);
+
+        //TEMP DEBUGGING BIT //TODO remove from here
+				use byteorder::NativeEndian;
+				let ts_from_data = NativeEndian::read_i64(&line[2..]);
+				assert_eq!(timestamp, ts_from_data as u64,
+				"current full ts_high: {}, ts_high_shifted: {}, pos: {}, low: {}",
+				self.header.current_timestamp as u64, timestamp_high, pos, timestamp_low);
+
+        //till here
+
         T::from_u64(timestamp).unwrap()
     }
 }
@@ -542,8 +552,8 @@ impl Timeseries {
         let n_read = self.read(&mut buf).unwrap() as usize;
         trace!("read: {} bytes", n_read);
         for (_i, line) in buf[..n_read].chunks(self.full_line_size).enumerate() {
-            file_pos += self.full_line_size as u64;
             timestamps.push(self.get_timestamp::<u64>(line, file_pos));
+            file_pos += self.full_line_size as u64;
             decoded.extend_from_slice(&line[2..]);
         }
         Ok((timestamps, decoded))
@@ -786,7 +796,7 @@ mod tests {
 
         #[test]
         fn timestamps_then_verify() {
-            const NUMBER_TO_INSERT: i64 = 1_000;
+            const NUMBER_TO_INSERT: i64 = 1_00;
             const PERIOD: i64 = 24*3600/NUMBER_TO_INSERT;
 
 						setup_debug_logging(2).unwrap();
@@ -825,12 +835,15 @@ mod tests {
                 //println!("loop, {} at the time",n);
                 let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
                 //println!("timestamps: {:?}", timestamps);
-                for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)) {
+                for (i, (timestamp, decoded)) in timestamps.iter().zip(decoded.chunks(data.line_size)).enumerate() {
                     let ts_from_decode = *timestamp as i64;
                     let ts_from_data = NativeEndian::read_i64(decoded);
 
                     //println!("ts_from_decode: {}, ts_from_data: {}",ts_from_decode,ts_from_data);
-                    assert_eq!(ts_from_decode, ts_from_data);
+                    assert_eq!(ts_from_decode, ts_from_data,
+                    "failed on element: {}, which should have ts: {}, but has been given {},
+                     prev element has ts: {}, the step is: {}",
+                    i, ts_from_data, ts_from_decode, timestamps[i-1], PERIOD);
                 }
             }
             assert_eq!(2 + 2, 4);
