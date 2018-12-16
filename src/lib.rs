@@ -741,8 +741,8 @@ mod tests {
 
         #[test]
         fn hashes_then_verify() {
-            const NUMBER_TO_INSERT: i64 = 8_00;
-            const PERIOD: i64 = 5;
+            const NUMBER_TO_INSERT: i64 = 1_000;
+            const PERIOD: i64 = 24*3600/NUMBER_TO_INSERT;
 
             if Path::new("test_append_hashes_then_verify.h").exists() {
                 fs::remove_file("test_append_hashes_then_verify.h").unwrap();
@@ -786,8 +786,8 @@ mod tests {
 
         #[test]
         fn timestamps_then_verify() {
-            const NUMBER_TO_INSERT: i64 = 8_00;
-            const PERIOD: i64 = 5;
+            const NUMBER_TO_INSERT: i64 = 1_000;
+            const PERIOD: i64 = 24*3600/NUMBER_TO_INSERT;
 
 						setup_debug_logging(2).unwrap();
 
