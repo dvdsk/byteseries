@@ -195,6 +195,21 @@ impl Timeseries {
         Ok(())
     }
 
+    pub fn append_fast(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
+        //TODO decide if a lock is needed here
+        //write 16 bit timestamp and then the line to file
+        let timestamp = self.time_to_line_timestamp(time);
+        self.data.write(&timestamp)?;
+        self.data.write(&line[..self.line_size])?;
+
+        //write 64 bit timestamp to header
+        //(needed no more then once every 18 hours)
+        self.update_header()?;
+				self.data_size += self.full_line_size as u64;
+        self.last_time_in_data = time;
+        Ok(())
+    }
+
     fn update_header(&mut self) -> Result<(), Error> {
         let new_timestamp_numb = self.timestamp / 2i64.pow(16);
         //println!("inserting; ts_low: {}, ts_numb: {}",self.timestamp as u16, new_timestamp_numb);
@@ -208,7 +223,7 @@ impl Timeseries {
         Ok(())
     }
 
-    fn force_write_to_disk(&mut self) {
+    pub fn force_write_to_disk(&mut self) {
         self.data.sync_data().unwrap();
         self.header.file.sync_data().unwrap();
     }
@@ -475,7 +490,6 @@ impl Timeseries {
     {
         //update full timestamp when needed
         if pos + 1 > self.header.next_timestamp_pos {
-        		println!("loading new full TS");
             debug!("updating ts, pos: {}, next ts pos: {}", pos, self.header.next_timestamp_pos);
             //update current timestamp
             self.header.current_timestamp = self.header.next_timestamp;
@@ -785,7 +799,7 @@ mod tests {
 
         #[test]
         fn timestamps_then_verify() {
-            const NUMBER_TO_INSERT: i64 = 1_00;
+            const NUMBER_TO_INSERT: i64 = 10_000;
             const PERIOD: i64 = 24*3600/NUMBER_TO_INSERT;
 
 						//setup_debug_logging(2).unwrap();

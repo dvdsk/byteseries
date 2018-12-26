@@ -1,6 +1,6 @@
 [package]
 name = "minimal_timeseries"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["David Kleingeld <dskleingeld@gmail.com>"]
 
 [dependencies]
