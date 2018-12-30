@@ -93,17 +93,27 @@ struct SearchBounds {
   stop: u64,
 }
 
-struct ReadParams {
+pub struct ReadParams {
   start_timestamp: i64,
   next_timestamp: i64,
   next_timestamp_pos: u64,
 }
 
-
 enum SbResult {
 	Clipped,
 	Bounded(SearchBounds),
 }
+
+pub enum BoundResult {
+	IoError(Error),
+	NoData,
+	Ok((ReadParams, u64, u64)),// read_params, start_byte, stop_byte
+}
+
+//TODO implement this to use the ? operator in get_bounds
+// impl std::ops::Try for BoundResult{
+
+// }
 
 //rewrite using cont generics when availible
 //https://github.com/rust-lang/rfcs/blob/master/text/2000-const-generics.md
@@ -119,8 +129,6 @@ pub struct Timeseries {
     last_time_in_data: DateTime<Utc>,
 
 		pub data_size: u64,
-    pub start_byte: u64,
-    pub stop_byte: u64,
 
     decode_option: DecodeOptions,
 }
@@ -152,8 +160,6 @@ impl Timeseries {
             //these are set during: set_read_start, set_read_end then read is
             //bound by these points
             data_size: size,
-            start_byte: 0,
-            stop_byte: i64::max_value() as u64,
 
             decode_option: DecodeOptions::Sequential(8_000),
         })
@@ -386,7 +392,6 @@ impl Timeseries {
         } else {
             //Case A -> ERROR
             warn!("start TS earlier then start of data -> start_byte = 0");
-            self.start_byte = 0;
             return None;
         };
     }
@@ -395,36 +400,45 @@ impl Timeseries {
         &mut self,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
-    ) -> Result<(), Error> {
+    ) -> BoundResult {
     		//check if the datafile isnt empty
+
     		if self.data_size == 0 {
-    			self.start_byte = 0;
-          self.stop_byte = 0;
-          return Ok(());
+          return BoundResult::NoData;
     		}
 
 				let start_bounds = self.startread_search_bound(start_time);
 				if start_bounds.is_none() {
 					let error = Error::new(ErrorKind::NotFound, "start_time TS more recent then last data");
-					return Err(error);
+					return BoundResult::IoError(error);
 				}
 
 				let stop_bounds = self.stopread_search_bounds(end_time);
 				if stop_bounds.is_none() {
 					let error = Error::new(ErrorKind::NotFound, "end_time older then oldest data");
-					return Err(error);
+					return BoundResult::IoError(error);
 				}
 
 				//must be a solvable request
 				let (case, read_params) = start_bounds.unwrap();
 				let start_byte = match case {
-					SbResult::Bounded(search_bounds) => self.find_read_start(start_time, search_bounds)?,
+					SbResult::Bounded(search_bounds) => {
+						//TODO change to use ? operator
+						let start_byte = self.find_read_start(start_time, search_bounds);
+						if let Err(err) = start_byte {return BoundResult::IoError(err);}
+						start_byte.unwrap()
+					}
 					SbResult::Clipped => 0,
 				};
 
 				let case = stop_bounds.unwrap();
 				let stop_byte = match case {
-					SbResult::Bounded(search_bounds) => self.find_read_stop(end_time, search_bounds)?,
+					SbResult::Bounded(search_bounds) => {
+						//TODO change to use ? operator
+						let stop_byte = self.find_read_stop(end_time, search_bounds);
+						if let Err(err) = stop_byte {return BoundResult::IoError(err);}
+						stop_byte.unwrap()
+					}
 					SbResult::Clipped => {
 						let end_of_file = self.data.metadata().unwrap().len();
 						end_of_file.saturating_sub(self.full_line_size as u64)
@@ -433,21 +447,13 @@ impl Timeseries {
 
 				debug!("start time: {}, {}; end_time: {}, {}",
 					start_time, start_time.timestamp(), end_time, end_time.timestamp());
-				debug!("start_byte: {}", self.start_byte);
-
-        //set everything rdy for reading //TODO move to struct to allow concurrent readers
-				self.header.current_timestamp = read_params.start_timestamp;
-				self.header.next_timestamp = read_params.next_timestamp;
-				self.header.next_timestamp_pos = read_params.next_timestamp_pos;
-        self.start_byte =	start_byte;
-        self.stop_byte =	stop_byte;
+				debug!("start_byte: {}", start_byte);
 
 				debug!("current_timestamp: {}, next_timestamp: {}, next_timestamp_pos: {}, start_byte: {}, stop_byte: {}",
 					self.header.current_timestamp, self.header.next_timestamp,
-					self.header.next_timestamp_pos, self.start_byte, self.stop_byte);
+					self.header.next_timestamp_pos, start_byte, stop_byte);
 
-        self.data.seek(SeekFrom::Start(start_byte))?;
-        Ok(())
+        BoundResult::Ok((read_params, start_byte, stop_byte))
     }
 
     fn find_read_stop(&mut self, end_time: DateTime<Utc>, search_params: SearchBounds) -> Result<u64, Error> {
@@ -519,23 +525,24 @@ impl Timeseries {
     }
 }
 
-impl Read for Timeseries {
-    //guarantees we always discrete lines
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> {
+
+impl Timeseries {
+		fn read(&mut self, buf: &mut [u8], start_byte: &mut u64, stop_byte: u64) -> Result<usize, Error> {
+        self.data.seek(SeekFrom::Start(*start_byte))?;
         let mut nread = self.data.read(buf)?;
 
-        nread = if (self.start_byte + nread as u64) >= self.stop_byte {
+        nread = if (*start_byte + nread as u64) >= stop_byte {
             trace!("diff: {}, {}, {}",
-                self.start_byte as i64,
-                self.stop_byte as i64,
-                self.stop_byte as i64 - self.start_byte as i64
+                *start_byte as i64,
+                stop_byte as i64,
+                stop_byte as i64 - *start_byte as i64
             );
-            (self.stop_byte - self.start_byte) as usize
+            (stop_byte - *start_byte) as usize
         } else {
-						trace!("nread: {}, {}, {}", nread, self.start_byte, self.stop_byte);
+						trace!("nread: {}, {}, {}", nread, start_byte, stop_byte);
             nread
         };
-        self.start_byte += nread as u64;
+        *start_byte += nread as u64;
         Ok(nread - nread % self.full_line_size)
     }
 }
@@ -544,6 +551,8 @@ impl Timeseries {
     pub fn decode_sequential_time_only(
         &mut self,
         lines_to_read: usize,
+				mut start_byte: u64,
+				stop_byte: u64,
     ) -> Result<(Vec<u64>, Vec<u8>), Error> {
         //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
         let mut buf = vec![0; lines_to_read * self.full_line_size];
@@ -551,8 +560,8 @@ impl Timeseries {
         let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
         let mut decoded: Vec<u8> = Vec::with_capacity(lines_to_read);
 				//save file pos indicator before read call moves it around
-        let mut file_pos = self.start_byte;
-        let n_read = self.read(&mut buf).unwrap() as usize;
+        let mut file_pos = start_byte;
+        let n_read = self.read(&mut buf, &mut start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
         for (_i, line) in buf[..n_read].chunks(self.full_line_size).enumerate() {
             timestamps.push(self.get_timestamp::<u64>(line, file_pos));
