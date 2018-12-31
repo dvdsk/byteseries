@@ -84,8 +84,8 @@ impl Header {
 }
 
 enum DecodeOptions {
-    Interleaved,
-    Sequential(usize),
+  Interleaved,
+  Sequential(usize),
 }
 
 struct SearchBounds {
@@ -93,8 +93,8 @@ struct SearchBounds {
   stop: u64,
 }
 
-pub struct ReadParams {
-  start_timestamp: i64,
+pub struct DecodeParams {
+  current_timestamp: i64,
   next_timestamp: i64,
   next_timestamp_pos: u64,
 }
@@ -107,7 +107,7 @@ enum SbResult {
 pub enum BoundResult {
 	IoError(Error),
 	NoData,
-	Ok((ReadParams, u64, u64)),// read_params, start_byte, stop_byte
+	Ok((u64, u64, DecodeParams)),// read_params, start_byte, stop_byte
 }
 
 //TODO implement this to use the ? operator in get_bounds
@@ -249,7 +249,7 @@ impl Timeseries {
 		// case D: requested TS guaranteed outside of data
 		//	-> ERROR
 		//
-    fn startread_search_bound( &mut self,start_time: DateTime<Utc>, ) -> Option<(SbResult, ReadParams)> {
+    fn startread_search_bound( &mut self,start_time: DateTime<Utc>, ) -> Option<(SbResult, DecodeParams)> {
         debug!("header data {:?}", self.header.data);
         //get header timestamp =< timestamp, marks begin of search area
         if let Some(header_line) = self
@@ -270,7 +270,7 @@ impl Timeseries {
 				        let stop_search = next_timestamp_pos;
 						    return Some((
 						    	SbResult::Bounded(SearchBounds {start: start_search, stop: stop_search }),
-									ReadParams {start_timestamp, next_timestamp, next_timestamp_pos }
+									DecodeParams {current_timestamp: start_timestamp, next_timestamp, next_timestamp_pos }
 								));
 				    } else {
 				        //Case C or D -> determine which
@@ -284,7 +284,7 @@ impl Timeseries {
 						      let next_timestamp_pos = end_of_file + 2; //TODO refactor try stop_search = next timestamp pos
 						      return Some((
 						      	SbResult::Bounded(SearchBounds {start: start_search, stop: stop_search }),
-										ReadParams {start_timestamp, next_timestamp, next_timestamp_pos }
+										DecodeParams {current_timestamp: start_timestamp, next_timestamp, next_timestamp_pos }
 									));
 				        } else {
 				        	debug!("start_time: {}, last_in_data: {}", start_time, self.last_time_in_data);
@@ -303,21 +303,21 @@ impl Timeseries {
 		        let start_timestamp = *header_line.0;
 
 						//check if there is another header
-						let readparams = if let Some(header_line) = self.header.data.range(start_timestamp + 1..).next(){
+						let decode_params = if let Some(header_line) = self.header.data.range(start_timestamp + 1..).next(){
 							let next_timestamp = *header_line.0;
 				      let next_timestamp_pos = *header_line.1;
-            	ReadParams {start_timestamp, next_timestamp, next_timestamp_pos}
+            	DecodeParams {current_timestamp: start_timestamp, next_timestamp, next_timestamp_pos}
 						} else {
 							//use safe defaults
 							let end_of_file = self.data.metadata().unwrap().len();
 							let next_timestamp = i64::max_value() - 1; //-1 prevents overflow
 				      let next_timestamp_pos = end_of_file + 2;  //+2 makes sure we never switch to the next timestamp
-            	ReadParams {start_timestamp, next_timestamp, next_timestamp_pos}
+            	DecodeParams {current_timestamp: start_timestamp, next_timestamp, next_timestamp_pos}
 						};
 
             return Some((
             	SbResult::Clipped,
-            	readparams,
+            	decode_params,
             ));
         };
     }
@@ -396,7 +396,7 @@ impl Timeseries {
         };
     }
 
-    pub fn set_bounds(
+    pub fn get_bounds(
         &mut self,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
@@ -420,7 +420,7 @@ impl Timeseries {
 				}
 
 				//must be a solvable request
-				let (case, read_params) = start_bounds.unwrap();
+				let (case, decode_params) = start_bounds.unwrap();
 				let start_byte = match case {
 					SbResult::Bounded(search_bounds) => {
 						//TODO change to use ? operator
@@ -449,11 +449,7 @@ impl Timeseries {
 					start_time, start_time.timestamp(), end_time, end_time.timestamp());
 				debug!("start_byte: {}", start_byte);
 
-				debug!("current_timestamp: {}, next_timestamp: {}, next_timestamp_pos: {}, start_byte: {}, stop_byte: {}",
-					self.header.current_timestamp, self.header.next_timestamp,
-					self.header.next_timestamp_pos, start_byte, stop_byte);
-
-        BoundResult::Ok((read_params, start_byte, stop_byte))
+        BoundResult::Ok((start_byte, stop_byte, decode_params))
     }
 
     fn find_read_stop(&mut self, end_time: DateTime<Utc>, search_params: SearchBounds) -> Result<u64, Error> {
@@ -490,35 +486,35 @@ impl Timeseries {
         line_timestamp
     }
 
-    pub fn get_timestamp<T>(&mut self, line: &[u8], pos: u64) -> T
+    pub fn get_timestamp<T>(&mut self, line: &[u8], pos: u64, decode_params: &mut DecodeParams) -> T
     where
         T: FromPrimitive,
     {
         //update full timestamp when needed
-        if pos + 1 > self.header.next_timestamp_pos {
-            debug!("updating ts, pos: {}, next ts pos: {}", pos, self.header.next_timestamp_pos);
+        if pos + 1 > decode_params.next_timestamp_pos {
+            debug!("updating ts, pos: {}, next ts pos: {}", pos, decode_params.next_timestamp_pos);
             //update current timestamp
-            self.header.current_timestamp = self.header.next_timestamp;
+            decode_params.current_timestamp = decode_params.next_timestamp;
 
             //set next timestamp and timestamp pos
             //minimum in map greater then current timestamp
             if let Some(next) = self
                 .header
                 .data
-                .range(self.header.current_timestamp + 1..)
+                .range(decode_params.current_timestamp + 1..)
                 .next()
             {
-                self.header.next_timestamp = *next.0;
-                self.header.next_timestamp_pos = *next.1;
+                decode_params.next_timestamp = *next.0;
+                decode_params.next_timestamp_pos = *next.1;
             } else {
                 //TODO handle edge case, last full timestamp
                 debug!("loaded last timestamp in header, no next TS, current pos: {}",pos);
-                self.header.next_timestamp = 0;
-                self.header.next_timestamp_pos = u64::max_value();
+                decode_params.next_timestamp = 0;
+                decode_params.next_timestamp_pos = u64::max_value();
             }
         }
         let timestamp_low = LittleEndian::read_u16(line) as u64;
-        let timestamp_high = (self.header.current_timestamp as u64 >> 16) << 16;
+        let timestamp_high = (decode_params.current_timestamp as u64 >> 16) << 16;
         let timestamp = timestamp_high | timestamp_low;
 
         T::from_u64(timestamp).unwrap()
@@ -553,6 +549,7 @@ impl Timeseries {
         lines_to_read: usize,
 				mut start_byte: u64,
 				stop_byte: u64,
+				decode_params: &mut DecodeParams,
     ) -> Result<(Vec<u64>, Vec<u8>), Error> {
         //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
         let mut buf = vec![0; lines_to_read * self.full_line_size];
@@ -563,8 +560,8 @@ impl Timeseries {
         let mut file_pos = start_byte;
         let n_read = self.read(&mut buf, &mut start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
-        for (_i, line) in buf[..n_read].chunks(self.full_line_size).enumerate() {
-            timestamps.push(self.get_timestamp::<u64>(line, file_pos));
+        for line in buf[..n_read].chunks(self.full_line_size) {
+            timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
             file_pos += self.full_line_size as u64;
             decoded.extend_from_slice(&line[2..]);
         }
