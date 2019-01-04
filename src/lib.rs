@@ -93,6 +93,7 @@ struct SearchBounds {
   stop: u64,
 }
 
+#[derive(Debug)]
 pub struct DecodeParams {
   current_timestamp: i64,
   next_timestamp: i64,
@@ -544,7 +545,7 @@ impl Timeseries {
 }
 
 impl Timeseries {
-    pub fn decode_sequential_time_only(
+    pub fn decode_time(
         &mut self,
         lines_to_read: usize,
 				start_byte: &mut u64,
@@ -555,7 +556,7 @@ impl Timeseries {
         let mut buf = vec![0; lines_to_read * self.full_line_size];
 
         let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
-        let mut decoded: Vec<u8> = Vec::with_capacity(lines_to_read);
+        let mut line_data: Vec<u8> = Vec::with_capacity(lines_to_read);
 				//save file pos indicator before read call moves it around
         let mut file_pos = *start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
@@ -563,9 +564,34 @@ impl Timeseries {
         for line in buf[..n_read].chunks(self.full_line_size) {
             timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
             file_pos += self.full_line_size as u64;
-            decoded.extend_from_slice(&line[2..]);
+            line_data.extend_from_slice(&line[2..]);
         }
-        Ok((timestamps, decoded))
+        Ok((timestamps, line_data))
+    }
+    pub fn decode_time_into_given(
+        &mut self,
+        timestamps: &mut Vec<u64>,
+        line_data: &mut Vec<u8>,
+        lines_to_read: usize,
+				start_byte: &mut u64,
+				stop_byte: u64,
+				decode_params: &mut DecodeParams,
+    ) -> Result<(), Error> {
+        //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
+        let mut buf = vec![0; lines_to_read * self.full_line_size];
+        timestamps.clear();
+        line_data.clear();
+
+				//save file pos indicator before read call moves it around
+        let mut file_pos = *start_byte;
+        let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
+        trace!("read: {} bytes", n_read);
+        for line in buf[..n_read].chunks(self.full_line_size) {
+            timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
+            file_pos += self.full_line_size as u64;
+            line_data.extend_from_slice(&line[2..]);
+        }
+        Ok(())
     }
 }
 
@@ -800,7 +826,7 @@ mod tests {
 
 	          for _ in 0..loops_to_check_everything {
               //println!("loop, {} at the time",n);
-              let (timestamps, decoded) = data.decode_sequential_time_only(
+              let (timestamps, decoded) = data.decode_time(
               	n as usize,
               	&mut start_byte,
               	stop_byte,
@@ -852,7 +878,7 @@ mod tests {
 	          let loops_to_check_everything =
 	              NUMBER_TO_INSERT / n + if NUMBER_TO_INSERT % n > 0 { 1 } else { 0 };
 	          for _ in 0..loops_to_check_everything {
-              let (timestamps, decoded) = data.decode_sequential_time_only(
+              let (timestamps, decoded) = data.decode_time(
               	n as usize,
               	&mut start_byte,
               	stop_byte,
@@ -900,7 +926,7 @@ mod tests {
             let loops_to_check_everything = 2*NUMBER_TO_INSERT/3/n + if 2*NUMBER_TO_INSERT/3 % n > 0 {1} else {0};
             for _ in 0..loops_to_check_everything {
                 //println!("loop, {} at the time",n);
-                let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
+                let (timestamps, decoded) = data.decode_time(n as usize).unwrap();
                 //println!("timestamps: {:?}", timestamps);
                 for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
                     let ts_from_decode = *timestamp as i64;
@@ -923,7 +949,7 @@ mod tests {
             let loops_to_check_everything = NUMBER_TO_INSERT/3/n + if NUMBER_TO_INSERT/3 % n > 0 {1} else {0};
             for _ in 0..loops_to_check_everything {
                 //println!("loop, {} at the time",n);
-                let (timestamps, decoded) = data.decode_sequential_time_only(n as usize).unwrap();
+                let (timestamps, decoded) = data.decode_time(n as usize).unwrap();
                 //println!("timestamps: {:?}", timestamps);
                 for (timestamp, decoded) in timestamps.iter().zip(decoded.chunks(data.line_size)){
                     let ts_from_decode = *timestamp as i64;
@@ -995,11 +1021,11 @@ mod tests {
 		          );
 
 		          //let (timestamps, decoded) = data
-		              //.decode_sequential_time_only(read_length_inlines as usize)
+		              //.decode_time(read_length_inlines as usize)
 		              //.unwrap();
 		          //println!("timestamps: {:?}", timestamps);
 
-		          let (timestamps, _decoded) = data.decode_sequential_time_only(
+		          let (timestamps, _decoded) = data.decode_time(
               	10 as usize,
               	&mut start_byte,
               	stop_byte,
