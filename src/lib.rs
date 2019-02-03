@@ -123,7 +123,7 @@ pub struct Timeseries {
     header: Header, // add triple headers
 
     pub line_size: usize,
-    full_line_size: usize,
+    pub full_line_size: usize,
     timestamp: i64,
 
     first_time_in_data: DateTime<Utc>,
