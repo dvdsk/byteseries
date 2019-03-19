@@ -593,7 +593,103 @@ impl Timeseries {
         }
         Ok(())
     }
+    //based on https://github.com/dskleingeld/HomeAutomation/blob/7022c5c65f758762a666fc43303f13fecba28100/pi_Cpp/dataStorage/MainData.cpp
+    pub fn decode_time_into_given_skipping(
+        &mut self,
+        timestamps: &mut Vec<u64>,
+        line_data: &mut Vec<u8>,
+        lines_to_read: usize,
+				start_byte: &mut u64,
+				stop_byte: u64,
+				decode_params: &mut DecodeParams,
+				idx_checker: &mut IdxChecker,
+    ) -> Result<(), Error> {
+        //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
+        let lines_to_skip = idx_checker.n_to_skip(start_byte, lines_to_read);
+        let mut buf = vec![0; (lines_to_read + lines_to_skip)* self.full_line_size];//TODO FIXME
+        timestamps.clear();
+        line_data.clear();
+
+				//save file pos indicator before read call moves it around
+        let mut file_pos = *start_byte;
+        let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
+        trace!("read: {} bytes", n_read);
+        for line in buf[..n_read]
+        .chunks(self.full_line_size)
+        .filter(move |_| idx_checker.use_index(file_pos))
+        {
+            timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
+            file_pos += self.full_line_size as u64;
+            line_data.extend_from_slice(&line[2..]);
+        }
+        Ok(())
+    }
 }
+
+#[derive(Debug)]
+pub struct IdxChecker {
+	spacing: u64, //in bytes
+	counter: u64, //starts at 1
+
+	full_line_size: usize,
+	//binsize; usize//in lines
+}
+
+impl IdxChecker {
+	//
+	fn new(max_plot_points: usize, timeseries: &Timeseries, stop_byte: u64, start_byte: u64) -> Option<Self> {
+		let full_line_size = timeseries.full_line_size;
+		let max_plot_bytes: u64 = (max_plot_points*full_line_size) as u64;
+		let numb_bytes: u64 = (stop_byte-start_byte)/full_line_size as u64;
+		let bytes_to_skip: u64 = numb_bytes % max_plot_bytes;
+
+		dbg!(numb_bytes);
+		dbg!(max_plot_bytes);
+		if numb_bytes <= max_plot_bytes {
+     	None
+    } else {
+			Some(IdxChecker {
+				spacing: (numb_bytes-full_line_size as u64)/bytes_to_skip,
+				counter: 1,
+				full_line_size,
+			})
+    }
+
+		// binsize: if numb_lines < max_plot_resolution {
+		// 	       	 1
+		//          } else {
+		// 	         numb_lines/max_plot_resolution
+		//          }
+
+
+	}
+
+	//calculate if element with index idx should be used
+	fn use_index(&mut self, file_pos: u64) -> bool {
+		if file_pos == self.counter*self.spacing {
+			self.counter+=1;
+			dbg!("skipping");
+			false
+		} else {
+			true
+		}
+	}
+
+	//one and a halve spacing
+	fn n_to_skip(&self, start_byte: &u64, lines_to_read: usize) -> usize {
+		let stop_pos: u64 = start_byte + (self.full_line_size*lines_to_read) as u64;
+		let first_skip_pos: u64 = self.counter*self.spacing;
+
+		//check if skip in this read chunk
+		if first_skip_pos > stop_pos {
+			0
+		} else { //there is at least one skip, check if there are more
+			let numb_of_additional_skips = (stop_pos.saturating_sub(first_skip_pos)/self.spacing) as usize;
+			1 + numb_of_additional_skips
+		}
+	}
+}
+
 
 //open file and check if it has the right lenght
 //(an interger multiple of the line lenght) if it
@@ -838,6 +934,69 @@ mod tests {
                 let hash2 = NativeEndian::read_u64(decoded);
                 assert_eq!(hash1, hash2);
 		          }
+		        }
+        	} else {panic!(); }
+        }
+
+        #[test]
+        fn hashes_read_skipping_then_verify() {
+          const NUMBER_TO_INSERT: i64 = 1_007;
+          const PERIOD: i64 = 24*3600/NUMBER_TO_INSERT;
+
+          if Path::new("test_read_skipping_then_verify.h").exists() {
+              fs::remove_file("test_read_skipping_then_verify.h").unwrap();
+          }
+          if Path::new("test_read_skipping_then_verify.dat").exists() {
+              fs::remove_file("test_read_skipping_then_verify.dat").unwrap();
+          }
+
+          let time = Utc::now();
+
+          let mut data = Timeseries::open("test_read_skipping_then_verify", 8).unwrap();
+          insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
+          //println!("inserted test data");
+
+          let timestamp = time.timestamp();
+          let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
+          let t2 = DateTime::<Utc>::from_utc(
+              NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0),
+              Utc,
+          );
+
+          if let BoundResult::Ok((mut start_byte, stop_byte, mut decode_params)) = data.get_bounds(t1,t2){
+	          println!("stop: {}, start: {}",stop_byte, start_byte);
+	          let lines_in_range = (stop_byte - start_byte) / ((data.line_size + 2) as u64) +1;
+          	assert_eq!(lines_in_range, (NUMBER_TO_INSERT) as u64);
+
+	          let n = 100;
+	          let loops_to_check_everything =
+	              NUMBER_TO_INSERT / n + if NUMBER_TO_INSERT % n > 0 { 1 } else { 0 };
+
+						if let Some(mut idx_checker) = IdxChecker::new(100, &data, stop_byte, start_byte){
+							dbg!(&idx_checker);
+
+			        let mut timestamps = Vec::new();
+		          let mut line_data = Vec::new();
+			        for _ in 0..loops_to_check_everything {
+		          	data.decode_time_into_given_skipping(
+									&mut timestamps,
+									&mut line_data,
+		            	n as usize,
+		            	&mut start_byte,
+		            	stop_byte,
+		            	&mut decode_params,
+		            	&mut idx_checker,
+		            ).unwrap();
+
+								assert_eq!(timestamps.len(), 100);
+			          for (timestamp, decoded) in timestamps.iter().zip(line_data.chunks(data.line_size)) {
+			            let hash1 = hash64::<i64>(&(*timestamp as i64));
+			            let hash2 = NativeEndian::read_u64(decoded);
+			            assert_eq!(hash1, hash2);
+					      }
+					    }
+						} else {
+							panic!(); //With data len 1007 we should never arrive here
 		        }
         	} else {panic!(); }
         }
