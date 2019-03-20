@@ -586,9 +586,11 @@ impl Timeseries {
         let mut file_pos = *start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
-        for line in buf[..n_read].chunks(self.full_line_size) {
+        for (line, file_pos) in buf[..n_read]
+        .chunks(self.full_line_size)
+        .zip((file_pos..).step_by(self.full_line_size))
+        {
             timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
-            file_pos += self.full_line_size as u64;
             line_data.extend_from_slice(&line[2..]);
         }
         Ok(())
@@ -614,12 +616,13 @@ impl Timeseries {
         let mut file_pos = *start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
-        for line in buf[..n_read]
+        dbg!(n_read);
+        for (line, file_pos) in buf[..n_read]
         .chunks(self.full_line_size)
-        .filter(move |_| idx_checker.use_index(file_pos))
+        .zip((file_pos..).step_by(self.full_line_size))
+        .filter(|_| idx_checker.use_index())
         {
             timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
-            file_pos += self.full_line_size as u64;
             line_data.extend_from_slice(&line[2..]);
         }
         Ok(())
@@ -628,8 +631,9 @@ impl Timeseries {
 
 #[derive(Debug)]
 pub struct IdxChecker {
-	spacing: u64, //in bytes
+	spacing: u64, //in lines
 	counter: u64, //starts at 1
+	current: u64, //starts at 0
 
 	full_line_size: usize,
 	//binsize; usize//in lines
@@ -639,18 +643,19 @@ impl IdxChecker {
 	//
 	fn new(max_plot_points: usize, timeseries: &Timeseries, stop_byte: u64, start_byte: u64) -> Option<Self> {
 		let full_line_size = timeseries.full_line_size;
-		let max_plot_bytes: u64 = (max_plot_points*full_line_size) as u64;
-		let numb_bytes: u64 = (stop_byte-start_byte)/full_line_size as u64;
-		let bytes_to_skip: u64 = numb_bytes % max_plot_bytes;
+		let numb_lines: u64 = (stop_byte-start_byte)/full_line_size as u64;
+		let lines_to_skip: u64 = numb_lines % max_plot_points as u64;
 
-		dbg!(numb_bytes);
-		dbg!(max_plot_bytes);
-		if numb_bytes <= max_plot_bytes {
+		dbg!(numb_lines);
+		dbg!(lines_to_skip);
+		dbg!(max_plot_points);
+		if numb_lines <= max_plot_points as u64 {
      	None
     } else {
 			Some(IdxChecker {
-				spacing: (numb_bytes-full_line_size as u64)/bytes_to_skip,
+				spacing: ((numb_lines-lines_to_skip) as u64)/lines_to_skip,
 				counter: 1,
+				current: 0,
 				full_line_size,
 			})
     }
@@ -665,26 +670,34 @@ impl IdxChecker {
 	}
 
 	//calculate if element with index idx should be used
-	fn use_index(&mut self, file_pos: u64) -> bool {
-		if file_pos == self.counter*self.spacing {
+	fn use_index(&mut self) -> bool {
+		if self.current == self.counter*self.spacing {
 			self.counter+=1;
+			//dont increment the current counter as we will skip this point
 			dbg!("skipping");
+			dbg!(self.current);
+			dbg!(self.counter*self.spacing);
 			false
 		} else {
+			self.current+=1;
 			true
 		}
 	}
 
 	//one and a halve spacing
 	fn n_to_skip(&self, start_byte: &u64, lines_to_read: usize) -> usize {
-		let stop_pos: u64 = start_byte + (self.full_line_size*lines_to_read) as u64;
+		let stop_pos: u64 = self.current + lines_to_read as u64; //can we use current though? what happens after skip?
 		let first_skip_pos: u64 = self.counter*self.spacing;
 
+		dbg!(stop_pos);
 		//check if skip in this read chunk
 		if first_skip_pos > stop_pos {
+			dbg!(0);
 			0
 		} else { //there is at least one skip, check if there are more
 			let numb_of_additional_skips = (stop_pos.saturating_sub(first_skip_pos)/self.spacing) as usize;
+			dbg!(stop_pos.saturating_sub(first_skip_pos));
+			dbg!(1 + numb_of_additional_skips);
 			1 + numb_of_additional_skips
 		}
 	}
@@ -965,16 +978,16 @@ mod tests {
 
           if let BoundResult::Ok((mut start_byte, stop_byte, mut decode_params)) = data.get_bounds(t1,t2){
 	          println!("stop: {}, start: {}",stop_byte, start_byte);
-	          let lines_in_range = (stop_byte - start_byte) / ((data.line_size + 2) as u64) +1;
-          	assert_eq!(lines_in_range, (NUMBER_TO_INSERT) as u64);
+	          let lines_in_range = (stop_byte - start_byte) / ((data.line_size + 2) as u64);
+          	assert_eq!(lines_in_range, (NUMBER_TO_INSERT-1) as u64);
 
 	          let n = 100;
 	          let loops_to_check_everything =
-	              NUMBER_TO_INSERT / n + if NUMBER_TO_INSERT % n > 0 { 1 } else { 0 };
+	              (lines_in_range-6) / n + if (lines_in_range-6) % n > 0 { 1 } else { 0 };
 
 						if let Some(mut idx_checker) = IdxChecker::new(100, &data, stop_byte, start_byte){
 							dbg!(&idx_checker);
-
+							dbg!(loops_to_check_everything);
 			        let mut timestamps = Vec::new();
 		          let mut line_data = Vec::new();
 			        for _ in 0..loops_to_check_everything {
