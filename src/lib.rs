@@ -583,7 +583,7 @@ impl Timeseries {
         line_data.clear();
 
 				//save file pos indicator before read call moves it around
-        let mut file_pos = *start_byte;
+        let file_pos = *start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
         for (line, file_pos) in buf[..n_read]
@@ -604,23 +604,23 @@ impl Timeseries {
 				start_byte: &mut u64,
 				stop_byte: u64,
 				decode_params: &mut DecodeParams,
-				idx_checker: &mut IdxChecker,
+				selector: &mut Selector,
     ) -> Result<(), Error> {
         //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
-        let lines_to_skip = idx_checker.n_to_skip(start_byte, lines_to_read);
+        let lines_to_skip = selector.n_to_skip(lines_to_read);
         let mut buf = vec![0; (lines_to_read + lines_to_skip)* self.full_line_size];//TODO FIXME
         timestamps.clear();
         line_data.clear();
 
 				//save file pos indicator before read call moves it around
-        let mut file_pos = *start_byte;
+        let file_pos = *start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
         dbg!(n_read);
         for (line, file_pos) in buf[..n_read]
         .chunks(self.full_line_size)
         .zip((file_pos..).step_by(self.full_line_size))
-        .filter(|_| idx_checker.use_index())
+        .filter(|_| selector.use_index())
         {
             timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
             line_data.extend_from_slice(&line[2..]);
@@ -630,43 +630,36 @@ impl Timeseries {
 }
 
 #[derive(Debug)]
-pub struct IdxChecker {
+pub struct Selector {
 	spacing: u64, //in lines
 	counter: u64, //starts at 1
 	current: u64, //starts at 0
 
 	full_line_size: usize,
+	pub lines_per_sample: std::num::NonZeroUsize,
 	//binsize; usize//in lines
 }
 
-impl IdxChecker {
+impl Selector {
 	//
-	fn new(max_plot_points: usize, timeseries: &Timeseries, stop_byte: u64, start_byte: u64) -> Option<Self> {
+	pub fn new(max_plot_points: usize, numb_lines: u64, timeseries: &Timeseries) -> Option<Self> {
+		if numb_lines <= max_plot_points as u64 { return None }
+
 		let full_line_size = timeseries.full_line_size;
-		let numb_lines: u64 = (stop_byte-start_byte)/full_line_size as u64;
 		let lines_to_skip: u64 = numb_lines % max_plot_points as u64;
 
 		dbg!(numb_lines);
 		dbg!(lines_to_skip);
 		dbg!(max_plot_points);
-		if numb_lines <= max_plot_points as u64 {
-     	None
-    } else {
-			Some(IdxChecker {
-				spacing: ((numb_lines-lines_to_skip) as u64)/lines_to_skip,
-				counter: 1,
-				current: 0,
-				full_line_size,
-			})
-    }
+		let lines_per_sample = std::num::NonZeroUsize::new((numb_lines / max_plot_points as u64) as usize).unwrap();
 
-		// binsize: if numb_lines < max_plot_resolution {
-		// 	       	 1
-		//          } else {
-		// 	         numb_lines/max_plot_resolution
-		//          }
-
-
+		Some(Self {
+			spacing: ((numb_lines-lines_to_skip) as u64)/lines_to_skip,
+			counter: 1,
+			current: 0,
+			full_line_size,
+			lines_per_sample,
+		})
 	}
 
 	//calculate if element with index idx should be used
@@ -674,9 +667,6 @@ impl IdxChecker {
 		if self.current == self.counter*self.spacing {
 			self.counter+=1;
 			//dont increment the current counter as we will skip this point
-			dbg!("skipping");
-			dbg!(self.current);
-			dbg!(self.counter*self.spacing);
 			false
 		} else {
 			self.current+=1;
@@ -685,7 +675,7 @@ impl IdxChecker {
 	}
 
 	//one and a halve spacing
-	fn n_to_skip(&self, start_byte: &u64, lines_to_read: usize) -> usize {
+	fn n_to_skip(&self, lines_to_read: usize) -> usize {
 		let stop_pos: u64 = self.current + lines_to_read as u64; //can we use current though? what happens after skip?
 		let first_skip_pos: u64 = self.counter*self.spacing;
 
@@ -985,7 +975,8 @@ mod tests {
 	          let loops_to_check_everything =
 	              (lines_in_range-6) / n + if (lines_in_range-6) % n > 0 { 1 } else { 0 };
 
-						if let Some(mut idx_checker) = IdxChecker::new(100, &data, stop_byte, start_byte){
+						let numb_lines: u64 = (stop_byte-start_byte)/data.full_line_size as u64;
+						if let Some(mut idx_checker) = Selector::new(100, numb_lines, &data){
 							dbg!(&idx_checker);
 							dbg!(loops_to_check_everything);
 			        let mut timestamps = Vec::new();
