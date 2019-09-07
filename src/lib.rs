@@ -129,7 +129,7 @@ pub struct Timeseries {
     first_time_in_data: DateTime<Utc>,
     last_time_in_data: DateTime<Utc>,
 
-		pub data_size: u64,
+	pub data_size: u64,
 
     decode_option: DecodeOptions,
 }
@@ -144,8 +144,8 @@ impl Timeseries {
         let (mut data, size) = open_and_check(name.as_ref().with_extension("dat"), line_size+2)?;
         let header = Header::open(name)?;
 
-        let first_time = Self::get_first_time_in_data(&mut data);
-        let last_time = Self::get_last_time_in_data();
+        let first_time = Self::get_first_time_in_data(&header);
+        let last_time = Self::get_last_time_in_data(&mut data, &header, full_line_size);
 
         Ok(Timeseries {
             data: data,
@@ -166,24 +166,32 @@ impl Timeseries {
         })
     }
 
-    fn get_first_time_in_data(data: &mut File) -> DateTime<Utc> {
-        let mut buf = [0; 8]; //rewrite to use bufferd data
-        if data.seek(SeekFrom::Start(0)).is_err() {
-            data.read(&mut buf).unwrap();
-            let timestamp = LittleEndian::read_u64(&buf) as i64;
-            DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc)
+    fn get_first_time_in_data(header: &Header) -> DateTime<Utc> {
+        
+        let timestamp;
+        if let Some(first_header_entry) = header.data.range(0..).nth(0){
+            timestamp = *first_header_entry.0;
+        } else {
+            timestamp = 0;
+        }
+        DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc)
+    }
+
+    fn get_last_time_in_data(data: &mut File, header: &Header, full_line_size: usize)
+         -> DateTime<Utc> {
+        let mut buf = [0u8; 2]; //rewrite to use bufferd data
+        let timestamp;
+
+        if data.seek(SeekFrom::End(- (full_line_size as i64))).is_ok(){
+            data.read_exact(&mut buf).unwrap();
+            let timestamp_low = LittleEndian::read_u16(&buf) as i64;
+            let timestamp_high = header.last_timestamp & (!0b1111_1111_1111_1111);
+            timestamp = timestamp_high | timestamp_low;
         } else {
             warn!("file is empty");
-            Utc::now()
+            timestamp = 0;
         }
-    }
-    fn get_last_time_in_data() -> DateTime<Utc> {
-        //let mut buf = [0; 8]; //rewrite to use bufferd data
-        //let last_timestamp = if !file.seek(SeekFrom::End(-16)).is_err(){;
-        //file.read(&mut buf);
-        //LittleEndian::read_u64(&buf) as i64
-        //} else {warn!("header is empty"); 0};
-        Utc::now()
+        DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc)
     }
 
     pub fn append(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
@@ -548,16 +556,16 @@ impl Timeseries {
     pub fn decode_time(
         &mut self,
         lines_to_read: usize,
-				start_byte: &mut u64,
-				stop_byte: u64,
-				decode_params: &mut DecodeParams,
+		start_byte: &mut u64,
+		stop_byte: u64,
+		decode_params: &mut DecodeParams,
     ) -> Result<(Vec<u64>, Vec<u8>), Error> {
         //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
         let mut buf = vec![0; lines_to_read * self.full_line_size];
 
         let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
         let mut line_data: Vec<u8> = Vec::with_capacity(lines_to_read);
-				//save file pos indicator before read call moves it around
+		//save file pos indicator before read call moves it around
         let mut file_pos = *start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
@@ -568,21 +576,41 @@ impl Timeseries {
         }
         Ok((timestamps, line_data))
     }
+    pub fn decode_last_line(&mut self) -> Result<(DateTime<Utc>, Vec<u8>),Error>{
+        let mut full_line = vec![0;self.full_line_size];
+
+        let mut start_byte = self.data_size-self.full_line_size as u64;
+        let stop_byte = self.data_size;
+
+        let nread = self.read(&mut full_line, &mut start_byte, stop_byte)?;
+        
+        if nread < self.full_line_size {
+            dbg!(nread);
+            let custom_error = Error::new(ErrorKind::Other, "could not read a full line!");
+            return Err(custom_error)
+        }
+
+        full_line.remove(0);
+        full_line.remove(0);
+        let line = full_line;
+        Ok((self.last_time_in_data, line))
+    }
+
     pub fn decode_time_into_given(
         &mut self,
         timestamps: &mut Vec<u64>,
         line_data: &mut Vec<u8>,
         lines_to_read: usize,
-				start_byte: &mut u64,
-				stop_byte: u64,
-				decode_params: &mut DecodeParams,
+		start_byte: &mut u64,
+		stop_byte: u64,
+		decode_params: &mut DecodeParams,
     ) -> Result<(), Error> {
         //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
         let mut buf = vec![0; lines_to_read * self.full_line_size];
         timestamps.clear();
         line_data.clear();
 
-				//save file pos indicator before read call moves it around
+		//save file pos indicator before read call moves it around
         let file_pos = *start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         trace!("read: {} bytes", n_read);
