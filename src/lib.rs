@@ -577,11 +577,14 @@ impl Timeseries {
         Ok((timestamps, line_data))
     }
     pub fn decode_last_line(&mut self) -> Result<(DateTime<Utc>, Vec<u8>),Error>{
-        let mut full_line = vec![0;self.full_line_size];
-
+        if self.data_size < self.full_line_size as u64 {
+            return Err(Error::new(ErrorKind::UnexpectedEof, "No data in file"));
+        }
+        
         let mut start_byte = self.data_size-self.full_line_size as u64;
         let stop_byte = self.data_size;
 
+        let mut full_line = vec![0;self.full_line_size];
         let nread = self.read(&mut full_line, &mut start_byte, stop_byte)?;
         
         if nread < self.full_line_size {
