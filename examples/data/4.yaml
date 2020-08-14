@@ -1,0 +1,17 @@
+---
+name: Ble reliability testing dataset
+description: "A sine wave with amplitude 5_000, and a triangle wave"
+key: 17927389823497195531
+fields:
+  - id: 0
+    name: Sine
+    offset: 0
+    length: 14
+    decode_scale: 1.0
+    decode_add: -5000.0
+  - id: 1
+    name: Triangle
+    offset: 14
+    length: 10
+    decode_scale: 0.05000000074505806
+    decode_add: -10.0
