@@ -2,8 +2,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use chrono::{DateTime, Utc};
 use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
 
-use crate::DecodeParams;
-use crate::Timeseries;
+use crate::data::FullTime;
+use crate::ByteSeries;
 
 #[derive(Debug)]
 struct SearchBounds {
@@ -17,14 +17,45 @@ enum SbResult {
     Bounded(SearchBounds),
 }
 
-#[derive(Debug)]
-pub enum BoundResult {
-    IoError(Error),
+pub enum SeekError {
+    NotFound,
     NoData,
-    Ok((u64, u64, DecodeParams)), // read_params, start_byte, stop_byte
+    IoError(Error),
 }
 
-impl Timeseries {
+impl From<std::io::Error> for SeekError {
+    fn from(e: std::io::Error) -> Self {
+        SeekError::IoError(e)
+    }
+}
+
+pub struct TimeSeek {
+    start: u64,
+    stop: u64,
+    curr: u64,
+    full_time: FullTime,
+}
+
+
+impl TimeSeek {
+    pub fn new(series: &mut ByteSeries, start: chrono::DateTime<Utc>, stop: chrono::DateTime<Utc>) 
+    -> Result<Self, SeekError> { //TODO + error
+         let (start, stop, full_time) = series.get_bounds(start, stop)?;
+    
+         Ok(TimeSeek {
+             start,
+             stop,
+             curr: start,
+             full_time,
+         })
+    }
+    pub fn lines(&self, series: &ByteSeries) -> u64 {
+        (self.stop-self.start)/series.full_line_size
+    }
+}
+
+
+impl ByteSeries {
     //Search for start bounds
     //
     // Finds the requested TS, depending on if it is in the data do the following:
@@ -43,7 +74,7 @@ impl Timeseries {
     fn startread_search_bound(
         &mut self,
         start_time: DateTime<Utc>,
-    ) -> Option<(SbResult, DecodeParams)> {
+    ) -> Option<(SbResult, FullTime)> {
         log::debug!("header data {:?}", self.header.data);
 
         //get header timestamp =< timestamp, marks begin of search area
@@ -68,10 +99,10 @@ impl Timeseries {
                         start: start_search,
                         stop: stop_search,
                     }),
-                    DecodeParams {
-                        current_timestamp: start_timestamp,
-                        next_timestamp,
-                        next_timestamp_pos,
+                    FullTime {
+                        curr: start_timestamp,
+                        next: next_timestamp,
+                        next_pos: next_timestamp_pos,
                     },
                 ))
             } else {
@@ -90,10 +121,10 @@ impl Timeseries {
                             start: start_search,
                             stop: stop_search,
                         }),
-                        DecodeParams {
-                            current_timestamp: start_timestamp,
-                            next_timestamp,
-                            next_timestamp_pos,
+                        FullTime {
+                            curr: start_timestamp,
+                            next: next_timestamp,
+                            next_pos: next_timestamp_pos,
                         },
                     ))
                 } else {
@@ -125,20 +156,20 @@ impl Timeseries {
                 if let Some(header_line) = self.header.data.range(start_timestamp + 1..).next() {
                     let next_timestamp = *header_line.0;
                     let next_timestamp_pos = *header_line.1;
-                    DecodeParams {
-                        current_timestamp: start_timestamp,
-                        next_timestamp,
-                        next_timestamp_pos,
+                    FullTime {
+                        curr: start_timestamp,
+                        next: next_timestamp,
+                        next_pos: next_timestamp_pos,
                     }
                 } else {
                     //use safe defaults
                     let end_of_file = self.data.metadata().unwrap().len();
                     let next_timestamp = i64::max_value() - 1; //-1 prevents overflow
                     let next_timestamp_pos = end_of_file + 2; //+2 makes sure we never switch to the next timestamp
-                    DecodeParams {
-                        current_timestamp: start_timestamp,
-                        next_timestamp,
-                        next_timestamp_pos,
+                    FullTime {
+                        curr: start_timestamp,
+                        next: next_timestamp,
+                        next_pos: next_timestamp_pos,
                     }
                 };
 
@@ -234,38 +265,29 @@ impl Timeseries {
         &mut self,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
-    ) -> BoundResult {
+    ) -> Result<(u64, u64, FullTime), SeekError>{
         //check if the datafile isnt empty
 
         if self.data_size == 0 {
-            return BoundResult::NoData;
+            return Err(SeekError::NoData);
         }
 
         let start_bounds = self.startread_search_bound(start_time);
         if start_bounds.is_none() {
-            let error = Error::new(
-                ErrorKind::NotFound,
-                "start_time TS more recent then last data",
-            );
-            return BoundResult::IoError(error);
+            return Err(SeekError::NoData);
         }
 
         let stop_bounds = self.stopread_search_bounds(end_time);
         if stop_bounds.is_none() {
             let error = Error::new(ErrorKind::NotFound, "end_time older then oldest data");
-            return BoundResult::IoError(error);
+            return Err(SeekError::NoData);
         }
 
         //must be a solvable request
         let (case, decode_params) = start_bounds.unwrap();
         let start_byte = match case {
             SbResult::Bounded(search_bounds) => {
-                //TODO change to use ? operator
-                let start_byte = self.find_read_start(start_time, search_bounds);
-                if let Err(err) = start_byte {
-                    return BoundResult::IoError(err);
-                }
-                start_byte.unwrap()
+                self.find_read_start(start_time, search_bounds)?
             }
             SbResult::Clipped => 0,
         };
@@ -273,12 +295,7 @@ impl Timeseries {
         let case = stop_bounds.unwrap();
         let stop_byte = match case {
             SbResult::Bounded(search_bounds) => {
-                //TODO change to use ? operator
-                let stop_byte = self.find_read_stop(end_time, search_bounds);
-                if let Err(err) = stop_byte {
-                    return BoundResult::IoError(err);
-                }
-                stop_byte.unwrap()
+                let stop_byte = self.find_read_stop(end_time, search_bounds)?;
             }
             SbResult::Clipped => {
                 let end_of_file = self.data.metadata().unwrap().len();
@@ -295,7 +312,7 @@ impl Timeseries {
         );
         log::debug!("start_byte: {}", start_byte);
 
-        BoundResult::Ok((start_byte, stop_byte, decode_params))
+        Ok((start_byte, stop_byte, decode_params))
     }
 
     fn find_read_stop(

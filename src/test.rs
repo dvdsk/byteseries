@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{BoundResult, Selector, Timeseries};
+use crate::{BoundResult, Selector, ByteSeries};
 use byteorder::ByteOrder;
 use byteorder::NativeEndian;
 use byteorder::WriteBytesExt;
@@ -46,7 +46,7 @@ fn setup_debug_logging(verbosity: u8) -> Result<(), fern::InitError> {
 }
 
 fn insert_uniform_arrays(
-    data: &mut Timeseries,
+    data: &mut ByteSeries,
     n_to_insert: u32,
     _step: i64,
     line_size: usize,
@@ -69,7 +69,7 @@ mod appending {
     use std::path::Path;
 
     fn insert_timestamp_hashes(
-        data: &mut Timeseries,
+        data: &mut ByteSeries,
         n_to_insert: u32,
         step: i64,
         time: DateTime<Utc>,
@@ -89,7 +89,7 @@ mod appending {
     }
 
     fn insert_timestamp_arrays(
-        data: &mut Timeseries,
+        data: &mut ByteSeries,
         n_to_insert: u32,
         step: i64,
         time: DateTime<Utc>,
@@ -121,7 +121,7 @@ mod appending {
 
         let time = Utc::now();
 
-        let mut data = Timeseries::open("test_append", LINE_SIZE).unwrap();
+        let mut data = ByteSeries::open("test_append", LINE_SIZE).unwrap();
         insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
         assert_eq!(
@@ -147,7 +147,7 @@ mod appending {
         let timestamp = time.timestamp();
         //println!("now: {}, u8_ts: {}", time, timestamp as u8 );
 
-        let mut data = Timeseries::open("test_set_read", LINE_SIZE).unwrap();
+        let mut data = ByteSeries::open("test_set_read", LINE_SIZE).unwrap();
         insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
         //println!("data length: {}",data.data.metadata().unwrap().len());
 
@@ -178,7 +178,7 @@ mod appending {
 
         let time = Utc::now();
 
-        let mut data = Timeseries::open("test_append_hashes_then_verify", 8).unwrap();
+        let mut data = ByteSeries::open("test_append_hashes_then_verify", 8).unwrap();
         insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
         //println!("inserted test data");
 
@@ -231,7 +231,7 @@ mod appending {
 
         let time = Utc::now();
 
-        let mut data = Timeseries::open("test_read_skipping_then_verify", 8).unwrap();
+        let mut data = ByteSeries::open("test_read_skipping_then_verify", 8).unwrap();
         insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
         //println!("inserted test data");
 
@@ -304,7 +304,7 @@ mod appending {
 
         let time = Utc::now();
 
-        let mut data = Timeseries::open("test_append_timestamps_then_verify", 8).unwrap();
+        let mut data = ByteSeries::open("test_append_timestamps_then_verify", 8).unwrap();
         insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
         //println!("inserted test data");
 
@@ -440,7 +440,7 @@ mod seek {
         let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1539180000, 0), Utc);
         let timestamp = time.timestamp();
         println!("start timestamp {}", timestamp);
-        let mut data = Timeseries::open("test_varing_length", LINE_SIZE).unwrap();
+        let mut data = ByteSeries::open("test_varing_length", LINE_SIZE).unwrap();
 
         insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
@@ -510,7 +510,7 @@ mod seek {
         let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1539180000, 0), Utc);
         let timestamp = time.timestamp();
         println!("start timestamp {}", timestamp);
-        let mut data = Timeseries::open("test_beyond_range", LINE_SIZE).unwrap();
+        let mut data = ByteSeries::open("test_beyond_range", LINE_SIZE).unwrap();
 
         insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 

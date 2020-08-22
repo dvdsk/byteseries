@@ -7,13 +7,10 @@ use std::path::Path;
 
 use crate::header::Header;
 use crate::util::open_and_check;
-use crate::DecodeParams;
 
-//rewrite using cont generics when availible
-//https://github.com/rust-lang/rfcs/blob/master/text/2000-const-generics.md
-pub struct Timeseries {
+pub struct ByteSeries {
     pub data: File,
-    pub header: Header, // add triple headers
+    pub header: Header,
 
     pub line_size: usize,
     pub full_line_size: usize,
@@ -29,8 +26,14 @@ pub struct Timeseries {
 // -- we store only the last 4 bytes of the timestamp ------------------
 // ---------------------------------------------------------------------
 
-impl Timeseries {
-    pub fn open<P: AsRef<Path>>(name: P, line_size: usize) -> Result<Timeseries, Error> {
+pub struct FullTime {
+    curr: i64,
+    next: i64,
+    next_pos: u64,
+}
+
+impl ByteSeries {
+    pub fn open<P: AsRef<Path>>(name: P, line_size: usize) -> Result<ByteSeries, Error> {
         let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
         let (mut data, size) = open_and_check(name.as_ref().with_extension("dat"), line_size + 2)?;
         let header = Header::open(name)?;
@@ -38,7 +41,7 @@ impl Timeseries {
         let first_time = Self::get_first_time_in_data(&header);
         let last_time = Self::get_last_time_in_data(&mut data, &header, full_line_size);
 
-        Ok(Timeseries {
+        Ok(ByteSeries {
             data,
             header, // add triple headers
 
@@ -47,7 +50,7 @@ impl Timeseries {
             timestamp: 0,
 
             first_time_in_data: first_time,
-            last_time_in_data: last_time,
+            last_time_in_data: last_time, 
 
             //these are set during: set_read_start, set_read_end then read is
             //bound by these points
@@ -150,42 +153,42 @@ impl Timeseries {
         line_timestamp
     }
 
-    pub fn get_timestamp<T>(&mut self, line: &[u8], pos: u64, decode_params: &mut DecodeParams) -> T
+    pub fn get_timestamp<T>(&mut self, line: &[u8], pos: u64, full_ts: &mut FullTime) -> T
     where
         T: FromPrimitive,
     {
         //update full timestamp when needed
-        if pos + 1 > decode_params.next_timestamp_pos {
+        if pos + 1 > full_ts.next_pos {
             log::debug!(
                 "updating ts, pos: {}, next ts pos: {}",
                 pos,
-                decode_params.next_timestamp_pos
+                full_ts.next_pos
             );
             //update current timestamp
-            decode_params.current_timestamp = decode_params.next_timestamp;
+            full_ts.curr = full_ts.next;
 
             //set next timestamp and timestamp pos
             //minimum in map greater then current timestamp
             if let Some(next) = self
                 .header
                 .data
-                .range(decode_params.current_timestamp + 1..)
+                .range(full_ts.curr + 1..)
                 .next()
             {
-                decode_params.next_timestamp = *next.0;
-                decode_params.next_timestamp_pos = *next.1;
+                full_ts.next = *next.0;
+                full_ts.next_pos = *next.1;
             } else {
                 //TODO handle edge case, last full timestamp
                 log::debug!(
                     "loaded last timestamp in header, no next TS, current pos: {}",
                     pos
                 );
-                decode_params.next_timestamp = 0;
-                decode_params.next_timestamp_pos = u64::max_value();
+                full_ts.next = 0;
+                full_ts.next_pos = u64::max_value();
             }
         }
         let timestamp_low = LittleEndian::read_u16(line) as u64;
-        let timestamp_high = (decode_params.current_timestamp as u64 >> 16) << 16;
+        let timestamp_high = (full_ts.curr as u64 >> 16) << 16;
         let timestamp = timestamp_high | timestamp_low;
 
         T::from_u64(timestamp).unwrap()
@@ -221,7 +224,7 @@ impl Timeseries {
         lines_to_read: usize,
         start_byte: &mut u64,
         stop_byte: u64,
-        decode_params: &mut DecodeParams,
+        full_ts: &mut FullTime,
     ) -> Result<(Vec<u64>, Vec<u8>), Error> {
         //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
         let mut buf = vec![0; lines_to_read * self.full_line_size];
@@ -233,7 +236,7 @@ impl Timeseries {
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         log::trace!("read: {} bytes", n_read);
         for line in buf[..n_read].chunks(self.full_line_size) {
-            timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
+            timestamps.push(self.get_timestamp::<u64>(line, file_pos, full_ts));
             file_pos += self.full_line_size as u64;
             line_data.extend_from_slice(&line[2..]);
         }
