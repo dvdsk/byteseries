@@ -1,7 +1,7 @@
-use byteseries::{Series};
-use chrono::{Utc, DateTime, NaiveDateTime};
-use fxhash::hash64;
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
+use byteseries::Series;
+use chrono::{DateTime, NaiveDateTime, Utc};
+use fxhash::hash64;
 
 pub fn insert_uniform_arrays(
     data: &mut Series,

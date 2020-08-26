@@ -2,8 +2,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use chrono::{DateTime, Utc};
 use std::io::{Read, Seek, SeekFrom};
 
-use crate::header::SearchBounds;
 use crate::data::FullTime;
+use crate::header::SearchBounds;
 use crate::ByteSeries;
 use crate::Error;
 
@@ -29,24 +29,25 @@ pub struct TimeSeek {
     pub full_time: FullTime,
 }
 
-
 impl TimeSeek {
-    pub fn new(series: &mut ByteSeries, start: chrono::DateTime<Utc>, stop: chrono::DateTime<Utc>) 
-    -> Result<Self, Error> { 
-         let (start, stop, full_time) = series.get_bounds(start, stop)?;
-    
-         Ok(TimeSeek {
-             start,
-             stop,
-             curr: start,
-             full_time,
-         })
+    pub fn new(
+        series: &mut ByteSeries,
+        start: chrono::DateTime<Utc>,
+        stop: chrono::DateTime<Utc>,
+    ) -> Result<Self, Error> {
+        let (start, stop, full_time) = series.get_bounds(start, stop)?;
+
+        Ok(TimeSeek {
+            start,
+            stop,
+            curr: start,
+            full_time,
+        })
     }
     pub fn lines(&self, series: &ByteSeries) -> u64 {
-        (self.stop-self.start)/(series.full_line_size as u64)
+        (self.stop - self.start) / (series.full_line_size as u64)
     }
 }
-
 
 impl ByteSeries {
     fn find_read_start(
@@ -78,7 +79,7 @@ impl ByteSeries {
         &mut self,
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
-    ) -> Result<(u64, u64, FullTime), SeekError>{
+    ) -> Result<(u64, u64, FullTime), SeekError> {
         //check if the datafile isnt empty
 
         if self.data_size == 0 {
@@ -92,8 +93,9 @@ impl ByteSeries {
         }
 
         let (start_bound, stop_bound, full_time) = self
-            .header.search_bounds(start_time.timestamp(),end_time.timestamp());
-        
+            .header
+            .search_bounds(start_time.timestamp(), end_time.timestamp());
+
         //must be a solvable request
         let start_byte = match start_bound {
             SearchBounds::Found(pos) => pos,
@@ -102,21 +104,17 @@ impl ByteSeries {
                 let end = self.data_size;
                 self.find_read_start(start_time, start, end)?
             }
-            SearchBounds::Window(start,stop) => {
-                self.find_read_start(start_time, start, stop)?
-            }
+            SearchBounds::Window(start, stop) => self.find_read_start(start_time, start, stop)?,
         };
 
         let stop_byte = match stop_bound {
-            SearchBounds::Found(pos) => pos, 
+            SearchBounds::Found(pos) => pos,
             SearchBounds::TillEnd(pos) => {
                 let end = self.data_size;
                 self.find_read_stop(end_time, pos, end)?
             }
-            SearchBounds::Window(start,stop) => {
-                self.find_read_stop(end_time, start, stop)?
-            }
-            SearchBounds::Clipped => panic!("should never occur")
+            SearchBounds::Window(start, stop) => self.find_read_stop(end_time, start, stop)?,
+            SearchBounds::Clipped => panic!("should never occur"),
         };
 
         log::debug!(
@@ -144,7 +142,7 @@ impl ByteSeries {
 
         log::trace!("buf.len(): {}", buf.len());
         dbg!(buf.len());
-        dbg!(self.full_line_size +1);
+        dbg!(self.full_line_size + 1);
         for line_start in (0..buf.len() - self.full_line_size + 1)
             .rev()
             .step_by(self.full_line_size)

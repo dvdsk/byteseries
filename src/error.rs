@@ -11,4 +11,3 @@ pub enum Error {
     #[error("could not find times")]
     Seek(#[from] SeekError),
 }
-

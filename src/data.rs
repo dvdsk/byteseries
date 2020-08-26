@@ -5,9 +5,9 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use crate::Error;
 use crate::header::Header;
 use crate::util::open_and_check;
+use crate::Error;
 
 #[derive(Debug)]
 pub struct ByteSeries {
@@ -52,7 +52,7 @@ impl ByteSeries {
             timestamp: 0,
 
             first_time_in_data: first_time,
-            last_time_in_data: last_time, 
+            last_time_in_data: last_time,
 
             //these are set during: set_read_start, set_read_end then read is
             //bound by these points
@@ -96,7 +96,7 @@ impl ByteSeries {
         //(needed no more then once every 18 hours)
         self.update_header()?;
         self.data_size += self.full_line_size as u64;
-        
+
         self.last_time_in_data = Some(time.timestamp());
         self.first_time_in_data.get_or_insert(time.timestamp());
         Ok(())
@@ -148,7 +148,7 @@ impl ByteSeries {
 
             //set next timestamp and timestamp pos
             //minimum in map greater then current timestamp
-            if let Some(next) = self.header.next_full_timestamp(full_ts.curr){
+            if let Some(next) = self.header.next_full_timestamp(full_ts.curr) {
                 full_ts.next = Some(next.timestamp);
                 full_ts.next_pos = Some(next.pos);
             } else {
@@ -189,7 +189,7 @@ impl ByteSeries {
             log::trace!("nread: {}, {}, {}", nread, start_byte, stop_byte);
             nread
         };
-        *start_byte += nread as u64; //todo move to seek? 
+        *start_byte += nread as u64; //todo move to seek?
         Ok(nread - nread % self.full_line_size)
     }
 

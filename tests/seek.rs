@@ -1,16 +1,15 @@
 #![cfg(test)]
 
-use byteseries::{Series, TimeSeek, Decoder, EmptyDecoder, SamplerBuilder};
+use byteseries::{Decoder, EmptyDecoder, SamplerBuilder, Series, TimeSeek};
 
 use byteorder::ByteOrder;
 use byteorder::NativeEndian;
 use byteorder::WriteBytesExt;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use fern::colors::{Color, ColoredLevelConfig};
+use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
-use std::fs;
-
 
 #[test]
 fn varing_length() {
@@ -47,8 +46,7 @@ fn varing_length() {
         Utc,
     );
 
-    if let BoundResult::Ok((mut start_byte, stop_byte, mut decode_params)) =
-        data.get_bounds(t1, t2)
+    if let BoundResult::Ok((mut start_byte, stop_byte, mut decode_params)) = data.get_bounds(t1, t2)
     {
         println!(
             "t1: {}, t2: {}, start_byte: {}, stop_byte: {}",
@@ -122,4 +120,3 @@ fn beyond_range() {
         panic!();
     }
 }
-

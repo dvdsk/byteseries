@@ -1,8 +1,8 @@
-use byteseries::{Series, EmptyDecoder, SamplerBuilder};
-use chrono::{Duration, DateTime, NaiveDateTime, Utc};
+use byteseries::{EmptyDecoder, SamplerBuilder, Series};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 
 fn main() {
-    let mut decoder = EmptyDecoder{};
+    let mut decoder = EmptyDecoder {};
     let mut ts = Series::open("examples/data/4", 24).unwrap();
     let (endtime, data) = ts.last_line(&mut decoder).unwrap();
     dbg!(endtime);
@@ -13,7 +13,8 @@ fn main() {
         .points(10)
         .start(endtime - Duration::hours(90))
         .stop(endtime)
-        .finish().unwrap();
+        .finish()
+        .unwrap();
 
     sampler.sample(10);
 }

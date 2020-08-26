@@ -1,16 +1,15 @@
 #![cfg(test)]
 
-use byteseries::{Series, SamplerBuilder, Decoder};
+use byteorder::{ByteOrder, NativeEndian};
+use byteseries::{Decoder, SamplerBuilder, Series};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use fern::colors::{Color, ColoredLevelConfig};
+use fxhash::hash64;
 use std::fs;
 use std::path::Path;
-use chrono::{DateTime, NaiveDateTime, Utc};
-use byteorder::{NativeEndian, ByteOrder};
-use fxhash::hash64;
 
 mod shared;
-use shared::{insert_uniform_arrays, insert_timestamp_hashes, insert_timestamp_arrays};
-
+use shared::{insert_timestamp_arrays, insert_timestamp_hashes, insert_uniform_arrays};
 
 #[allow(dead_code)]
 fn setup_debug_logging(verbosity: u8) -> Result<(), fern::InitError> {
@@ -70,9 +69,7 @@ fn basic() {
         fs::metadata("test_append.dat").unwrap().len(),
         ((LINE_SIZE + 2) as u32 * N_TO_INSERT) as u64
     );
-    assert_eq!(
-        fs::metadata("test_append.h").unwrap().len(),
-        16);
+    assert_eq!(fs::metadata("test_append.h").unwrap().len(), 16);
 }
 
 /*#[test]
@@ -119,7 +116,7 @@ fn test_set_read() {
 struct HashDecoder {}
 
 impl Decoder<u64> for HashDecoder {
-    fn decode(&mut self, bytes: &[u8], out: &mut Vec<u64>){
+    fn decode(&mut self, bytes: &[u8], out: &mut Vec<u64>) {
         let hash = NativeEndian::read_u64(bytes);
         out.push(hash);
     }
@@ -149,16 +146,17 @@ fn hashes_then_verify() {
     );
 
     let n = 8_000;
-    let mut decoder = HashDecoder{};
+    let mut decoder = HashDecoder {};
     let mut sampler = SamplerBuilder::new(&data, &mut decoder)
         .points(n)
         .start(t1)
         .stop(t2)
-        .finish().unwrap();
+        .finish()
+        .unwrap();
 
     sampler.sample(n);
-    
-    for (timestamp, hash) in sampler.into_iter() { 
+
+    for (timestamp, hash) in sampler.into_iter() {
         let correct = hash64::<i64>(&(timestamp as i64));
         assert_eq!(hash, correct);
     }
@@ -189,17 +187,18 @@ fn hashes_read_skipping_then_verify() {
     );
 
     let n = 100;
-    let mut decoder = HashDecoder{};
+    let mut decoder = HashDecoder {};
     let mut sampler = SamplerBuilder::new(&data, &mut decoder)
         .points(n)
         .start(t1)
         .stop(t2)
-        .finish().unwrap();
+        .finish()
+        .unwrap();
 
     sampler.sample(n);
-   
+
     assert_eq!(sampler.values().len(), n);
-    for (timestamp, hash) in sampler.into_iter() { 
+    for (timestamp, hash) in sampler.into_iter() {
         let correct = hash64::<i64>(&(timestamp as i64));
         assert_eq!(hash, correct);
     }
@@ -209,7 +208,7 @@ fn hashes_read_skipping_then_verify() {
 struct TimestampDecoder {}
 
 impl Decoder<i64> for TimestampDecoder {
-    fn decode(&mut self, bytes: &[u8], out: &mut Vec<i64>){
+    fn decode(&mut self, bytes: &[u8], out: &mut Vec<i64>) {
         let ts = NativeEndian::read_i64(bytes);
         out.push(ts);
     }
@@ -243,27 +242,25 @@ fn timestamps_then_verify() {
     );
 
     let n = 8_000;
-    let mut decoder = TimestampDecoder{};
+    let mut decoder = TimestampDecoder {};
     let mut sampler = SamplerBuilder::new(&data, &mut decoder)
         .points(n)
         .start(t1)
         .stop(t2)
-        .finish().unwrap();
+        .finish()
+        .unwrap();
 
     sampler.sample(n);
-   
+
     assert_eq!(sampler.values().len(), n);
     let mut prev = None;
-    for (i, (timestamp, decoded)) in sampler.into_iter().enumerate() { 
+    for (i, (timestamp, decoded)) in sampler.into_iter().enumerate() {
         let correct = timestamp as i64;
-        assert_eq!(decoded, correct,
+        assert_eq!(
+            decoded, correct,
             "failed on element: {}, which should have ts: {}, but has been given {},
             prev element has ts: {:?}, the step is: {}",
-            i,
-            timestamp,
-            decoded,
-            prev,
-            PERIOD
+            i, timestamp, decoded, prev, PERIOD
         );
         prev = Some(timestamp);
     }

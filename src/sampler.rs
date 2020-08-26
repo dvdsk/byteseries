@@ -1,11 +1,12 @@
-use crate::{Series, TimeSeek, Error};
 use crate::data::ByteSeries;
+use crate::{Error, Series, TimeSeek};
 
-pub trait Decoder<T> : std::fmt::Debug
-where T: std::fmt::Debug
+pub trait Decoder<T>: std::fmt::Debug
+where
+    T: std::fmt::Debug,
 {
     fn decode(&mut self, bytes: &[u8], out: &mut Vec<T>);
-    fn decoded(&mut self, bytes: &[u8]) -> Vec<T>{
+    fn decoded(&mut self, bytes: &[u8]) -> Vec<T> {
         let mut values = Vec::new();
         self.decode(bytes, &mut values);
         values
@@ -15,13 +16,13 @@ where T: std::fmt::Debug
 #[derive(Debug)]
 pub struct EmptyDecoder {}
 impl Decoder<u8> for EmptyDecoder {
-    fn decode(&mut self, bytes: &[u8], out: &mut Vec<u8>){
+    fn decode(&mut self, bytes: &[u8], out: &mut Vec<u8>) {
         out.extend_from_slice(&bytes[2..]);
     }
 }
 
 #[derive(Debug)]
-pub struct Sampler<'a, T> 
+pub struct Sampler<'a, T>
 // where T: std::fmt::Debug
 {
     series: Series,
@@ -35,8 +36,7 @@ pub struct Sampler<'a, T>
     decoded_per_line: usize,
 }
 
-
-pub struct SamplerBuilder<'a,T> {
+pub struct SamplerBuilder<'a, T> {
     series: Series,
     decoder: &'a mut (dyn Decoder<T> + 'a),
     start: Option<chrono::DateTime<chrono::Utc>>,
@@ -44,11 +44,11 @@ pub struct SamplerBuilder<'a,T> {
     points: Option<usize>,
 }
 
-
-impl<'a, T> SamplerBuilder<'a, T> 
-where T: std::fmt::Debug
+impl<'a, T> SamplerBuilder<'a, T>
+where
+    T: std::fmt::Debug,
 {
-    pub fn new(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a), ) -> Self {
+    pub fn new(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)) -> Self {
         Self {
             series: series.clone(),
             decoder,
@@ -58,22 +58,33 @@ where T: std::fmt::Debug
         }
     }
     pub fn start(mut self, start: chrono::DateTime<chrono::Utc>) -> Self {
-        self.start = Some(start); self
+        self.start = Some(start);
+        self
     }
     pub fn stop(mut self, stop: chrono::DateTime<chrono::Utc>) -> Self {
-        self.stop = Some(stop); self
+        self.stop = Some(stop);
+        self
     }
     pub fn points(mut self, n: usize) -> Self {
-        self.points = Some(n); self
+        self.points = Some(n);
+        self
     }
-    pub fn finish(self) -> Result<Sampler<'a,T>, Error> {
-        let Self{series, decoder, start, stop, points} = self;
+    pub fn finish(self) -> Result<Sampler<'a, T>, Error> {
+        let Self {
+            series,
+            decoder,
+            start,
+            stop,
+            points,
+        } = self;
         let mut byteseries = series.shared.lock().unwrap();
         let start = start.unwrap();
         let stop = stop.unwrap();
         let seek = TimeSeek::new(&mut byteseries, start, stop)?;
-        let selector = points.map(|p| Selector::new(p, seek.lines(&byteseries), &byteseries)).flatten();
-        
+        let selector = points
+            .map(|p| Selector::new(p, seek.lines(&byteseries), &byteseries))
+            .flatten();
+
         let dummy = vec![0u8; byteseries.full_line_size];
         let decoded_per_line = decoder.decoded(&dummy).len();
         drop(byteseries);
@@ -91,30 +102,34 @@ where T: std::fmt::Debug
     }
 }
 
-
-impl<'a,T> Sampler<'a,T> 
-where T: std::fmt::Debug
+impl<'a, T> Sampler<'a, T>
+where
+    T: std::fmt::Debug,
 {
-    ///decodes and averages enough lines to get n samples unless the end of the file 
+    ///decodes and averages enough lines to get n samples unless the end of the file
     ///given range is reached
     pub fn sample(&mut self, n: usize) {
         self.time.reserve_exact(self.values.len());
-        self.values.reserve_exact(self.values.len()+self.decoded_per_line);
-        
+        self.values
+            .reserve_exact(self.values.len() + self.decoded_per_line);
+
         let mut series = self.series.clone();
         let mut byteseries = series.lock();
-        let n_read = byteseries.read(&mut self.buff, &mut self.seek.start, self.seek.stop).unwrap();
+        let n_read = byteseries
+            .read(&mut self.buff, &mut self.seek.start, self.seek.stop)
+            .unwrap();
 
         let seek = &mut self.seek;
         let selector = &mut self.selector;
         let full_line_size = byteseries.full_line_size;
 
-        for(line, pos) in self.buff[..n_read]
+        for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
             .zip((seek.curr..).step_by(full_line_size))
             .filter(|_| selector.as_mut().map(|s| s.use_index()).unwrap_or(true))
         {
-            self.time.push(byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time));
+            self.time
+                .push(byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time));
             self.decoder.decode(&line[2..], &mut self.values);
         }
         drop(byteseries);
@@ -124,16 +139,16 @@ where T: std::fmt::Debug
     pub fn done(&self) -> bool {
         self.seek.curr == self.seek.stop
     }
-    ///swap the time and values vectors with the given ones, returning the 
+    ///swap the time and values vectors with the given ones, returning the
     ///origional
-    pub fn swap_data(&mut self, times: &mut Vec<i64>, value: &mut Vec<T>){
+    pub fn swap_data(&mut self, times: &mut Vec<i64>, value: &mut Vec<T>) {
         std::mem::swap(&mut self.time, times);
         std::mem::swap(&mut self.values, value);
     }
     ///de-constructs the sampler into the time and values data
-    pub fn into_data(self) -> (Vec<i64>,Vec<T>) {
-        let Sampler {time, values, ..} = self;
-        (time, values) 
+    pub fn into_data(self) -> (Vec<i64>, Vec<T>) {
+        let Sampler { time, values, .. } = self;
+        (time, values)
     }
     ///return the read values as slice
     pub fn values(&self) -> &[T] {
@@ -141,12 +156,13 @@ where T: std::fmt::Debug
     }
 }
 
-impl<'a,T> std::iter::IntoIterator for Sampler<'a,T> 
-where T: std::fmt::Debug
+impl<'a, T> std::iter::IntoIterator for Sampler<'a, T>
+where
+    T: std::fmt::Debug,
 {
     type Item = (i64, T);
-    type IntoIter = std::iter::Zip<std::vec::IntoIter<i64>,std::vec::IntoIter<T>>;
-    
+    type IntoIter = std::iter::Zip<std::vec::IntoIter<i64>, std::vec::IntoIter<T>>;
+
     fn into_iter(self) -> Self::IntoIter {
         let (time, values) = self.into_data();
         time.into_iter().zip(values.into_iter())
