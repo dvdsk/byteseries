@@ -12,7 +12,7 @@ mod util;
 
 use data::ByteSeries;
 pub use error::Error;
-pub use sampler::{Decoder, EmptyDecoder, SamplerBuilder};
+pub use sampler::{Decoder, EmptyDecoder, Sampler, SamplerBuilder};
 pub use search::TimeSeek;
 
 #[derive(Debug, Clone)]
