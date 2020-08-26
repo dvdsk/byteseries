@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 chrono = "0.4.6"
+thiserror = "1.0"
 log = "0.4.5"
 fern = { version = "0.6", features = ["colored"] }
 byteorder = "1.2.6"

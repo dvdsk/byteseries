@@ -1,45 +1,38 @@
 use byteorder::{ByteOrder, LittleEndian};
 use chrono::{DateTime, Utc};
-use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 
+use crate::header::SearchBounds;
 use crate::data::FullTime;
 use crate::ByteSeries;
+use crate::Error;
 
-#[derive(Debug)]
-struct SearchBounds {
-    start: u64,
-    stop: u64,
-}
-
-#[derive(Debug)]
-enum SbResult {
-    Clipped,
-    Bounded(SearchBounds),
-}
-
+#[derive(thiserror::Error, Debug)]
 pub enum SeekError {
+    #[error("could not find timestamp in this series")]
     NotFound,
-    NoData,
-    IoError(Error),
+    #[error("data file is empty")]
+    EmptyFile,
+    #[error("no data to return as the start time is after the last time in the data")]
+    StartAfterData,
+    #[error("no data to return as the stop time is before the data")]
+    StopBeforeData,
+    #[error("error while searching through data")]
+    Io(#[from] std::io::Error),
 }
 
-impl From<std::io::Error> for SeekError {
-    fn from(e: std::io::Error) -> Self {
-        SeekError::IoError(e)
-    }
-}
-
+#[derive(Debug)]
 pub struct TimeSeek {
-    start: u64,
-    stop: u64,
-    curr: u64,
-    full_time: FullTime,
+    pub start: u64,
+    pub stop: u64,
+    pub curr: u64,
+    pub full_time: FullTime,
 }
 
 
 impl TimeSeek {
     pub fn new(series: &mut ByteSeries, start: chrono::DateTime<Utc>, stop: chrono::DateTime<Utc>) 
-    -> Result<Self, SeekError> { //TODO + error
+    -> Result<Self, Error> { 
          let (start, stop, full_time) = series.get_bounds(start, stop)?;
     
          Ok(TimeSeek {
@@ -50,141 +43,21 @@ impl TimeSeek {
          })
     }
     pub fn lines(&self, series: &ByteSeries) -> u64 {
-        (self.stop-self.start)/series.full_line_size
+        (self.stop-self.start)/(series.full_line_size as u64)
     }
 }
 
 
 impl ByteSeries {
-    //Search for start bounds
-    //
-    // Finds the requested TS, depending on if it is in the data do the following:
-    //
-    // case_A -- start_of_data -- case_B -- ?case_C?-- end_of_data -- ?case_C?--  case_D
-    //
-    // case A: requested TS before start of data
-    //	-> CLIP [set read to start of file?]
-    // case B: requested TS guaranteed within data
-    //	-> SEARCH [largest header before B time, entry after B or EOF]
-    // case C: requested TS might be within data or after
-    //	-> SEARCH [largest header before B time, EOF]
-    // case D: requested TS guaranteed outside of data
-    //	-> ERROR
-    //
-    fn startread_search_bound(
-        &mut self,
-        start_time: DateTime<Utc>,
-    ) -> Option<(SbResult, FullTime)> {
-        log::debug!("header data {:?}", self.header.data);
-
-        //get header timestamp =< timestamp, marks begin of search area
-        if let Some(header_line) = self
-            .header
-            .data
-            .range(..(start_time.timestamp() + 1))
-            .next_back()
-        {
-            //Case B, C or D
-            let start_search = *header_line.1;
-            let start_timestamp = *header_line.0;
-
-            //timestamp in header >= then sought timestamp, marks end of search area
-            if let Some(header_line) = self.header.data.range(start_time.timestamp() + 1..).next() {
-                //Case B -> return search area
-                let next_timestamp = *header_line.0;
-                let next_timestamp_pos = *header_line.1;
-                let stop_search = next_timestamp_pos;
-                Some((
-                    SbResult::Bounded(SearchBounds {
-                        start: start_search,
-                        stop: stop_search,
-                    }),
-                    FullTime {
-                        curr: start_timestamp,
-                        next: next_timestamp,
-                        next_pos: next_timestamp_pos,
-                    },
-                ))
-            } else {
-                //Case C or D -> determine which
-                if start_time <= self.last_time_in_data.unwrap() {
-                    //TODO refactor remove unwrap could crash here
-                    //Case C ->return search area clipped at EOF
-                    let next_timestamp = i64::max_value() - 1;
-                    //search at the most to the end of the file
-                    let end_of_file = self.data.metadata().unwrap().len();
-                    let stop_search = end_of_file.saturating_sub(self.full_line_size as u64);
-                    //never switch to a new full timestamp as there are non
-                    let next_timestamp_pos = end_of_file + 2; //TODO refactor try stop_search = next timestamp pos
-                    Some((
-                        SbResult::Bounded(SearchBounds {
-                            start: start_search,
-                            stop: stop_search,
-                        }),
-                        FullTime {
-                            curr: start_timestamp,
-                            next: next_timestamp,
-                            next_pos: next_timestamp_pos,
-                        },
-                    ))
-                } else {
-                    log::debug!(
-                        "start_time: {}, last_in_data: {:?}",
-                        start_time,
-                        self.last_time_in_data
-                    );
-                    //Case D -> no data within user requested interval
-                    None
-                }
-            }
-        } else {
-            //Case A -> clip to start of file
-            log::warn!("start TS earlier then start of data -> start_byte = 0");
-            //there should always be a header in a non empty file, thus if start_time results in
-            //Case A then the following cant fail.
-            let header_line = self
-                .header
-                .data
-                .range(start_time.timestamp() + 1..)
-                .next()
-                .expect("no header found, these should always be one header! datafile is corrupt");
-            //get the start timestamp from this header
-            let start_timestamp = *header_line.0;
-
-            //check if there is another header
-            let decode_params =
-                if let Some(header_line) = self.header.data.range(start_timestamp + 1..).next() {
-                    let next_timestamp = *header_line.0;
-                    let next_timestamp_pos = *header_line.1;
-                    FullTime {
-                        curr: start_timestamp,
-                        next: next_timestamp,
-                        next_pos: next_timestamp_pos,
-                    }
-                } else {
-                    //use safe defaults
-                    let end_of_file = self.data.metadata().unwrap().len();
-                    let next_timestamp = i64::max_value() - 1; //-1 prevents overflow
-                    let next_timestamp_pos = end_of_file + 2; //+2 makes sure we never switch to the next timestamp
-                    FullTime {
-                        curr: start_timestamp,
-                        next: next_timestamp,
-                        next_pos: next_timestamp_pos,
-                    }
-                };
-
-            Some((SbResult::Clipped, decode_params))
-        }
-    }
-
     fn find_read_start(
         &mut self,
         start_time: DateTime<Utc>,
-        search_params: SearchBounds,
-    ) -> Result<u64, Error> {
+        start: u64,
+        stop: u64,
+    ) -> Result<u64, SeekError> {
         //compare partial (16 bit) timestamps in between the bounds
-        let mut buf = vec![0u8; (search_params.stop - search_params.start) as usize];
-        self.data.seek(SeekFrom::Start(search_params.start))?;
+        let mut buf = vec![0u8; (stop - start) as usize];
+        self.data.seek(SeekFrom::Start(start))?;
         self.data.read_exact(&mut buf)?;
 
         for line_start in (0..buf.len().saturating_sub(2)).step_by(self.full_line_size) {
@@ -192,73 +65,13 @@ impl ByteSeries {
                 >= start_time.timestamp() as u16
             {
                 log::debug!("setting start_byte from liniar search, pos: {}", line_start);
-                let start_byte = search_params.start + line_start as u64;
+                let start_byte = start + line_start as u64;
                 return Ok(start_byte);
             }
         }
 
         //no data more recent then start time within bounds, return location of most recent data
-        Ok(search_params.stop)
-    }
-
-    //Search for stop bounds
-    //
-    // Finds the requested TS, depending on if it is in the data do the following:
-    //
-    // case_A -- start_of_data -- case_B -- ?case_C?-- end_of_data -- ?case_C?--  case_D
-    //
-    // case A: requested TS before start of data
-    //	-> ERROR, no data can possibly be read now
-    // case B: requested TS guaranteed within data
-    //	-> SEARCH [largest header before B time, entry after B or EOF]
-    // case C: requested TS might be within data or after
-    //	-> SEARCH [largest header before B time, EOF]
-    // case D: requested TS guaranteed outside of data
-    //	-> CLIP, clipping to end
-    //
-    fn stopread_search_bounds(&mut self, start_time: DateTime<Utc>) -> Option<SbResult> {
-        log::debug!("header data {:?}", self.header.data);
-        //get header timestamp =< timestamp, marks begin of search area
-        if let Some(header_line) = self
-            .header
-            .data
-            .range(..(start_time.timestamp() + 1))
-            .next_back()
-        {
-            //Case B, C or D
-            let start_search = *header_line.1;
-
-            //timestamp in header >= then sought timestamp, marks end of search area
-            if let Some(header_line) = self.header.data.range(start_time.timestamp() + 1..).next() {
-                //Case B -> return search area
-                let next_timestamp_pos = *header_line.1;
-                let stop_search = next_timestamp_pos;
-                Some(SbResult::Bounded(SearchBounds {
-                    start: start_search,
-                    stop: stop_search,
-                }))
-            } else {
-                //Case D or C -> determine which
-                if start_time <= self.last_time_in_data.unwrap() {
-                    //TODO refactor handle unwrap crash
-                    //Case D ->return search area
-                    //search at the most to the end of the file
-                    let end_of_file = self.data.metadata().unwrap().len();
-                    let stop_search = end_of_file.saturating_sub(self.full_line_size as u64);
-                    Some(SbResult::Bounded(SearchBounds {
-                        start: start_search,
-                        stop: stop_search,
-                    }))
-                } else {
-                    //Case D
-                    Some(SbResult::Clipped)
-                }
-            }
-        } else {
-            //Case A -> ERROR
-            log::warn!("start TS earlier then start of data -> start_byte = 0");
-            None
-        }
+        Ok(stop)
     }
 
     pub fn get_bounds(
@@ -269,38 +82,41 @@ impl ByteSeries {
         //check if the datafile isnt empty
 
         if self.data_size == 0 {
-            return Err(SeekError::NoData);
+            return Err(SeekError::EmptyFile);
+        }
+        if start_time.timestamp() >= self.last_time_in_data.unwrap() {
+            return Err(SeekError::StartAfterData);
+        }
+        if end_time.timestamp() <= self.first_time_in_data.unwrap() {
+            return Err(SeekError::StopBeforeData);
         }
 
-        let start_bounds = self.startread_search_bound(start_time);
-        if start_bounds.is_none() {
-            return Err(SeekError::NoData);
-        }
-
-        let stop_bounds = self.stopread_search_bounds(end_time);
-        if stop_bounds.is_none() {
-            let error = Error::new(ErrorKind::NotFound, "end_time older then oldest data");
-            return Err(SeekError::NoData);
-        }
-
+        let (start_bound, stop_bound, full_time) = self
+            .header.search_bounds(start_time.timestamp(),end_time.timestamp());
+        
         //must be a solvable request
-        let (case, decode_params) = start_bounds.unwrap();
-        let start_byte = match case {
-            SbResult::Bounded(search_bounds) => {
-                self.find_read_start(start_time, search_bounds)?
+        let start_byte = match start_bound {
+            SearchBounds::Found(pos) => pos,
+            SearchBounds::Clipped => 0,
+            SearchBounds::TillEnd(start) => {
+                let end = self.data_size;
+                self.find_read_start(start_time, start, end)?
             }
-            SbResult::Clipped => 0,
+            SearchBounds::Window(start,stop) => {
+                self.find_read_start(start_time, start, stop)?
+            }
         };
 
-        let case = stop_bounds.unwrap();
-        let stop_byte = match case {
-            SbResult::Bounded(search_bounds) => {
-                let stop_byte = self.find_read_stop(end_time, search_bounds)?;
+        let stop_byte = match stop_bound {
+            SearchBounds::Found(pos) => pos, 
+            SearchBounds::TillEnd(pos) => {
+                let end = self.data_size;
+                self.find_read_stop(end_time, pos, end)?
             }
-            SbResult::Clipped => {
-                let end_of_file = self.data.metadata().unwrap().len();
-                end_of_file.saturating_sub(self.full_line_size as u64)
+            SearchBounds::Window(start,stop) => {
+                self.find_read_stop(end_time, start, stop)?
             }
+            SearchBounds::Clipped => panic!("should never occur")
         };
 
         log::debug!(
@@ -312,20 +128,23 @@ impl ByteSeries {
         );
         log::debug!("start_byte: {}", start_byte);
 
-        Ok((start_byte, stop_byte, decode_params))
+        Ok((start_byte, stop_byte, full_time))
     }
 
     fn find_read_stop(
         &mut self,
         end_time: DateTime<Utc>,
-        search_params: SearchBounds,
-    ) -> Result<u64, Error> {
+        start: u64,
+        stop: u64,
+    ) -> Result<u64, SeekError> {
         //compare partial (16 bit) timestamps in between these bounds
-        let mut buf = vec![0u8; (search_params.stop - search_params.start) as usize];
-        self.data.seek(SeekFrom::Start(search_params.start))?;
+        let mut buf = vec![0u8; (stop - start) as usize];
+        self.data.seek(SeekFrom::Start(start))?;
         self.data.read_exact(&mut buf)?;
 
         log::trace!("buf.len(): {}", buf.len());
+        dbg!(buf.len());
+        dbg!(self.full_line_size +1);
         for line_start in (0..buf.len() - self.full_line_size + 1)
             .rev()
             .step_by(self.full_line_size)
@@ -335,10 +154,10 @@ impl ByteSeries {
                 <= end_time.timestamp() as u16
             {
                 log::debug!("setting start_byte from liniar search, start of search area");
-                let stop_byte = search_params.start + line_start as u64;
+                let stop_byte = start + line_start as u64;
                 return Ok(stop_byte);
             }
         }
-        Ok(search_params.stop)
+        Ok(stop)
     }
 }

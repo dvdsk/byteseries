@@ -1,13 +1,15 @@
 use byteorder::{ByteOrder, LittleEndian};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use num_traits::cast::FromPrimitive;
 use std::fs::File;
-use std::io::{Error, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use crate::Error;
 use crate::header::Header;
 use crate::util::open_and_check;
 
+#[derive(Debug)]
 pub struct ByteSeries {
     pub data: File,
     pub header: Header,
@@ -16,8 +18,8 @@ pub struct ByteSeries {
     pub full_line_size: usize,
     timestamp: i64,
 
-    pub first_time_in_data: Option<DateTime<Utc>>,
-    pub last_time_in_data: Option<DateTime<Utc>>,
+    pub first_time_in_data: Option<i64>,
+    pub last_time_in_data: Option<i64>,
 
     pub data_size: u64,
 }
@@ -25,11 +27,11 @@ pub struct ByteSeries {
 // ---------------------------------------------------------------------
 // -- we store only the last 4 bytes of the timestamp ------------------
 // ---------------------------------------------------------------------
-
+#[derive(Debug)]
 pub struct FullTime {
-    curr: i64,
-    next: i64,
-    next_pos: u64,
+    pub curr: i64,
+    pub next: Option<i64>,
+    pub next_pos: Option<u64>,
 }
 
 impl ByteSeries {
@@ -38,7 +40,7 @@ impl ByteSeries {
         let (mut data, size) = open_and_check(name.as_ref().with_extension("dat"), line_size + 2)?;
         let header = Header::open(name)?;
 
-        let first_time = Self::get_first_time_in_data(&header);
+        let first_time = header.first_time_in_data();
         let last_time = Self::get_last_time_in_data(&mut data, &header, full_line_size);
 
         Ok(ByteSeries {
@@ -58,34 +60,19 @@ impl ByteSeries {
         })
     }
 
-    fn get_first_time_in_data(header: &Header) -> Option<DateTime<Utc>> {
-        let timestamp;
-        if let Some(first_header_entry) = header.data.range(0..).next() {
-            timestamp = *first_header_entry.0;
-            Some(DateTime::<Utc>::from_utc(
-                NaiveDateTime::from_timestamp(timestamp, 0),
-                Utc,
-            ))
-        } else {
-            None
-        }
-    }
-
     fn get_last_time_in_data(
         data: &mut File,
         header: &Header,
         full_line_size: usize,
-    ) -> Option<DateTime<Utc>> {
+    ) -> Option<i64> {
         let mut buf = [0u8; 2]; //rewrite to use bufferd data
         if data.seek(SeekFrom::End(-(full_line_size as i64))).is_ok() {
             data.read_exact(&mut buf).unwrap();
-            let timestamp_low = LittleEndian::read_u16(&buf) as i64;
-            let timestamp_high = header.last_timestamp & (!0b1111_1111_1111_1111);
+            let timestamp_low = dbg!(LittleEndian::read_u16(&buf) as i64);
+            let timestamp_high = dbg!(header.last_timestamp) & !0b1111_1111_1111_11111;
+            dbg!(timestamp_high);
             let timestamp = timestamp_high | timestamp_low;
-            Some(DateTime::<Utc>::from_utc(
-                NaiveDateTime::from_timestamp(timestamp, 0),
-                Utc,
-            ))
+            dbg!(Some(timestamp))
         } else {
             log::warn!("file is empty");
             None
@@ -93,18 +80,8 @@ impl ByteSeries {
     }
 
     pub fn append(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
-        //TODO decide if a lock is needed here
-        //write 16 bit timestamp and then the line to file
-        let timestamp = self.time_to_line_timestamp(time);
-        self.data.write_all(&timestamp)?;
-        self.data.write_all(&line[..self.line_size])?;
-
-        //write 64 bit timestamp to header
-        //(needed no more then once every 18 hours)
-        self.update_header()?;
-        self.force_write_to_disk(); //FIXME should this be exposed to the user?
-        self.data_size += self.full_line_size as u64;
-        self.last_time_in_data = Some(time);
+        self.append_fast(time, line)?;
+        self.force_write_to_disk();
         Ok(())
     }
 
@@ -119,7 +96,9 @@ impl ByteSeries {
         //(needed no more then once every 18 hours)
         self.update_header()?;
         self.data_size += self.full_line_size as u64;
-        self.last_time_in_data = Some(time);
+        
+        self.last_time_in_data = Some(time.timestamp());
+        self.first_time_in_data.get_or_insert(time.timestamp());
         Ok(())
     }
 
@@ -158,33 +137,28 @@ impl ByteSeries {
         T: FromPrimitive,
     {
         //update full timestamp when needed
-        if pos + 1 > full_ts.next_pos {
+        if pos + 1 > full_ts.next_pos.unwrap() {
             log::debug!(
-                "updating ts, pos: {}, next ts pos: {}",
+                "updating ts, pos: {:?}, next ts pos: {:?}",
                 pos,
                 full_ts.next_pos
             );
             //update current timestamp
-            full_ts.curr = full_ts.next;
+            full_ts.curr = full_ts.next.unwrap();
 
             //set next timestamp and timestamp pos
             //minimum in map greater then current timestamp
-            if let Some(next) = self
-                .header
-                .data
-                .range(full_ts.curr + 1..)
-                .next()
-            {
-                full_ts.next = *next.0;
-                full_ts.next_pos = *next.1;
+            if let Some(next) = self.header.next_full_timestamp(full_ts.curr){
+                full_ts.next = Some(next.timestamp);
+                full_ts.next_pos = Some(next.pos);
             } else {
                 //TODO handle edge case, last full timestamp
                 log::debug!(
                     "loaded last timestamp in header, no next TS, current pos: {}",
                     pos
                 );
-                full_ts.next = 0;
-                full_ts.next_pos = u64::max_value();
+                full_ts.next = None;
+                full_ts.next_pos = None;
             }
         }
         let timestamp_low = LittleEndian::read_u16(line) as u64;
@@ -215,7 +189,7 @@ impl ByteSeries {
             log::trace!("nread: {}, {}, {}", nread, start_byte, stop_byte);
             nread
         };
-        *start_byte += nread as u64;
+        *start_byte += nread as u64; //todo move to seek? 
         Ok(nread - nread % self.full_line_size)
     }
 
@@ -242,9 +216,9 @@ impl ByteSeries {
         }
         Ok((timestamps, line_data))
     }
-    pub fn decode_last_line(&mut self) -> Result<(DateTime<Utc>, Vec<u8>), Error> {
+    pub fn decode_last_line(&mut self) -> Result<(i64, Vec<u8>), Error> {
         if self.data_size < self.full_line_size as u64 {
-            return Err(Error::new(ErrorKind::UnexpectedEof, "No data in file"));
+            return Err(Error::NoData);
         }
 
         let mut start_byte = self.data_size - self.full_line_size as u64;
@@ -254,14 +228,13 @@ impl ByteSeries {
         let nread = self.read(&mut full_line, &mut start_byte, stop_byte)?;
 
         if nread < self.full_line_size {
-            dbg!(nread);
-            let custom_error = Error::new(ErrorKind::Other, "could not read a full line!");
-            return Err(custom_error);
+            return Err(Error::PartialLine);
         }
 
         full_line.remove(0);
         full_line.remove(0);
         let line = full_line;
-        Ok((self.last_time_in_data.unwrap(), line))
+        let time = self.last_time_in_data.ok_or(Error::NoData)?;
+        Ok((time, line))
     }
 }
