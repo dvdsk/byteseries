@@ -35,20 +35,6 @@ pub struct Sampler<'a, T>
     decoded_per_line: usize,
 }
 
-//impl<'a,T: std::fmt::Debug> std::fmt::Debug for Sampler<'a, T> {
-//    fn fmt(&self,  f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//        f.debug_struct("Sampler")
-//            .field("series", &self.series)
-//            .field("selector", &self.selector)
-//            .field("seek", &self.seek)
-//            .field("time", &self.time)
-//            .field("values", &self.values)
-//            .field("buff", &self.buff)
-//            .field("decoded_per_line", &self.decoded_per_line)
-//            //.finish_non_exhaustive)
-//            .finish()
-//    }
-//}
 
 pub struct SamplerBuilder<'a,T> {
     series: Series,
@@ -148,6 +134,22 @@ where T: std::fmt::Debug
     pub fn into_data(self) -> (Vec<i64>,Vec<T>) {
         let Sampler {time, values, ..} = self;
         (time, values) 
+    }
+    ///return the read values as slice
+    pub fn values(&self) -> &[T] {
+        &self.values
+    }
+}
+
+impl<'a,T> std::iter::IntoIterator for Sampler<'a,T> 
+where T: std::fmt::Debug
+{
+    type Item = (i64, T);
+    type IntoIter = std::iter::Zip<std::vec::IntoIter<i64>,std::vec::IntoIter<T>>;
+    
+    fn into_iter(self) -> Self::IntoIter {
+        let (time, values) = self.into_data();
+        time.into_iter().zip(values.into_iter())
     }
 }
 

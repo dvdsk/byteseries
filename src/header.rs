@@ -47,7 +47,7 @@ impl Header {
             });
         }
 
-        let last_timestamp = numbers.get(numbers.len() - 2)
+        let last_timestamp = numbers.get(numbers.len().saturating_sub(2))
             .map(|n| *n as i64)
             .unwrap_or(0);
         
@@ -147,3 +147,78 @@ fn unwrap_result<T>(res: Result<T,T>) -> T {
     }
 }
 // https://rust-algo.club/doc/src/rust_algorithm_club/searching/interpolation_search/mod.rs.html#16-69
+//
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_header(n: usize) -> Header {
+        let path = format!("/tmp/test_header_{}.h", n);
+        let mut path = std::path::PathBuf::from(path);
+        if path.exists(){
+            std::fs::remove_file(&path).unwrap();
+        }
+        path.set_extension("");
+        Header::open(path).unwrap()
+    }
+    fn fill_header(h: &mut Header) {
+        for i in 20..24 {
+            let ts = i*2i64.pow(16);
+            let new_timestamp_numb = ts / 2i64.pow(16);
+            h.update(ts, i as u64, new_timestamp_numb).unwrap();
+        }
+    }
+
+
+    #[test]
+    fn start_found(){
+        let mut h = test_header(0);
+        fill_header(&mut h);
+        let start = 22*2i64.pow(16);
+        let stop = 23*2i64.pow(16);
+        let (start, _stop, ft) = h.search_bounds(start, stop);
+        assert_eq!(std::mem::discriminant(&start), std::mem::discriminant(&SearchBounds::Found(0)));
+        assert!(ft.next.is_some());
+        assert!(ft.next_pos.is_some());
+    }
+    #[test]
+    fn start_clipped(){
+        let mut h = test_header(1);
+        fill_header(&mut h);
+        let start = 12342;
+        let stop = 23*2i64.pow(16);
+        let (start, _stop, ft) = h.search_bounds(start, stop);
+        
+        assert_eq!(std::mem::discriminant(&start), std::mem::discriminant(&SearchBounds::Clipped));
+        assert!(ft.next.is_some());
+        assert!(ft.next_pos.is_some());
+    }
+    #[test]
+    fn start_window(){
+        let mut h = test_header(2);
+        fill_header(&mut h);
+        let start = 22*2i64.pow(16) + 400;
+        let stop = 23*2i64.pow(16);
+        let (start, _stop, ft) = h.search_bounds(start, stop);
+        
+        // dbg!(&start);
+        assert_eq!(std::mem::discriminant(&start), 
+            std::mem::discriminant(&SearchBounds::Window(0,0)));
+        assert!(ft.next.is_some());
+        assert!(ft.next_pos.is_some());
+    }
+    #[test]
+    fn start_till_end(){
+        let mut h = test_header(3);
+        fill_header(&mut h);
+        let start = 24*2i64.pow(16) + 400;
+        let stop = 25*2i64.pow(16);
+        let (start, _stop, ft) = h.search_bounds(start, stop);
+        
+        // dbg!(&start);
+        assert_eq!(std::mem::discriminant(&start), 
+            std::mem::discriminant(&SearchBounds::TillEnd(0)));
+        assert!(ft.next.is_none());
+        assert!(ft.next_pos.is_none());
+    }
+}

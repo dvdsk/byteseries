@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use chrono::{DateTime, Utc};
 
 mod data;
 mod header;
@@ -37,5 +38,11 @@ impl Series {
         let (time, bytes) = series.decode_last_line()?;
         let data = decoder.decoded(&bytes);
         Ok((time, data))
+    }
+
+    pub fn append(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error>{
+        let mut series = self.lock();
+        series.append(time, line)?;
+        Ok(())
     }
 }
