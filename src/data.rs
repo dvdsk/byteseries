@@ -174,19 +174,14 @@ impl ByteSeries {
         start_byte: &mut u64,
         stop_byte: u64,
     ) -> Result<usize, Error> {
+        dbg!(&start_byte,&stop_byte,buf.len());
         self.data.seek(SeekFrom::Start(*start_byte))?;
         let mut nread = self.data.read(buf)?;
+        dbg!(nread);
 
         nread = if (*start_byte + nread as u64) >= stop_byte {
-            log::trace!(
-                "diff: {}, {}, {}",
-                *start_byte as i64,
-                stop_byte as i64,
-                stop_byte as i64 - *start_byte as i64
-            );
             (stop_byte - *start_byte) as usize
         } else {
-            log::trace!("nread: {}, {}, {}", nread, start_byte, stop_byte);
             nread
         };
         *start_byte += nread as u64; //todo move to seek?

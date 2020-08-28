@@ -141,8 +141,6 @@ impl ByteSeries {
         self.data.read_exact(&mut buf)?;
 
         log::trace!("buf.len(): {}", buf.len());
-        dbg!(buf.len());
-        dbg!(self.full_line_size + 1);
         for line_start in (0..buf.len() - self.full_line_size + 1)
             .rev()
             .step_by(self.full_line_size)

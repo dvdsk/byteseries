@@ -194,8 +194,7 @@ fn hashes_read_skipping_then_verify() {
         .stop(t2)
         .finish()
         .unwrap();
-
-    sampler.sample(n);
+    sampler.sample(n).unwrap();
 
     assert_eq!(sampler.values().len(), n);
     for (timestamp, hash) in sampler.into_iter() {

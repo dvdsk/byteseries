@@ -3,7 +3,7 @@ use crate::{Error, Series, TimeSeek};
 
 pub trait Decoder<T>: std::fmt::Debug
 where
-    T: std::fmt::Debug,
+    T: std::fmt::Debug + std::clone::Clone,
 {
     fn decode(&mut self, bytes: &[u8], out: &mut Vec<T>);
     fn decoded(&mut self, bytes: &[u8]) -> Vec<T> {
@@ -13,7 +13,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EmptyDecoder {}
 impl Decoder<u8> for EmptyDecoder {
     fn decode(&mut self, bytes: &[u8], out: &mut Vec<u8>) {
@@ -21,10 +21,7 @@ impl Decoder<u8> for EmptyDecoder {
     }
 }
 
-#[derive(Debug)]
-pub struct Sampler<'a, T>
-// where T: std::fmt::Debug
-{
+pub struct Sampler<'a, T> {
     series: Series,
     selector: Option<Selector>,
     decoder: &'a mut (dyn Decoder<T> + 'a), //check if generic better fit
@@ -34,6 +31,27 @@ pub struct Sampler<'a, T>
     values: Vec<T>,
     buff: Vec<u8>, //TODO replace with array for perf
     decoded_per_line: usize,
+}
+
+impl<'a,T> std::fmt::Debug for Sampler<'a, T> 
+where T: std::clone::Clone + std::fmt::Debug
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        //only print first n values
+        let time = self.time[..5.min(self.time.len())].to_vec();
+        let values = self.values[..5.min(self.time.len())].to_vec();
+        let buff = self.buff[..5.min(self.time.len())].to_vec(); 
+        f.debug_struct("Sampler")
+            .field("series", &self.series)
+            .field("selector", &self.selector)
+            .field("decoder", &self.decoder)
+            .field("seek", &self.seek)
+            .field("time", &time)
+            .field("values", &values) 
+            .field("buff", &buff)
+            .field("decoded_per_line", &self.decoded_per_line)
+            .finish()
+    }
 }
 
 pub struct SamplerBuilder<'a, T> {
@@ -46,7 +64,7 @@ pub struct SamplerBuilder<'a, T> {
 
 impl<'a, T> SamplerBuilder<'a, T>
 where
-    T: std::fmt::Debug,
+    T: std::fmt::Debug + std::clone::Clone,
 {
     pub fn new(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)) -> Self {
         Self {
@@ -96,7 +114,7 @@ where
             seek,
             time: Vec::new(),
             values: Vec::new(),
-            buff: Vec::with_capacity(4096),
+            buff: vec![0u8; 4096],
             decoded_per_line,
         })
     }
@@ -104,25 +122,29 @@ where
 
 impl<'a, T> Sampler<'a, T>
 where
-    T: std::fmt::Debug,
+    T: std::fmt::Debug + std::clone::Clone,
 {
     ///decodes and averages enough lines to get n samples unless the end of the file
     ///given range is reached
-    pub fn sample(&mut self, n: usize) {
+    pub fn sample(&mut self, n: usize) -> Result<(), Error> {
         self.time.reserve_exact(self.values.len());
         self.values
             .reserve_exact(self.values.len() + self.decoded_per_line);
 
+        dbg!(&self);
+        dbg!(self.seek.start, self.seek.stop);
         let mut series = self.series.clone();
         let mut byteseries = series.lock();
         let n_read = byteseries
-            .read(&mut self.buff, &mut self.seek.start, self.seek.stop)
-            .unwrap();
+            .read(&mut self.buff, &mut self.seek.start, self.seek.stop)?;
+        dbg!(n_read);
 
         let seek = &mut self.seek;
         let selector = &mut self.selector;
         let full_line_size = byteseries.full_line_size;
 
+        dbg!(n_read/full_line_size);
+        let mut j = 0;
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
             .zip((seek.curr..).step_by(full_line_size))
@@ -131,9 +153,12 @@ where
             self.time
                 .push(byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time));
             self.decoder.decode(&line[2..], &mut self.values);
+            j+=1;
         }
+        dbg!(j);
         drop(byteseries);
         self.seek.curr += n_read as u64;
+        Ok(())
     }
     ///returns true if this sampler has read its entire range
     pub fn done(&self) -> bool {
@@ -158,7 +183,7 @@ where
 
 impl<'a, T> std::iter::IntoIterator for Sampler<'a, T>
 where
-    T: std::fmt::Debug,
+    T: std::fmt::Debug + std::clone::Clone,
 {
     type Item = (i64, T);
     type IntoIter = std::iter::Zip<std::vec::IntoIter<i64>, std::vec::IntoIter<T>>;
