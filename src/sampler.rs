@@ -21,33 +21,62 @@ impl Decoder<u8> for EmptyDecoder {
     }
 }
 
+pub trait SampleCombiner<T>: std::fmt::Debug {
+    fn add(&mut self, element: T);
+    fn combine(&mut self) -> T;
+}
+
+#[derive(Debug, Clone)]
+pub struct MeanCombiner<T> {
+    sum: T,
+    n: usize,
+}
+impl<T> SampleCombiner<T> for MeanCombiner<T>
+where
+    T: std::fmt::Debug + std::clone::Clone + std::ops::AddAssign + std::ops::Div<usize> + std::ops::MulAssign<usize>,
+    <T as std::ops::Div<usize>>::Output: Into<T>,
+{
+    fn add(&mut self, element: T) {
+        self.sum += element;
+        self.n += 1;
+    }
+    fn combine(&mut self) -> T {
+        self.n = 0;
+        self.sum *= 0;
+        (self.sum.clone() / self.n).into()
+    }
+}
+
 pub struct Sampler<'a, T> {
     series: Series,
     selector: Option<Selector>,
     decoder: &'a mut (dyn Decoder<T> + 'a), //check if generic better fit
+    combiner: &'a mut (dyn SampleCombiner<T>),
     seek: TimeSeek,
 
     time: Vec<i64>,
     values: Vec<T>,
-    buff: Vec<u8>, //TODO replace with array for perf
+    buff: Vec<u8>, 
     decoded_per_line: usize,
 }
 
-impl<'a,T> std::fmt::Debug for Sampler<'a, T> 
-where T: std::clone::Clone + std::fmt::Debug
+impl<'a, T> std::fmt::Debug for Sampler<'a, T>
+where
+    T: std::clone::Clone + std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         //only print first n values
         let time = self.time[..5.min(self.time.len())].to_vec();
         let values = self.values[..5.min(self.time.len())].to_vec();
-        let buff = self.buff[..5.min(self.time.len())].to_vec(); 
+        let buff = self.buff[..5.min(self.time.len())].to_vec();
         f.debug_struct("Sampler")
             .field("series", &self.series)
             .field("selector", &self.selector)
             .field("decoder", &self.decoder)
+            .field("combiner", &self.combiner)
             .field("seek", &self.seek)
             .field("time", &time)
-            .field("values", &values) 
+            .field("values", &values)
             .field("buff", &buff)
             .field("decoded_per_line", &self.decoded_per_line)
             .finish()
@@ -59,6 +88,7 @@ pub struct SamplerBuilder<'a, T> {
     decoder: &'a mut (dyn Decoder<T> + 'a),
     start: Option<chrono::DateTime<chrono::Utc>>,
     stop: Option<chrono::DateTime<chrono::Utc>>,
+    combiner: Option<&'a mut (dyn SampleCombiner<T> + 'a)>,
     points: Option<usize>,
 }
 
@@ -70,6 +100,7 @@ where
         Self {
             series: series.clone(),
             decoder,
+            combiner: None,
             start: None,
             stop: None,
             points: None,
@@ -87,10 +118,15 @@ where
         self.points = Some(n);
         self
     }
+    pub fn combiner(mut self, comb: &'a mut (dyn SampleCombiner<T> + 'a)) -> Self {
+        self.combiner = Some(comb);
+        self
+    }
     pub fn finish(self) -> Result<Sampler<'a, T>, Error> {
         let Self {
             series,
             decoder,
+            combiner,
             start,
             stop,
             points,
@@ -98,6 +134,7 @@ where
         let mut byteseries = series.shared.lock().unwrap();
         let start = start.unwrap();
         let stop = stop.unwrap();
+        let combiner = combiner.unwrap();
         let seek = TimeSeek::new(&mut byteseries, start, stop)?;
         let selector = points
             .map(|p| Selector::new(p, seek.lines(&byteseries), &byteseries))
@@ -111,6 +148,7 @@ where
             series,
             selector,
             decoder,
+            combiner,
             seek,
             time: Vec::new(),
             values: Vec::new(),
@@ -135,15 +173,14 @@ where
         dbg!(self.seek.start, self.seek.stop);
         let mut series = self.series.clone();
         let mut byteseries = series.lock();
-        let n_read = byteseries
-            .read(&mut self.buff, &mut self.seek.start, self.seek.stop)?;
+        let n_read = byteseries.read(&mut self.buff, &mut self.seek.start, self.seek.stop)?;
         dbg!(n_read);
 
         let seek = &mut self.seek;
         let selector = &mut self.selector;
         let full_line_size = byteseries.full_line_size;
 
-        dbg!(n_read/full_line_size);
+        dbg!(n_read / full_line_size);
         let mut j = 0;
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
@@ -153,7 +190,7 @@ where
             self.time
                 .push(byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time));
             self.decoder.decode(&line[2..], &mut self.values);
-            j+=1;
+            j += 1;
         }
         dbg!(j);
         drop(byteseries);

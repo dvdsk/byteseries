@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use byteseries::{SamplerBuilder, Series, EmptyDecoder};
+use byteseries::{EmptyDecoder, SamplerBuilder, Series};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::fs;
 use std::path::Path;

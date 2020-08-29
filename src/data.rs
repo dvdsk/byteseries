@@ -174,7 +174,7 @@ impl ByteSeries {
         start_byte: &mut u64,
         stop_byte: u64,
     ) -> Result<usize, Error> {
-        dbg!(&start_byte,&stop_byte,buf.len());
+        dbg!(&start_byte, &stop_byte, buf.len());
         self.data.seek(SeekFrom::Start(*start_byte))?;
         let mut nread = self.data.read(buf)?;
         dbg!(nread);

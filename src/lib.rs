@@ -32,7 +32,7 @@ impl Series {
         })
     }
 
-    pub fn last_line<'a, T: std::fmt::Debug+ std::clone::Clone>(
+    pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &'a mut (dyn Decoder<T> + 'a),
     ) -> Result<(i64, Vec<T>), Error> {
