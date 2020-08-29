@@ -1,9 +1,14 @@
 use crate::data::ByteSeries;
 use crate::{Error, Series, TimeSeek};
+use std::fmt::Debug;
+use std::clone::Clone;
+use std::default::Default;
+use std::ops::{AddAssign, Div};
+use num_traits::identities::Zero;
 
-pub trait Decoder<T>: std::fmt::Debug
+pub trait Decoder<T>: Debug
 where
-    T: std::fmt::Debug + std::clone::Clone,
+    T: Debug + Clone,
 {
     fn decode(&mut self, bytes: &[u8], out: &mut Vec<T>);
     fn decoded(&mut self, bytes: &[u8]) -> Vec<T> {
@@ -21,37 +26,53 @@ impl Decoder<u8> for EmptyDecoder {
     }
 }
 
-pub trait SampleCombiner<T>: std::fmt::Debug {
+pub trait SampleCombiner<T>: Debug {
     fn add(&mut self, element: T);
     fn combine(&mut self) -> T;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MeanCombiner<T> {
     sum: T,
     n: usize,
 }
 impl<T> SampleCombiner<T> for MeanCombiner<T>
 where
-    T: std::fmt::Debug + std::clone::Clone + std::ops::AddAssign + std::ops::Div<usize> + std::ops::MulAssign<usize>,
-    <T as std::ops::Div<usize>>::Output: Into<T>,
+    T: Debug + Clone + AddAssign + Div<usize> + Zero,
+    <T as Div<usize>>::Output: Into<T>,
 {
     fn add(&mut self, element: T) {
         self.sum += element;
         self.n += 1;
     }
     fn combine(&mut self) -> T {
+        self.sum = T::zero(); 
+        let a = (self.sum.clone() / self.n).into();
         self.n = 0;
-        self.sum *= 0;
-        (self.sum.clone() / self.n).into()
+        a
     }
 }
 
-pub struct Sampler<'a, T> {
+#[derive(Debug, Clone, Default)]
+pub struct EmptyCombiner<T> {v: T}
+impl<T> SampleCombiner<T> for EmptyCombiner<T>
+where
+    T: Debug + Clone
+{
+    fn add(&mut self, element: T){
+        self.v = element
+    }
+    fn combine(&mut self) -> T {
+        self.v.clone()
+    }
+}
+
+pub struct Sampler<'a, T, C> {
     series: Series,
     selector: Option<Selector>,
     decoder: &'a mut (dyn Decoder<T> + 'a), //check if generic better fit
-    combiner: &'a mut (dyn SampleCombiner<T>),
+    combiners: Vec<C>, 
+    binsize: usize,
     seek: TimeSeek,
 
     time: Vec<i64>,
@@ -60,9 +81,10 @@ pub struct Sampler<'a, T> {
     decoded_per_line: usize,
 }
 
-impl<'a, T> std::fmt::Debug for Sampler<'a, T>
+impl<'a, T, C> Debug for Sampler<'a, T, C>
 where
-    T: std::clone::Clone + std::fmt::Debug,
+    T: Clone + Debug,
+    C: Debug
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         //only print first n values
@@ -73,7 +95,7 @@ where
             .field("series", &self.series)
             .field("selector", &self.selector)
             .field("decoder", &self.decoder)
-            .field("combiner", &self.combiner)
+            .field("combiner", &self.combiners)
             .field("seek", &self.seek)
             .field("time", &time)
             .field("values", &values)
@@ -88,19 +110,19 @@ pub struct SamplerBuilder<'a, T> {
     decoder: &'a mut (dyn Decoder<T> + 'a),
     start: Option<chrono::DateTime<chrono::Utc>>,
     stop: Option<chrono::DateTime<chrono::Utc>>,
-    combiner: Option<&'a mut (dyn SampleCombiner<T> + 'a)>,
+    binsize: usize,
     points: Option<usize>,
 }
 
 impl<'a, T> SamplerBuilder<'a, T>
 where
-    T: std::fmt::Debug + std::clone::Clone,
+    T: Debug + Clone,
 {
     pub fn new(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)) -> Self {
         Self {
             series: series.clone(),
             decoder,
-            combiner: None,
+            binsize: 1,
             start: None,
             stop: None,
             points: None,
@@ -118,15 +140,15 @@ where
         self.points = Some(n);
         self
     }
-    pub fn combiner(mut self, comb: &'a mut (dyn SampleCombiner<T> + 'a)) -> Self {
-        self.combiner = Some(comb);
-        self
+    pub fn combine(mut self, binsize: usize) -> Self {
+        self.binsize = binsize;
+        self//TODO make this return a different type that has the combiner set
     }
-    pub fn finish(self) -> Result<Sampler<'a, T>, Error> {
+    pub fn finish<C: SampleCombiner<T>+Default + Clone>(self) -> Result<Sampler<'a, T, C>, Error> {
         let Self {
             series,
             decoder,
-            combiner,
+            binsize,
             start,
             stop,
             points,
@@ -134,7 +156,6 @@ where
         let mut byteseries = series.shared.lock().unwrap();
         let start = start.unwrap();
         let stop = stop.unwrap();
-        let combiner = combiner.unwrap();
         let seek = TimeSeek::new(&mut byteseries, start, stop)?;
         let selector = points
             .map(|p| Selector::new(p, seek.lines(&byteseries), &byteseries))
@@ -148,7 +169,8 @@ where
             series,
             selector,
             decoder,
-            combiner,
+            combiners: vec![C::default(); decoded_per_line],
+            binsize,
             seek,
             time: Vec::new(),
             values: Vec::new(),
@@ -158,9 +180,10 @@ where
     }
 }
 
-impl<'a, T> Sampler<'a, T>
+impl<'a, T, C> Sampler<'a, T, C>
 where
-    T: std::fmt::Debug + std::clone::Clone,
+    C: SampleCombiner<T>,
+    T: Debug + Clone,
 {
     ///decodes and averages enough lines to get n samples unless the end of the file
     ///given range is reached
@@ -182,14 +205,29 @@ where
 
         dbg!(n_read / full_line_size);
         let mut j = 0;
+        let mut n = 0;
+        let mut time = 0;
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
             .zip((seek.curr..).step_by(full_line_size))
             .filter(|_| selector.as_mut().map(|s| s.use_index()).unwrap_or(true))
         {
-            self.time
-                .push(byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time));
-            self.decoder.decode(&line[2..], &mut self.values);
+            time += byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time); //TODO handle time
+            let mut values = self.decoder.decoded(&line[2..]);
+            for (v, comb) in values.drain(..).zip(self.combiners.iter_mut()) {
+                comb.add(v);
+            }
+            
+            n += 1;
+            if n > self.binsize {
+                n=0;
+                self.time.push(time/self.binsize as i64);
+                time = 0;
+                for comb in self.combiners.iter_mut() {
+                    self.values.push(comb.combine());
+                }
+            }
+
             j += 1;
         }
         dbg!(j);
@@ -218,9 +256,10 @@ where
     }
 }
 
-impl<'a, T> std::iter::IntoIterator for Sampler<'a, T>
+impl<'a, T, C> std::iter::IntoIterator for Sampler<'a, T, C>
 where
-    T: std::fmt::Debug + std::clone::Clone,
+    T: Debug + Clone,
+    C: SampleCombiner<T>,
 {
     type Item = (i64, T);
     type IntoIter = std::iter::Zip<std::vec::IntoIter<i64>, std::vec::IntoIter<T>>;

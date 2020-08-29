@@ -10,7 +10,7 @@ thiserror = "1.0"
 log = "0.4.5"
 fern = { version = "0.6", features = ["colored"] }
 byteorder = "1.2.6"
-num-traits = "0.2.6"
+num-traits = "0.2.12"
 
 #used for tests only
 fxhash = "0.2.1"

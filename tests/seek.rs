@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use byteseries::{EmptyDecoder, SamplerBuilder, Series};
+use byteseries::{EmptyDecoder, SamplerBuilder, Series, EmptyCombiner};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::fs;
 use std::path::Path;
@@ -46,7 +46,7 @@ fn beyond_range() {
         .points(10)
         .start(t1)
         .stop(t2)
-        .finish()
+        .finish::<EmptyCombiner<_>>()
         .unwrap();
     sampler.sample(10);
 
