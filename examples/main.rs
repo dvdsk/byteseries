@@ -1,4 +1,4 @@
-use byteseries::{EmptyDecoder, SamplerBuilder, Series};
+use byteseries::{EmptyDecoder, SamplerBuilder, Series, EmptyCombiner};
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 
 fn main() {
@@ -13,7 +13,7 @@ fn main() {
         .points(10)
         .start(endtime - Duration::hours(90))
         .stop(endtime)
-        .finish()
+        .finish::<EmptyCombiner<_>>()
         .unwrap();
 
     sampler.sample(10);

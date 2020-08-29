@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 mod data;
-mod error;
+pub mod error;
 mod header;
 mod sampler;
 mod search;

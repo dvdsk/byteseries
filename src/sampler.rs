@@ -26,14 +26,18 @@ impl Decoder<u8> for EmptyDecoder {
     }
 }
 
+/// the combiner gets both the value and the time, though unused 
+/// by simple combinators such as the MeanCombiner this allows 
+/// to combine values and time for example to calculate the derivative
 pub trait SampleCombiner<T>: Debug {
-    fn add(&mut self, element: T);
+    fn add(&mut self, value: T, time: i64);
     fn combine(&mut self) -> T;
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct MeanCombiner<T> {
-    sum: T,
+    v_sum: T,
+    t_sum: i64,
     n: usize,
 }
 impl<T> SampleCombiner<T> for MeanCombiner<T>
@@ -41,29 +45,31 @@ where
     T: Debug + Clone + AddAssign + Div<usize> + Zero,
     <T as Div<usize>>::Output: Into<T>,
 {
-    fn add(&mut self, element: T) {
-        self.sum += element;
+    fn add(&mut self, value: T, time: i64) {
+        self.v_sum += value;
+        self.t_sum += time;
         self.n += 1;
     }
     fn combine(&mut self) -> T {
-        self.sum = T::zero(); 
-        let a = (self.sum.clone() / self.n).into();
+        let v = (self.v_sum.clone() / self.n).into();
+        self.v_sum = T::zero(); 
         self.n = 0;
-        a
+        v
     }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct EmptyCombiner<T> {v: T}
+pub struct EmptyCombiner<T> {v: T, t: i64}
 impl<T> SampleCombiner<T> for EmptyCombiner<T>
 where
     T: Debug + Clone
 {
-    fn add(&mut self, element: T){
-        self.v = element
+    fn add(&mut self, value: T, time: i64){
+        self.v = value;
+        self.t = time;
     }
     fn combine(&mut self) -> T {
-        self.v.clone()
+        self.v.clone() 
     }
 }
 
@@ -96,6 +102,7 @@ where
             .field("selector", &self.selector)
             .field("decoder", &self.decoder)
             .field("combiner", &self.combiners)
+            .field("binsize", &self.binsize)
             .field("seek", &self.seek)
             .field("time", &time)
             .field("values", &values)
@@ -158,7 +165,7 @@ where
         let stop = stop.unwrap();
         let seek = TimeSeek::new(&mut byteseries, start, stop)?;
         let selector = points
-            .map(|p| Selector::new(p, seek.lines(&byteseries), &byteseries))
+            .map(|p| Selector::new(p, seek.lines(&byteseries), binsize))
             .flatten();
 
         let dummy = vec![0u8; byteseries.full_line_size];
@@ -174,7 +181,7 @@ where
             seek,
             time: Vec::new(),
             values: Vec::new(),
-            buff: vec![0u8; 4096],
+            buff: vec![0u8; 409600],//TODO MAKE BUFFER SMALLER
             decoded_per_line,
         })
     }
@@ -192,45 +199,38 @@ where
         self.values
             .reserve_exact(self.values.len() + self.decoded_per_line);
 
-        dbg!(&self);
-        dbg!(self.seek.start, self.seek.stop);
         let mut series = self.series.clone();
         let mut byteseries = series.lock();
         let n_read = byteseries.read(&mut self.buff, &mut self.seek.start, self.seek.stop)?;
-        dbg!(n_read);
 
         let seek = &mut self.seek;
         let selector = &mut self.selector;
         let full_line_size = byteseries.full_line_size;
 
-        dbg!(n_read / full_line_size);
-        let mut j = 0;
         let mut n = 0;
-        let mut time = 0;
+        let mut time_sum = 0;
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
             .zip((seek.curr..).step_by(full_line_size))
             .filter(|_| selector.as_mut().map(|s| s.use_index()).unwrap_or(true))
         {
-            time += byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time); //TODO handle time
+            let time = byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time); 
+            time_sum += time;
             let mut values = self.decoder.decoded(&line[2..]);
             for (v, comb) in values.drain(..).zip(self.combiners.iter_mut()) {
-                comb.add(v);
+                comb.add(v, time);
             }
             
             n += 1;
-            if n > self.binsize {
+            if n >= self.binsize {
                 n=0;
-                self.time.push(time/self.binsize as i64);
-                time = 0;
+                self.time.push(time_sum/self.binsize as i64);
+                time_sum = 0;
                 for comb in self.combiners.iter_mut() {
                     self.values.push(comb.combine());
                 }
             }
-
-            j += 1;
         }
-        dbg!(j);
         drop(byteseries);
         self.seek.curr += n_read as u64;
         Ok(())
@@ -272,62 +272,37 @@ where
 
 #[derive(Debug)]
 pub struct Selector {
-    spacing: u64, //in lines
-    counter: u64, //starts at 1
+    spacing: f32, //in lines
+    next_to_use: f32, 
     current: u64, //starts at 0
-
-    full_line_size: usize,
-    pub lines_per_sample: std::num::NonZeroUsize,
-    //binsize; usize//in lines
 }
 
 impl Selector {
-    pub fn new(max_plot_points: usize, numb_lines: u64, timeseries: &ByteSeries) -> Option<Self> {
-        if numb_lines <= max_plot_points as u64 {
+    pub fn new(max_plot_points: usize, n_lines: u64, binsize: usize) -> Option<Self> {
+        if n_lines as usize <= max_plot_points*binsize {
             return None;
         }
-
-        let full_line_size = timeseries.full_line_size;
-        let lines_to_skip: u64 = numb_lines % max_plot_points as u64;
-
-        let lines_per_sample =
-            std::num::NonZeroUsize::new((numb_lines / max_plot_points as u64) as usize).unwrap();
+       
+        let remainder = n_lines % max_plot_points as u64;
+        let spacing = n_lines as f32 / max_plot_points as f32;
 
         Some(Self {
-            spacing: ((numb_lines - lines_to_skip) as u64) / lines_to_skip,
-            counter: 1,
+            spacing,
+            next_to_use: remainder as f32 /2.0,
             current: 0,
-            full_line_size,
-            lines_per_sample,
         })
     }
 
     //calculate if element with index idx should be used
     fn use_index(&mut self) -> bool {
-        if self.current == self.counter * self.spacing {
-            self.counter += 1;
-            //dont increment the current counter as we will skip this point
-            false
-        } else {
-            self.current += 1;
+        let to_use = if self.current == self.next_to_use as u64 {
+            self.next_to_use += self.spacing;
             true
-        }
-    }
-
-    //one and a halve spacing
-    fn n_to_skip(&self, lines_to_read: usize) -> usize {
-        let stop_pos: u64 = self.current + lines_to_read as u64; //can we use current though? what happens after skip?
-        let first_skip_pos: u64 = self.counter * self.spacing;
-
-        //check if skip in this read chunk
-        if first_skip_pos > stop_pos {
-            0
         } else {
-            //there is at least one skip, check if there are more
-            let numb_of_additional_skips =
-                (stop_pos.saturating_sub(first_skip_pos) / self.spacing) as usize;
-            1 + numb_of_additional_skips
-        }
+            false
+        };
+        self.current += 1;
+        to_use
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::search::SeekError;
+pub use crate::search::SeekError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {

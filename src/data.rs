@@ -137,7 +137,7 @@ impl ByteSeries {
         T: FromPrimitive,
     {
         //update full timestamp when needed
-        if pos + 1 > full_ts.next_pos.unwrap() {
+        if full_ts.next_pos.map_or(false, |next_pos| pos + 1 > next_pos) {
             log::debug!(
                 "updating ts, pos: {:?}, next ts pos: {:?}",
                 pos,
@@ -174,10 +174,8 @@ impl ByteSeries {
         start_byte: &mut u64,
         stop_byte: u64,
     ) -> Result<usize, Error> {
-        dbg!(&start_byte, &stop_byte, buf.len());
         self.data.seek(SeekFrom::Start(*start_byte))?;
         let mut nread = self.data.read(buf)?;
-        dbg!(nread);
 
         nread = if (*start_byte + nread as u64) >= stop_byte {
             (stop_byte - *start_byte) as usize

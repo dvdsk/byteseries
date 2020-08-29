@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use byteseries::{EmptyDecoder, SamplerBuilder, Series, EmptyCombiner};
+use byteseries::error::{Error, SeekError};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::fs;
 use std::path::Path;
@@ -19,7 +20,7 @@ fn beyond_range() {
     const LINE_SIZE: usize = 8;
     const STEP: i64 = 5;
     const N_TO_INSERT: u32 = 100;
-    let start_read_inlines = 101;
+    let start_read_inlines = N_TO_INSERT as i64+1;
     let read_length_inlines = 10;
 
     let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1539180000, 0), Utc);
@@ -42,17 +43,17 @@ fn beyond_range() {
     );
 
     let mut decoder = EmptyDecoder {};
-    let mut sampler = SamplerBuilder::new(&data, &mut decoder)
+    let sampler = SamplerBuilder::new(&data, &mut decoder)
         .points(10)
         .start(t1)
         .stop(t2)
-        .finish::<EmptyCombiner<_>>()
-        .unwrap();
-    sampler.sample(10);
+        .finish::<EmptyCombiner<_>>();
 
-    // if let BoundResult::IoError(error) = data.get_bounds(t1, t2) {
-    //     assert_eq!(error.kind(), ErrorKind::NotFound);
-    // } else {
-    //     panic!();
-    // }
+    match sampler {
+        Err(e) => match e {
+            Error::Seek(e) => assert!(std::mem::discriminant(&e) == std::mem::discriminant(&SeekError::StartAfterData)),
+            _ => panic!("sampler should be error StartAfterData"),
+        }
+        Ok(_) => panic!("should return an error as we are trying to read beyond the data"),
+    }
 }
