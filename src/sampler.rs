@@ -1,4 +1,3 @@
-use crate::data::ByteSeries;
 use crate::{Error, Series, TimeSeek};
 use std::fmt::Debug;
 use std::clone::Clone;
@@ -192,20 +191,30 @@ where
     C: SampleCombiner<T>,
     T: Debug + Clone,
 {
+    pub fn sample_all(&mut self) -> Result<(), Error> {
+        loop {
+            self.sample()?;
+            if self.done() {
+                break;
+            }
+        }
+        Ok(())
+    }
     ///decodes and averages enough lines to get n samples unless the end of the file
     ///given range is reached
-    pub fn sample(&mut self, n: usize) -> Result<(), Error> {
+    pub fn sample(&mut self) -> Result<(), Error> {
         self.time.reserve_exact(self.values.len());
         self.values
             .reserve_exact(self.values.len() + self.decoded_per_line);
 
         let mut series = self.series.clone();
         let mut byteseries = series.lock();
-        let n_read = byteseries.read(&mut self.buff, &mut self.seek.start, self.seek.stop)?;
-
+        
         let seek = &mut self.seek;
         let selector = &mut self.selector;
         let full_line_size = byteseries.full_line_size;
+        
+        let n_read = byteseries.read(&mut self.buff, &mut seek.start, seek.stop)?;
 
         let mut n = 0;
         let mut time_sum = 0;
@@ -214,7 +223,7 @@ where
             .zip((seek.curr..).step_by(full_line_size))
             .filter(|_| selector.as_mut().map(|s| s.use_index()).unwrap_or(true))
         {
-            let time = byteseries.get_timestamp::<i64>(line, pos, &mut self.seek.full_time); 
+            let time = byteseries.get_timestamp::<i64>(line, pos, &mut seek.full_time); 
             time_sum += time;
             let mut values = self.decoder.decoded(&line[2..]);
             for (v, comb) in values.drain(..).zip(self.combiners.iter_mut()) {
@@ -231,8 +240,8 @@ where
                 }
             }
         }
+        seek.curr += n_read as u64;
         drop(byteseries);
-        self.seek.curr += n_read as u64;
         Ok(())
     }
     ///returns true if this sampler has read its entire range
@@ -273,8 +282,9 @@ where
 #[derive(Debug)]
 pub struct Selector {
     spacing: f32, //in lines
-    next_to_use: f32, 
-    current: u64, //starts at 0
+    next_to_use: u64, 
+    line: u64, //starts at 0
+    used: u64
 }
 
 impl Selector {
@@ -283,26 +293,26 @@ impl Selector {
             return None;
         }
        
-        let remainder = n_lines % max_plot_points as u64;
         let spacing = n_lines as f32 / max_plot_points as f32;
-
         Some(Self {
             spacing,
-            next_to_use: remainder as f32 /2.0,
-            current: 0,
+            next_to_use: (spacing/2.0) as u64,
+            line: 0,
+            used: 0,
         })
     }
 
     //calculate if element with index idx should be used
     fn use_index(&mut self) -> bool {
-        let to_use = if self.current == self.next_to_use as u64 {
-            self.next_to_use += self.spacing;
+        if self.line == self.next_to_use {
+            self.line += 1;
+            self.used += 1;
+            self.next_to_use = (self.used as f32*self.spacing) as u64;
             true
         } else {
+            self.line += 1;
             false
-        };
-        self.current += 1;
-        to_use
+        }
     }
 }
 

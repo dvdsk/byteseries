@@ -48,29 +48,29 @@ fn setup_debug_logging(verbosity: u8) -> Result<(), fern::InitError> {
     Ok(())
 }
 
-// #[test]
-// fn basic() {
-//     if Path::new("test_append.h").exists() {
-//         fs::remove_file("test_append.h").unwrap();
-//     }
-//     if Path::new("test_append.dat").exists() {
-//         fs::remove_file("test_append.dat").unwrap();
-//     }
-//     const LINE_SIZE: usize = 10;
-//     const STEP: i64 = 5;
-//     const N_TO_INSERT: u32 = 100;
+#[test]
+fn basic() {
+    if Path::new("test_append.h").exists() {
+        fs::remove_file("test_append.h").unwrap();
+    }
+    if Path::new("test_append.dat").exists() {
+        fs::remove_file("test_append.dat").unwrap();
+    }
+    const LINE_SIZE: usize = 10;
+    const STEP: i64 = 5;
+    const N_TO_INSERT: u32 = 100;
 
-//     let time = Utc::now();
+    let time = Utc::now();
 
-//     let mut data = Series::open("test_append", LINE_SIZE).unwrap();
-//     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
+    let mut data = Series::open("test_append", LINE_SIZE).unwrap();
+    insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
-//     assert_eq!(
-//         fs::metadata("test_append.dat").unwrap().len(),
-//         ((LINE_SIZE + 2) as u32 * N_TO_INSERT) as u64
-//     );
-//     assert_eq!(fs::metadata("test_append.h").unwrap().len(), 16);
-// }
+    assert_eq!(
+        fs::metadata("test_append.dat").unwrap().len(),
+        ((LINE_SIZE + 2) as u32 * N_TO_INSERT) as u64
+    );
+    assert_eq!(fs::metadata("test_append.h").unwrap().len(), 16);
+}
 
 /*#[test]
 fn test_set_read() {
@@ -154,7 +154,7 @@ fn hashes_then_verify() {
         .finish::<EmptyCombiner<_>>()
         .unwrap();
 
-    sampler.sample(n);
+    sampler.sample_all().unwrap();
 
     for (timestamp, hash) in sampler.into_iter() {
         let correct = hash64::<i64>(&(timestamp as i64));
@@ -194,7 +194,8 @@ fn hashes_read_skipping_then_verify() {
         .stop(t2)
         .finish::<EmptyCombiner<_>>()
         .unwrap();
-    sampler.sample(n).unwrap();
+    dbg!(&sampler);
+    sampler.sample_all().unwrap();
 
     assert_eq!(sampler.values().len(), n);
     for (timestamp, hash) in sampler.into_iter() {
@@ -213,54 +214,53 @@ impl Decoder<i64> for TimestampDecoder {
     }
 }
 
-//#[test]
-//fn timestamps_then_verify() {
-//    const NUMBER_TO_INSERT: i64 = 10_000;
-//    const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
+#[test]
+fn timestamps_then_verify() {
+    const NUMBER_TO_INSERT: i64 = 10_000;
+    const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
 
-//    //setup_debug_logging(2).unwrap();
+    //setup_debug_logging(2).unwrap();
 
-//    if Path::new("test_append_timestamps_then_verify.h").exists() {
-//        fs::remove_file("test_append_timestamps_then_verify.h").unwrap();
-//    }
-//    if Path::new("test_append_timestamps_then_verify.dat").exists() {
-//        fs::remove_file("test_append_timestamps_then_verify.dat").unwrap();
-//    }
+    if Path::new("test_append_timestamps_then_verify.h").exists() {
+        fs::remove_file("test_append_timestamps_then_verify.h").unwrap();
+    }
+    if Path::new("test_append_timestamps_then_verify.dat").exists() {
+        fs::remove_file("test_append_timestamps_then_verify.dat").unwrap();
+    }
 
-//    let time = Utc::now();
+    let time = Utc::now();
 
-//    let mut data = Series::open("test_append_timestamps_then_verify", 8).unwrap();
-//    insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
-//    //println!("inserted test data");
+    let mut data = Series::open("test_append_timestamps_then_verify", 8).unwrap();
+    insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
-//    let timestamp = time.timestamp();
-//    let t1 = time;
-//    let t2 = DateTime::<Utc>::from_utc(
-//        NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0),
-//        Utc,
-//    );
+    let timestamp = time.timestamp();
+    let t1 = time;
+    let t2 = DateTime::<Utc>::from_utc(
+        NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0),
+        Utc,
+    );
 
-//    let n = 8_000;
-//    let mut decoder = TimestampDecoder {};
-//    let mut sampler = SamplerBuilder::new(&data, &mut decoder)
-//        .points(n)
-//        .start(t1)
-//        .stop(t2)
-//        .finish()
-//        .unwrap();
+    let n = 8_000;
+    let mut decoder = TimestampDecoder {};
+    let mut sampler = SamplerBuilder::new(&data, &mut decoder)
+        .points(n)
+        .start(t1)
+        .stop(t2)
+        .finish::<EmptyCombiner<_>>()
+        .unwrap();
+    dbg!(&sampler);
+    sampler.sample_all().unwrap();
 
-//    sampler.sample(n);
-
-//    assert_eq!(sampler.values().len(), n);
-//    let mut prev = None;
-//    for (i, (timestamp, decoded)) in sampler.into_iter().enumerate() {
-//        let correct = timestamp as i64;
-//        assert_eq!(
-//            decoded, correct,
-//            "failed on element: {}, which should have ts: {}, but has been given {},
-//            prev element has ts: {:?}, the step is: {}",
-//            i, timestamp, decoded, prev, PERIOD
-//        );
-//        prev = Some(timestamp);
-//    }
-//}
+    assert_eq!(sampler.values().len(), n);
+    let mut prev = None;
+    for (i, (timestamp, decoded)) in sampler.into_iter().enumerate() {
+        let correct = timestamp as i64;
+        assert_eq!(
+            decoded, correct,
+            "failed on element: {}, which should have ts: {}, but has been given {},
+            prev element has ts: {:?}, the step is: {}",
+            i, timestamp, decoded, prev, PERIOD
+        );
+        prev = Some(timestamp);
+    }
+}

@@ -16,5 +16,5 @@ fn main() {
         .finish::<EmptyCombiner<_>>()
         .unwrap();
 
-    sampler.sample(10);
+    sampler.sample_all().unwrap();
 }
