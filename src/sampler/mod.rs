@@ -1,12 +1,12 @@
 use crate::{Error, Series, TimeSeek};
 use std::fmt::Debug;
 use std::clone::Clone;
-use std::default::Default;
+
 
 mod decoders;
 mod combiners;
 mod builder;
-pub use builder::SamplerBuilder;
+pub use builder::new_sampler;
 pub use decoders::EmptyDecoder;
 pub use combiners::{EmptyCombiner, MeanCombiner};
 

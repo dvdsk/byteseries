@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use byteseries::{EmptyDecoder, SamplerBuilder, Series, EmptyCombiner};
+use byteseries::{EmptyDecoder, new_sampler, Series};
 use byteseries::error::{Error, SeekError};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::fs;
@@ -43,11 +43,11 @@ fn beyond_range() {
     );
 
     let mut decoder = EmptyDecoder {};
-    let sampler = SamplerBuilder::new(&data, &mut decoder)
+    let sampler = new_sampler(&data, &mut decoder)
         .points(10)
         .start(t1)
         .stop(t2)
-        .finish::<EmptyCombiner<_>>();
+        .build();
 
     match sampler {
         Err(e) => match e {

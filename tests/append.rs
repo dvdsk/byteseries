@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use byteorder::{ByteOrder, NativeEndian};
-use byteseries::{SamplerBuilder, Decoder, Series, EmptyCombiner};
+use byteseries::{new_sampler, Decoder, Series};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use fern::colors::{Color, ColoredLevelConfig};
 use fxhash::hash64;
@@ -107,11 +107,11 @@ fn hashes_then_verify() {
 
     let n = 8_000;
     let mut decoder = HashDecoder {};
-    let mut sampler = SamplerBuilder::new(&data, &mut decoder)
+    let mut sampler = new_sampler(&data, &mut decoder)
         .points(n)
         .start(t1)
         .stop(t2)
-        .finish::<EmptyCombiner<_>>()
+        .build()
         .unwrap();
 
     sampler.sample_all().unwrap();
@@ -148,11 +148,11 @@ fn hashes_read_skipping_then_verify() {
 
     let n = 100;
     let mut decoder = HashDecoder {};
-    let mut sampler = SamplerBuilder::new(&data, &mut decoder)
+    let mut sampler = new_sampler(&data, &mut decoder)
         .points(n)
         .start(t1)
         .stop(t2)
-        .finish::<EmptyCombiner<_>>()
+        .build()
         .unwrap();
     dbg!(&sampler);
     sampler.sample_all().unwrap();
@@ -202,11 +202,11 @@ fn timestamps_then_verify() {
 
     let n = 8_000;
     let mut decoder = TimestampDecoder {};
-    let mut sampler = SamplerBuilder::new(&data, &mut decoder)
+    let mut sampler = new_sampler(&data, &mut decoder)
         .points(n)
         .start(t1)
         .stop(t2)
-        .finish::<EmptyCombiner<_>>()
+        .build()
         .unwrap();
     dbg!(&sampler);
     sampler.sample_all().unwrap();
