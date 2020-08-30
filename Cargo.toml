@@ -1,6 +1,6 @@
 [package]
 name = "byteseries"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["David Kleingeld <dskleingeld@gmail.com>"]
 edition = "2018"
 
@@ -8,9 +8,9 @@ edition = "2018"
 chrono = "0.4.6"
 thiserror = "1.0"
 log = "0.4.5"
-fern = { version = "0.6", features = ["colored"] }
 byteorder = "1.2.6"
 num-traits = "0.2.12"
 
-#used for tests only
+[dev-dependencies]
 fxhash = "0.2.1"
+fern = { version = "0.6", features = ["colored"] }

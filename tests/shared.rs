@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports)]
 use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
 use byteseries::Series;
 use chrono::{DateTime, NaiveDateTime, Utc};

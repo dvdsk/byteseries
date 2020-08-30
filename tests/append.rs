@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use byteorder::{ByteOrder, NativeEndian};
-use byteseries::{Decoder, SamplerBuilder, Series, EmptyCombiner, MeanCombiner};
+use byteseries::{SamplerBuilder, Decoder, Series, EmptyCombiner};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use fern::colors::{Color, ColoredLevelConfig};
 use fxhash::hash64;
@@ -71,46 +71,6 @@ fn basic() {
     );
     assert_eq!(fs::metadata("test_append.h").unwrap().len(), 16);
 }
-
-/*#[test]
-fn test_set_read() {
-    if Path::new("test_set_read.h").exists() {
-        fs::remove_file("test_set_read.h").unwrap();
-    }
-    if Path::new("test_set_read.dat").exists() {
-        fs::remove_file("test_set_read.dat").unwrap();
-    }
-    const LINE_SIZE: usize = 10;
-    const STEP: i64 = 5;
-    const N_TO_INSERT: u32 = 100;
-
-    let time = Utc::now();
-    let timestamp = time.timestamp();
-
-    let mut data = Series::open("test_set_read", LINE_SIZE).unwrap();
-    insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
-
-    let t1 =
-        DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp + 2 * STEP, 0), Utc);
-
-    let mut decoder = EmptyDecoder{};
-    let mut sampler = SamplerBuilder::new(&data, &mut decoder)
-        .points(10)
-        .start(t1)
-        .stop(Utc::now())
-        .finish().unwrap();
-
-    sampler.sample(10);
-
-    let bound_result = data.get_bounds(t1, Utc::now());
-    match bound_result {
-        BoundResult::IoError(_err) => panic!(),
-        BoundResult::NoData => panic!(),
-        BoundResult::Ok((start_byte, _stop_byte, _decode_params)) => {
-            assert_eq!(start_byte, ((data.line_size + 2) * 2) as u64);
-        }
-    }
-}*/
 
 #[derive(Debug)]
 struct HashDecoder {}

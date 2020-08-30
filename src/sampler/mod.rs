@@ -2,8 +2,13 @@ use crate::{Error, Series, TimeSeek};
 use std::fmt::Debug;
 use std::clone::Clone;
 use std::default::Default;
-use std::ops::{AddAssign, Div};
-use num_traits::identities::Zero;
+
+mod decoders;
+mod combiners;
+mod builder;
+pub use builder::SamplerBuilder;
+pub use decoders::EmptyDecoder;
+pub use combiners::{EmptyCombiner, MeanCombiner};
 
 pub trait Decoder<T>: Debug
 where
@@ -17,59 +22,12 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EmptyDecoder {}
-impl Decoder<u8> for EmptyDecoder {
-    fn decode(&mut self, bytes: &[u8], out: &mut Vec<u8>) {
-        out.extend_from_slice(&bytes[2..]);
-    }
-}
-
 /// the combiner gets both the value and the time, though unused 
 /// by simple combinators such as the MeanCombiner this allows 
 /// to combine values and time for example to calculate the derivative
 pub trait SampleCombiner<T>: Debug {
     fn add(&mut self, value: T, time: i64);
     fn combine(&mut self) -> T;
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct MeanCombiner<T> {
-    v_sum: T,
-    t_sum: i64,
-    n: usize,
-}
-impl<T> SampleCombiner<T> for MeanCombiner<T>
-where
-    T: Debug + Clone + AddAssign + Div<usize> + Zero,
-    <T as Div<usize>>::Output: Into<T>,
-{
-    fn add(&mut self, value: T, time: i64) {
-        self.v_sum += value;
-        self.t_sum += time;
-        self.n += 1;
-    }
-    fn combine(&mut self) -> T {
-        let v = (self.v_sum.clone() / self.n).into();
-        self.v_sum = T::zero(); 
-        self.n = 0;
-        v
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct EmptyCombiner<T> {v: T, t: i64}
-impl<T> SampleCombiner<T> for EmptyCombiner<T>
-where
-    T: Debug + Clone
-{
-    fn add(&mut self, value: T, time: i64){
-        self.v = value;
-        self.t = time;
-    }
-    fn combine(&mut self) -> T {
-        self.v.clone() 
-    }
 }
 
 pub struct Sampler<'a, T, C> {
@@ -108,81 +66,6 @@ where
             .field("buff", &buff)
             .field("decoded_per_line", &self.decoded_per_line)
             .finish()
-    }
-}
-
-pub struct SamplerBuilder<'a, T> {
-    series: Series,
-    decoder: &'a mut (dyn Decoder<T> + 'a),
-    start: Option<chrono::DateTime<chrono::Utc>>,
-    stop: Option<chrono::DateTime<chrono::Utc>>,
-    binsize: usize,
-    points: Option<usize>,
-}
-
-impl<'a, T> SamplerBuilder<'a, T>
-where
-    T: Debug + Clone,
-{
-    pub fn new(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)) -> Self {
-        Self {
-            series: series.clone(),
-            decoder,
-            binsize: 1,
-            start: None,
-            stop: None,
-            points: None,
-        }
-    }
-    pub fn start(mut self, start: chrono::DateTime<chrono::Utc>) -> Self {
-        self.start = Some(start);
-        self
-    }
-    pub fn stop(mut self, stop: chrono::DateTime<chrono::Utc>) -> Self {
-        self.stop = Some(stop);
-        self
-    }
-    pub fn points(mut self, n: usize) -> Self {
-        self.points = Some(n);
-        self
-    }
-    pub fn combine(mut self, binsize: usize) -> Self {
-        self.binsize = binsize;
-        self//TODO make this return a different type that has the combiner set
-    }
-    pub fn finish<C: SampleCombiner<T>+Default + Clone>(self) -> Result<Sampler<'a, T, C>, Error> {
-        let Self {
-            series,
-            decoder,
-            binsize,
-            start,
-            stop,
-            points,
-        } = self;
-        let mut byteseries = series.shared.lock().unwrap();
-        let start = start.unwrap();
-        let stop = stop.unwrap();
-        let seek = TimeSeek::new(&mut byteseries, start, stop)?;
-        let selector = points
-            .map(|p| Selector::new(p, seek.lines(&byteseries), binsize))
-            .flatten();
-
-        let dummy = vec![0u8; byteseries.full_line_size];
-        let decoded_per_line = decoder.decoded(&dummy).len();
-        drop(byteseries);
-
-        Ok(Sampler {
-            series,
-            selector,
-            decoder,
-            combiners: vec![C::default(); decoded_per_line],
-            binsize,
-            seek,
-            time: Vec::new(),
-            values: Vec::new(),
-            buff: vec![0u8; 409600],//TODO MAKE BUFFER SMALLER
-            decoded_per_line,
-        })
     }
 }
 
