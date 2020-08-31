@@ -154,7 +154,6 @@ fn hashes_read_skipping_then_verify() {
         .stop(t2)
         .build()
         .unwrap();
-    dbg!(&sampler);
     sampler.sample_all().unwrap();
 
     assert_eq!(sampler.values().len(), n);
@@ -208,7 +207,6 @@ fn timestamps_then_verify() {
         .stop(t2)
         .build()
         .unwrap();
-    dbg!(&sampler);
     sampler.sample_all().unwrap();
 
     assert_eq!(sampler.values().len(), n);

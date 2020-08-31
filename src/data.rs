@@ -65,14 +65,14 @@ impl ByteSeries {
         header: &Header,
         full_line_size: usize,
     ) -> Option<i64> {
+        
         let mut buf = [0u8; 2]; //rewrite to use bufferd data
         if data.seek(SeekFrom::End(-(full_line_size as i64))).is_ok() {
             data.read_exact(&mut buf).unwrap();
-            let timestamp_low = dbg!(LittleEndian::read_u16(&buf) as i64);
-            let timestamp_high = dbg!(header.last_timestamp) & !0b1111_1111_1111_11111;
-            dbg!(timestamp_high);
+            let timestamp_low = LittleEndian::read_u16(&buf) as i64;
+            let timestamp_high = header.last_timestamp & !0b1111_1111_1111_11111;
             let timestamp = timestamp_high | timestamp_low;
-            dbg!(Some(timestamp))
+            Some(timestamp)
         } else {
             log::warn!("file is empty");
             None

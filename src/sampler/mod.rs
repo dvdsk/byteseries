@@ -4,11 +4,10 @@ use std::clone::Clone;
 
 
 mod decoders;
-mod combiners;
+pub mod combiners;
 mod builder;
 pub use builder::new_sampler;
 pub use decoders::EmptyDecoder;
-pub use combiners::{EmptyCombiner, MeanCombiner};
 
 pub trait Decoder<T>: Debug
 where

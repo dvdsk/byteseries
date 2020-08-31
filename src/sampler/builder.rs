@@ -1,4 +1,4 @@
-use super::{Sampler, Decoder, SampleCombiner, EmptyCombiner, Selector};
+use super::{Sampler, Decoder, SampleCombiner, combiners, Selector};
 
 use chrono::{Utc, DateTime, NaiveDateTime};
 use crate::{Series, TimeSeek, Error};
@@ -108,9 +108,9 @@ impl<'a, T> SamplerBuilder<'a, T, Yes, No>
 where
     T: Debug + Clone + Default,
 {
-    pub fn build(self) -> Result<Sampler<'a, T, EmptyCombiner<T>>, Error> {
+    pub fn build(self) -> Result<Sampler<'a, T, combiners::Empty<T>>, Error> {
         self.per_sample(1)
-            .build_with_combiner(EmptyCombiner::<T>::default())
+            .build_with_combiner(combiners::Empty::<T>::default())
     }
 }
 

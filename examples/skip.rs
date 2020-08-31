@@ -13,6 +13,5 @@ fn main() {
         .stop(endtime)
         .build()
         .unwrap();
-
     sampler.sample_all().unwrap();
 }

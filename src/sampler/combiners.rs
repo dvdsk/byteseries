@@ -7,13 +7,13 @@ use std::ops::{AddAssign, Div};
 use num_traits::identities::Zero;
 
 #[derive(Debug, Clone, Default)]
-pub struct MeanCombiner<T> {
+pub struct Mean<T> {
     v_sum: T,
     t_sum: i64,
     n: usize,
 }
 
-impl<T> SampleCombiner<T> for MeanCombiner<T>
+impl<T> SampleCombiner<T> for Mean<T>
 where
     T: Debug + Clone + AddAssign + Div<usize> + Zero,
     <T as Div<usize>>::Output: Into<T>,
@@ -32,8 +32,8 @@ where
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct EmptyCombiner<T> {v: T, t: i64}
-impl<T> SampleCombiner<T> for EmptyCombiner<T>
+pub struct Empty<T> {v: T, t: i64}
+impl<T> SampleCombiner<T> for Empty<T>
 where
     T: Debug + Clone
 {
