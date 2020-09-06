@@ -2,32 +2,12 @@ use crate::{Error, Series, TimeSeek};
 use std::fmt::Debug;
 use std::clone::Clone;
 
-
 mod decoders;
 pub mod combiners;
 mod builder;
+pub use combiners::SampleCombiner;
 pub use builder::new_sampler;
-pub use decoders::EmptyDecoder;
-
-pub trait Decoder<T>: Debug
-where
-    T: Debug + Clone,
-{
-    fn decode(&mut self, bytes: &[u8], out: &mut Vec<T>);
-    fn decoded(&mut self, bytes: &[u8]) -> Vec<T> {
-        let mut values = Vec::new();
-        self.decode(bytes, &mut values);
-        values
-    }
-}
-
-/// the combiner gets both the value and the time, though unused 
-/// by simple combinators such as the MeanCombiner this allows 
-/// to combine values and time for example to calculate the derivative
-pub trait SampleCombiner<T>: Debug {
-    fn add(&mut self, value: T, time: i64);
-    fn combine(&mut self) -> T;
-}
+pub use decoders::{Decoder, EmptyDecoder};
 
 pub struct Sampler<'a, T, C> {
     series: Series,
@@ -131,7 +111,7 @@ where
         self.seek.curr == self.seek.stop
     }
     ///swap the time and values vectors with the given ones, returning the
-    ///origional
+    ///original
     pub fn swap_data(&mut self, times: &mut Vec<i64>, value: &mut Vec<T>) {
         std::mem::swap(&mut self.time, times);
         std::mem::swap(&mut self.values, value);
@@ -197,65 +177,3 @@ impl Selector {
         }
     }
 }
-
-/*impl Timeseries {
-    pub fn decode_time_into_given(
-        &mut self,
-        timestamps: &mut Vec<u64>,
-        line_data: &mut Vec<u8>,
-        lines_to_read: usize,
-        start_byte: &mut u64,
-        stop_byte: u64,
-        decode_params: &mut DecodeParams,
-    ) -> Result<(), Error> {
-        //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
-        let mut buf = vec![0; lines_to_read * self.full_line_size];
-        timestamps.clear();
-        line_data.clear();
-
-        //save file pos indicator before read call moves it around
-        let file_pos = *start_byte;
-        let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
-        log::trace!("read: {} bytes", n_read);
-        for (line, file_pos) in buf[..n_read]
-            .chunks(self.full_line_size)
-            .zip((file_pos..).step_by(self.full_line_size))
-        {
-            timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
-            line_data.extend_from_slice(&line[2..]);
-        }
-        Ok(())
-    }
-
-    pub fn decode_time_into_given_skipping(
-        &mut self,
-        timestamps: &mut Vec<u64>,
-        line_data: &mut Vec<u8>,
-        lines_to_read: usize,
-        start_byte: &mut u64,
-        stop_byte: u64,
-        decode_params: &mut DecodeParams,
-        selector: &mut Selector,
-    ) -> Result<(), Error> {
-        //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
-        let lines_to_skip = selector.n_to_skip(lines_to_read);
-        let mut buf = vec![0; (lines_to_read + lines_to_skip) * self.full_line_size]; //TODO FIXME
-        timestamps.clear();
-        line_data.clear();
-
-        //save file pos indicator before read call moves it around
-        let file_pos = *start_byte;
-        let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
-        log::trace!("read: {} bytes", n_read);
-        dbg!(n_read);
-        for (line, file_pos) in buf[..n_read]
-            .chunks(self.full_line_size)
-            .zip((file_pos..).step_by(self.full_line_size))
-            .filter(|_| selector.use_index())
-        {
-            timestamps.push(self.get_timestamp::<u64>(line, file_pos, decode_params));
-            line_data.extend_from_slice(&line[2..]);
-        }
-        Ok(())
-    }
-}*/
