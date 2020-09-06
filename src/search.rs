@@ -50,6 +50,7 @@ impl TimeSeek {
 }
 
 impl ByteSeries {
+    ///returns the offset from the start of the file where the first line starts
     fn find_read_start(
         &mut self,
         start_time: DateTime<Utc>,
@@ -111,24 +112,17 @@ impl ByteSeries {
             SearchBounds::Found(pos) => pos,
             SearchBounds::TillEnd(pos) => {
                 let end = self.data_size;
+                dbg!(&pos, &end);
                 self.find_read_stop(end_time, pos, end)?
             }
             SearchBounds::Window(start, stop) => self.find_read_stop(end_time, start, stop)?,
             SearchBounds::Clipped => panic!("should never occur"),
         };
 
-        log::debug!(
-            "start time: {}, {}; end_time: {}, {}",
-            start_time,
-            start_time.timestamp(),
-            end_time,
-            end_time.timestamp()
-        );
-        log::debug!("start_byte: {}", start_byte);
-
         Ok((start_byte, stop_byte, full_time))
     }
 
+    ///returns the offset from the start of the file where last line **stops**
     fn find_read_stop(
         &mut self,
         end_time: DateTime<Utc>,
@@ -140,18 +134,15 @@ impl ByteSeries {
         self.data.seek(SeekFrom::Start(start))?;
         self.data.read_exact(&mut buf)?;
 
-        log::trace!("buf.len(): {}", buf.len());
         for line_start in (0..buf.len() - self.full_line_size + 1)
             .rev()
             .step_by(self.full_line_size)
         {
-            //trace!("line: {}, {}", line_start, LittleEndian::read_u16(&buf[line_start..line_start + 2]));
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
                 <= end_time.timestamp() as u16
             {
-                log::debug!("setting start_byte from liniar search, start of search area");
                 let stop_byte = start + line_start as u64;
-                return Ok(stop_byte);
+                return Ok(stop_byte+self.full_line_size as u64);
             }
         }
         Ok(stop)

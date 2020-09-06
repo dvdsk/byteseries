@@ -25,7 +25,7 @@ pub struct Sampler<'a, T, C> {
 
 impl<'a, T, C> Debug for Sampler<'a, T, C>
 where
-    T: Clone + Debug,
+    T: Clone + Debug,  
     C: Debug
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -102,6 +102,13 @@ where
                 }
             }
         }
+        if n >= 2 { //combine any leftovers
+            self.time.push(time_sum/self.binsize as i64);
+            for comb in self.combiners.iter_mut() {
+                self.values.push(comb.combine());
+            } 
+        }
+
         seek.curr += n_read as u64;
         drop(byteseries);
         Ok(())

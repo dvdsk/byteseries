@@ -7,7 +7,7 @@ use std::path::Path;
 use std::f32::consts::PI;
 
 fn insert_vector(ts: &mut Series, t_start: DateTime<Utc>, t_end: DateTime<Utc>, data: &[f32]){
-    let dt = (t_start-t_end)/(data.len() as i32);
+    let dt = (t_end-t_start)/(data.len() as i32);
     let mut time = t_start;
 
     for x in data {
@@ -47,12 +47,13 @@ fn mean() {
     let now = Utc::now();
     let t1 = now - Duration::hours(2);
     let t2 = now;
+    let n = 200;
+    let s = 10;
 
     let mut ts = Series::open("test_combiner_mean", 4).unwrap();
-    let data = sine_array(2000, 5.0, 100.0);
+    let data = sine_array(n, 5.0, 100.0);
     insert_vector(&mut ts, t1, t2, &data);
 
-    let n = 200;
     let mut decoder = FloatDecoder{};
     let mut sampler = new_sampler(&ts, &mut decoder)
         .points(n)
@@ -61,13 +62,11 @@ fn mean() {
         .per_sample(10)
         .build_with_combiner(combiners::Mean::default())
         .unwrap();
-
     sampler.sample_all().unwrap();
-    assert_eq!(sampler.values().len(), 200);
 
+    assert_eq!(sampler.values().len(), n/s);
     for (sample, mean) in sampler.values().iter().zip(
-        data.chunks(10).map(|c| c.iter().sum::<f32>()/10.0)){
-
+        data.chunks(s).map(|c| c.iter().sum::<f32>()/(s as f32))){
         assert_eq!(*sample, mean);
     }
 }
