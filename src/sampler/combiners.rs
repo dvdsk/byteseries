@@ -1,8 +1,6 @@
-use std::iter::Sum;
 use std::clone::Clone;
 use std::default::Default;
 use std::fmt::Debug;
-use std::ops::{AddAssign, Div, Sub};
 use num_traits::identities::Zero;
 use std::marker::PhantomData;
 
@@ -40,6 +38,7 @@ where
     A: SampleCombiner<T>,
     B: SampleCombiner<T>,
 {
+    #[allow(dead_code)]
     fn new(a: A, b: B, binsize_a: usize) -> Self {
         Self {
             a,
@@ -82,26 +81,24 @@ where
 
 
 #[derive(Debug, Clone, Default)]
-pub struct Mean<T> {
-    v_sum: T,
+pub struct Mean {
+    v_sum: f32,
     t_sum: i64,
     n: usize,
     binsize: usize,
 }
 
-impl<T> SampleCombiner<T> for Mean<T>
+impl SampleCombiner<f32> for Mean
 where
-    T: Debug + Clone + AddAssign + Div<usize> + Zero,
-    <T as Div<usize>>::Output: Into<T>,
 {
-    fn add(&mut self, value: T, time: i64) {
+    fn add(&mut self, value: f32, time: i64) {
         self.v_sum += value;
         self.t_sum += time;
         self.n += 1;
     }
-    fn combine(&mut self) -> T {
-        let v = (self.v_sum.clone() / self.n).into();
-        self.v_sum = T::zero(); 
+    fn combine(&mut self) -> f32 {
+        let v = (self.v_sum.clone() / self.n as f32).into();
+        self.v_sum = f32::zero(); 
         self.n = 0;
         v
     }
@@ -112,10 +109,7 @@ where
 
 #[derive(Debug, Clone, Default)]
 pub struct Empty<T> {v: T, t: i64}
-impl<T> SampleCombiner<T> for Empty<T>
-where
-    T: Debug + Clone
-{
+impl<T: Debug + Clone> SampleCombiner<T> for Empty<T> {
     fn add(&mut self, value: T, time: i64){
         self.v = value;
         self.t = time;
@@ -131,30 +125,25 @@ where
 //TODO generic over array length when it stabilizes
 //minimum sample size is 2
 #[derive(Debug, Clone, Default)]
-pub struct Differentiate<T> {
-    values: Vec<T>, 
+pub struct Differentiate {
+    values: Vec<f32>, 
     times: Vec<i64>,
 }
 //ENHANCEMENT rewrite using Sum<&T> (stuck on lifetimes)
-impl<T> SampleCombiner<T> for Differentiate<T>
-where
-    T: Debug + Clone + Sum<T> + Sub<T> + Div<i64>,
-    <T as Sub<T>>::Output: Into<T>,
-    <T as Div<i64>>::Output: Into<T>,
-{
-    fn add(&mut self, v: T, t: i64){
+impl SampleCombiner<f32> for Differentiate {
+    fn add(&mut self, v: f32, t: i64){
         self.values.push(v);
         self.times.push(t);
     }
-    fn combine(&mut self) -> T {
+    fn combine(&mut self) -> f32 {
         let len = self.values.len();
-        let v1: T = self.values[..len/2].iter().cloned().sum();
-        let v2: T = self.values[len/2..].iter().cloned().sum();
+        let v1: f32 = self.values[..len/2].iter().cloned().sum();
+        let v2: f32 = self.values[len/2..].iter().cloned().sum();
         let t1: i64 = self.times[..len/2].iter().sum();
         let t2: i64 = self.times[len/2..].iter().sum();
 
         self.values.clear();
         self.times.clear();
-        ((v2-v1).into()/(t2-t1)).into()
+        (v2-v1)/((t2-t1) as f32)
     }
 }

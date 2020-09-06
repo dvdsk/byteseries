@@ -6,7 +6,7 @@ mod decoders;
 pub mod combiners;
 mod builder;
 pub use combiners::SampleCombiner;
-pub use builder::new_sampler;
+pub use builder::{new_sampler, SamplerBuilder};
 pub use decoders::{Decoder, EmptyDecoder};
 
 pub struct Sampler<'a, T, C> {
