@@ -122,28 +122,49 @@ impl<T: Debug + Clone> SampleCombiner<T> for Empty<T> {
     }
 }
 
-//TODO generic over array length when it stabilizes
+////TODO generic over array length when it stabilizes
+////minimum sample size is 2
+//#[derive(Debug, Clone, Default)]
+//pub struct Differentiate {
+//    values: Vec<f32>, 
+//    times: Vec<i64>,
+//}
+////ENHANCEMENT rewrite using Sum<&T> (stuck on lifetimes)
+//impl SampleCombiner<f32> for Differentiate {
+//    fn add(&mut self, v: f32, t: i64){
+//        self.values.push(v);
+//        self.times.push(t);
+//    }
+//    fn combine(&mut self) -> f32 {
+//        let len = self.values.len();
+//        let v1: f32 = self.values[..len/2].iter().cloned().sum();
+//        let v2: f32 = self.values[len/2..].iter().cloned().sum();
+//        let t1: i64 = self.times[..len/2].iter().sum();
+//        let t2: i64 = self.times[len/2..].iter().sum();
+
+//        self.values.clear();
+//        self.times.clear();
+//        (v2-v1)/((t2-t1) as f32)
+//    }
+//}
+
 //minimum sample size is 2
 #[derive(Debug, Clone, Default)]
 pub struct Differentiate {
-    values: Vec<f32>, 
-    times: Vec<i64>,
+    pair_1: Option<(f32, i64)>,
+    pair_2: Option<(f32, i64)>,
 }
-//ENHANCEMENT rewrite using Sum<&T> (stuck on lifetimes)
 impl SampleCombiner<f32> for Differentiate {
     fn add(&mut self, v: f32, t: i64){
-        self.values.push(v);
-        self.times.push(t);
+        if self.pair_1.is_none() {
+            self.pair_1 = Some((v,t));
+        } else {
+            self.pair_2 = Some((v,t));
+        }
     }
     fn combine(&mut self) -> f32 {
-        let len = self.values.len();
-        let v1: f32 = self.values[..len/2].iter().cloned().sum();
-        let v2: f32 = self.values[len/2..].iter().cloned().sum();
-        let t1: i64 = self.times[..len/2].iter().sum();
-        let t2: i64 = self.times[len/2..].iter().sum();
-
-        self.values.clear();
-        self.times.clear();
-        (v2-v1)/((t2-t1) as f32)
+        let p1 = self.pair_1.take().expect("binsize must be at least 2 to determine numerical derivative");
+        let p2 = self.pair_2.take().expect("binsize must be at least 2 to determine numerical derivative");
+        (p2.0-p1.0)/((p2.1-p1.1) as f32)
     }
 }

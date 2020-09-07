@@ -112,7 +112,6 @@ impl ByteSeries {
             SearchBounds::Found(pos) => pos,
             SearchBounds::TillEnd(pos) => {
                 let end = self.data_size;
-                dbg!(&pos, &end);
                 self.find_read_stop(end_time, pos, end)?
             }
             SearchBounds::Window(start, stop) => self.find_read_stop(end_time, start, stop)?,

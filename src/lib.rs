@@ -8,7 +8,6 @@ mod header;
 mod sampler;
 mod search;
 mod util;
-//mod test;
 
 use data::ByteSeries;
 pub use error::Error;

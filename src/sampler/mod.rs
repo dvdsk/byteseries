@@ -78,8 +78,8 @@ where
         
         let n_read = byteseries.read(&mut self.buff, &mut seek.start, seek.stop)?;
 
-        let mut n = 0;
-        let mut time_sum = 0;
+        let mut n = 0; //TODO FIXME 
+        let mut time_sum = 0; //TODO FIXME these both should be persistent across reads 
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
             .zip((seek.curr..).step_by(full_line_size))
