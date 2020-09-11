@@ -16,10 +16,10 @@ fn main() {
     let (endtime, _data) = ts.last_line(&mut decoder).unwrap();
     let endtime = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(endtime, 0), Utc);
     
-    let combiner = combiners::Mean::default();
+    let bin = combiners::SampleBin::new(5);
+    let combiner = combiners::Mean::new(bin);
     let mut sampler = new_sampler(&ts, &mut decoder)
         .points(10)
-        .per_sample(10)
         .start(endtime - Duration::hours(90))
         .stop(endtime)
         .build_with_combiner(combiner)

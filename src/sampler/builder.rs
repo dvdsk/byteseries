@@ -24,13 +24,11 @@ impl Assigned for Yes {}
 impl NotAssigned for No {}
 
 
-pub struct SamplerBuilder<'a, T, StartSet, BinSizeSet> 
+pub struct SamplerBuilder<'a, T, StartSet> 
 where 
     StartSet: ToAssign,
-    BinSizeSet: ToAssign,
 {
     start_set: PhantomData<StartSet>,
-    binsize_set: PhantomData<BinSizeSet>,
 
     series: Series,
     decoder: &'a mut (dyn Decoder<T> + 'a),
@@ -40,10 +38,9 @@ where
     points: Option<usize>,
 }
 
-pub fn new_sampler<'a,T>(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)) -> SamplerBuilder<'a, T, No, No> {
+pub fn new_sampler<'a,T>(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)) -> SamplerBuilder<'a, T, No> {
     SamplerBuilder {
         start_set: PhantomData {},
-        binsize_set: PhantomData {},
 
         series: series.clone(),
         decoder,
@@ -54,20 +51,17 @@ pub fn new_sampler<'a,T>(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)
     }
 }
 
-impl<'a, T, StartSet, BinSizeSet> SamplerBuilder<'a, T, StartSet, BinSizeSet>
+impl<'a, T, StartSet> SamplerBuilder<'a, T, StartSet>
 where
     T: Debug + Clone + Default,
     StartSet: ToAssign,
-    BinSizeSet: ToAssign,
 {
     /// set the start time
     pub fn start(self, start: chrono::DateTime<chrono::Utc>)
-     -> SamplerBuilder<'a, T, Yes, BinSizeSet> {
+     -> SamplerBuilder<'a, T, Yes> {
         
         SamplerBuilder {
             start_set: PhantomData {},
-            binsize_set: PhantomData {},
-
             series: self.series,
             decoder: self.decoder,
             start: Some(start),
@@ -86,41 +80,20 @@ where
         self.points = Some(n);
         self
     }
-    pub fn per_sample(self, binsize: usize) 
-     -> SamplerBuilder<'a, T, StartSet, Yes> {
-        
-        SamplerBuilder {
-            start_set: PhantomData {},
-            binsize_set: PhantomData {},
-
-            series: self.series,
-            decoder: self.decoder,
-            start: self.start,
-            binsize,
-            stop: self.stop,
-            points: self.points,
-        }
-    }
 }
 
 
-impl<'a, T> SamplerBuilder<'a, T, Yes, No>
+impl<'a, T> SamplerBuilder<'a, T, Yes>
 where
     T: Debug + Clone + Default,
 {
-    pub fn build(self) -> Result<Sampler<'a, T, combiners::Empty<T>>, Error> {
-        self.per_sample(1)
-            .build_with_combiner(combiners::Empty::<T>::default())
+    pub fn build(self) -> Result<Sampler<'a, T, combiners::Empty>, Error> {
+            self.build_with_combiner(combiners::Empty::default())
     }
-}
 
-impl<'a, T> SamplerBuilder<'a, T, Yes, Yes>
-where
-    T: Debug + Clone + Default,
-{
-    pub fn build_with_combiner<C>(self, combiner: C) -> Result<Sampler<'a, T, C>, Error> 
+    pub fn build_with_combiner<C>(self, mut combiner: C) -> Result<Sampler<'a, T, C>, Error> 
     where
-        C: SampleCombiner<T> + Clone + Default
+        C: SampleCombiner<T>
     {
         let SamplerBuilder {
             series,
@@ -143,15 +116,14 @@ where
 
         let dummy = vec![0u8; byteseries.full_line_size];
         let decoded_per_line = decoder.decoded(&dummy).len();
+        combiner.set_decoded_size(decoded_per_line);
         drop(byteseries);
-
-        let combiners = vec![combiner; decoded_per_line];
 
         Ok(Sampler {
             series,
             selector,
             decoder,
-            combiners,
+            combiner,
             binsize,
             seek,
             time: Vec::new(),

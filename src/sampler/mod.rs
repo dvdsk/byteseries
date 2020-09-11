@@ -13,7 +13,7 @@ pub struct Sampler<'a, T, C> {
     series: Series,
     selector: Option<Selector>,
     decoder: &'a mut (dyn Decoder<T> + 'a), //check if generic better fit
-    combiners: Vec<C>, 
+    combiner: C, 
     binsize: usize,
     seek: TimeSeek,
 
@@ -37,7 +37,7 @@ where
             .field("series", &self.series)
             .field("selector", &self.selector)
             .field("decoder", &self.decoder)
-            .field("combiner", &self.combiners)
+            .field("combiner", &self.combiner)
             .field("binsize", &self.binsize)
             .field("seek", &self.seek)
             .field("time", &time)
@@ -78,36 +78,25 @@ where
         
         let n_read = byteseries.read(&mut self.buff, &mut seek.start, seek.stop)?;
 
-        let mut n = 0; //TODO FIXME 
-        let mut time_sum = 0; //TODO FIXME these both should be persistent across reads 
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
             .zip((seek.curr..).step_by(full_line_size))
             .filter(|_| selector.as_mut().map(|s| s.use_index()).unwrap_or(true))
         {
             let time = byteseries.get_timestamp::<i64>(line, pos, &mut seek.full_time); 
-            time_sum += time;
-            let mut values = self.decoder.decoded(&line[2..]);
-            for (v, comb) in values.drain(..).zip(self.combiners.iter_mut()) {
-                comb.add(v, time);
+            let values = self.decoder.decoded(&line[2..]);
+            if let Some((t,combined)) = self.combiner.process(time, values){
+                dbg!(t, &combined);
+                self.values.extend(combined.into_iter());
+                self.time.push(t);
             }
-            
-            n += 1;
-            if n >= self.binsize {
-                n=0;
-                self.time.push(time_sum/self.binsize as i64);
-                time_sum = 0;
-                for comb in self.combiners.iter_mut() {
-                    self.values.push(comb.combine());
-                }
-            }
-        }
-        if n >= 2 { //combine any leftovers
-            self.time.push(time_sum/self.binsize as i64);
-            for comb in self.combiners.iter_mut() {
-                self.values.push(comb.combine());
-            } 
-        }
+        } 
+        // if n >= 2 { //combine any leftovers
+        //     self.time.push(time_sum/self.binsize as i64);
+        //     for comb in self.combiners.iter_mut() {
+        //         self.values.push(comb.combine());
+        //     } 
+        // }
 
         seek.curr += n_read as u64;
         drop(byteseries);
