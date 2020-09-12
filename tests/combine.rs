@@ -80,75 +80,111 @@ fn mean() {
     }
 }
 
-// #[test]
-//fn diff_linear() {
-//    if Path::new("test_combiner_diff_linear.h").exists() {
-//        fs::remove_file("test_combiner_diff_linear.h").unwrap();
-//    }
-//    if Path::new("test_combiner_diff_linear.dat").exists() {
-//        fs::remove_file("test_combiner_diff_linear.dat").unwrap();
-//    }
+#[test]
+fn diff_linear() {
+    if Path::new("test_combiner_diff_linear.h").exists() {
+        fs::remove_file("test_combiner_diff_linear.h").unwrap();
+    }
+    if Path::new("test_combiner_diff_linear.dat").exists() {
+        fs::remove_file("test_combiner_diff_linear.dat").unwrap();
+    }
 
-//    let now = Utc::now();
-//    let t1 = now - Duration::hours(2);
-//    let t2 = now;
-//    let n = 10;
-//    let s = 2;
-//    let slope = 0.2;
+    let now = Utc::now();
+    let t1 = now - Duration::hours(2);
+    let t2 = now;
+    let n = 10;
+    let slope = 0.2;
 
-//    let mut ts = Series::open("test_combiner_diff_linear", 4).unwrap();
-//    let data = linear_array(n, slope);
-//    insert_vector(&mut ts, t1, t2, &data);
+    let mut ts = Series::open("test_combiner_diff_linear", 4).unwrap();
+    let data = linear_array(n, slope);
+    insert_vector(&mut ts, t1, t2, &data);
 
-//    let mut decoder = FloatDecoder{};
-//    let mut sampler = new_sampler(&ts, &mut decoder)
-//        .points(n)
-//        .start(t1)
-//        .stop(t2)
-//        .per_sample(s)
-//        .build_with_combiner(combiners::Differentiate::default())
-//        .unwrap();
-//    sampler.sample_all().unwrap();
+    let mut decoder = FloatDecoder{};
+    let mut sampler = new_sampler(&ts, &mut decoder)
+        .points(n)
+        .start(t1)
+        .stop(t2)
+        .build_with_combiner(combiners::Differentiate::default())
+        .unwrap();
+    sampler.sample_all().unwrap();
 
-//    let dt = (t2-t1).num_seconds()/(data.len() as i64);
-//    let slope = slope / (dt as f32);
-//    for v in sampler.values(){
-//        assert_float_eq!(*v, slope, abs <= 0.000_05);
-//    }
-//}
+    let dt = (t2-t1).num_seconds()/(data.len() as i64);
+    let slope = slope / (dt as f32);
+    for v in sampler.values(){
+        assert_float_eq!(*v, slope, abs <= 0.000_05);
+    }
+}
 
-////no good tests, for now just plot the results and check they are somewhat cosiney
-////use cargo t -- --nocapture diff_sine
-//#[test]
-//fn diff_sine() {
-//    if Path::new("test_combiner_diff_sine.h").exists() {
-//        fs::remove_file("test_combiner_diff_sine.h").unwrap();
-//    }
-//    if Path::new("test_combiner_diff_sine.dat").exists() {
-//        fs::remove_file("test_combiner_diff_sine.dat").unwrap();
-//    }
+//no good tests, for now just plot the results and check they are somewhat cosiney
+//use cargo t -- --nocapture diff_sine
+#[test]
+fn diff_sine() {
+    if Path::new("test_combiner_diff_sine.h").exists() {
+        fs::remove_file("test_combiner_diff_sine.h").unwrap();
+    }
+    if Path::new("test_combiner_diff_sine.dat").exists() {
+        fs::remove_file("test_combiner_diff_sine.dat").unwrap();
+    }
 
-//    let now = Utc::now();
-//    let t1 = now - Duration::hours(2);
-//    let t2 = now;
-//    let n = 200;
-//    let s = 10;
+    let now = Utc::now();
+    let t1 = now - Duration::hours(2);
+    let t2 = now;
+    let n = 200;
 
-//    let mut ts = Series::open("test_combiner_diff_sine", 4).unwrap();
-//    let data = sine_array(n, 5.0, 100.0);
-//    insert_vector(&mut ts, t1, t2, &data);
+    let mut ts = Series::open("test_combiner_diff_sine", 4).unwrap();
+    let data = sine_array(n, 5.0, 100.0);
+    insert_vector(&mut ts, t1, t2, &data);
 
-//    let mut decoder = FloatDecoder{};
-//    let mut sampler = new_sampler(&ts, &mut decoder)
-//        .points(n)
-//        .start(t1)
-//        .stop(t2)
-//        .per_sample(s)
-//        .build_with_combiner(combiners::Differentiate::default())
-//        .unwrap();
-//    sampler.sample_all().unwrap();
+    let mut decoder = FloatDecoder{};
+    let mut sampler = new_sampler(&ts, &mut decoder)
+        .points(n)
+        .start(t1)
+        .stop(t2)
+        .build_with_combiner(combiners::Differentiate::default())
+        .unwrap();
+    sampler.sample_all().unwrap();
 
-//    let values = sampler.values();
-//    assert_float_eq!(*values.first().unwrap(), *values.last().unwrap(), abs <= 0.001);
-//    assert_float_eq!(*values.first().unwrap(), 0.0, abs <= 0.01);
-//}
+    let values = sampler.values();
+    assert_float_eq!(*values.first().unwrap(), *values.last().unwrap(), abs <= 0.001);
+    assert_float_eq!(*values.first().unwrap(), 0.0, abs <= 0.01);
+}
+
+#[test]
+fn diff_linear_of_mean() {
+    if Path::new("test_combiner_diff_linear_mean.h").exists() {
+        fs::remove_file("test_combiner_diff_linear_mean.h").unwrap();
+    }
+    if Path::new("test_combiner_diff_linear_mean.dat").exists() {
+        fs::remove_file("test_combiner_diff_linear_mean.dat").unwrap();
+    }
+
+    let now = Utc::now();
+    let t1 = now - Duration::hours(2);
+    let t2 = now;
+    let n = 10;
+    let slope = 0.2;
+
+    let mut ts = Series::open("test_combiner_diff_linear_mean", 4).unwrap();
+    let data = linear_array(400, slope);
+    insert_vector(&mut ts, t1, t2, &data);
+
+    let bin = combiners::SampleBin::new(5);
+    let first = combiners::Mean::new(bin);
+    let second = combiners::Differentiate::default();
+    let combiner = combiners::Combiner::new(first, second);
+    let mut decoder = FloatDecoder{};
+    let mut sampler = new_sampler(&ts, &mut decoder)
+        .points(n)
+        .start(t1)
+        .stop(t2)
+        .build_with_combiner(combiner)
+        .unwrap();
+    sampler.sample_all().unwrap();
+
+    assert_eq!(sampler.values().len(), n);
+    let dt = (t2-t1).num_seconds()/(data.len() as i64);
+    let slope = slope / (dt as f32);
+    for v in sampler.values(){
+        assert_float_eq!(*v, slope, abs <= 0.000_05);
+    }
+}

@@ -14,7 +14,6 @@ pub struct Sampler<'a, T, C> {
     selector: Option<Selector>,
     decoder: &'a mut (dyn Decoder<T> + 'a), //check if generic better fit
     combiner: C, 
-    binsize: usize,
     seek: TimeSeek,
 
     time: Vec<i64>,
@@ -38,7 +37,6 @@ where
             .field("selector", &self.selector)
             .field("decoder", &self.decoder)
             .field("combiner", &self.combiner)
-            .field("binsize", &self.binsize)
             .field("seek", &self.seek)
             .field("time", &time)
             .field("values", &values)
@@ -86,18 +84,10 @@ where
             let time = byteseries.get_timestamp::<i64>(line, pos, &mut seek.full_time); 
             let values = self.decoder.decoded(&line[2..]);
             if let Some((t,combined)) = self.combiner.process(time, values){
-                dbg!(t, &combined);
                 self.values.extend(combined.into_iter());
                 self.time.push(t);
             }
         } 
-        // if n >= 2 { //combine any leftovers
-        //     self.time.push(time_sum/self.binsize as i64);
-        //     for comb in self.combiners.iter_mut() {
-        //         self.values.push(comb.combine());
-        //     } 
-        // }
-
         seek.curr += n_read as u64;
         drop(byteseries);
         Ok(())
@@ -146,15 +136,17 @@ pub struct Selector {
 }
 
 impl Selector {
-    pub fn new(max_plot_points: usize, n_lines: u64, binsize: usize) -> Option<Self> {
-        if n_lines as usize <= max_plot_points*binsize {
+    pub fn new(mut max_plot_points: usize, n_lines: u64, binsize: usize, offset: usize) -> Option<Self> {
+        max_plot_points += offset; 
+        max_plot_points *= binsize;
+        if n_lines as usize <= max_plot_points {
             return None;
         }
        
         let spacing = n_lines as f32 / max_plot_points as f32;
         Some(Self {
             spacing,
-            next_to_use: (spacing/2.0) as u64,
+            next_to_use: 0,//spacing/2.0) as u64,
             line: 0,
             used: 0,
         })

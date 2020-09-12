@@ -4,6 +4,7 @@ use std::fmt::Debug;
 
 pub trait Bin: Debug {
     fn update_bin(&mut self, t: i64) -> Option<i64>;
+    fn binsize(&self) -> usize;
 }
 
 #[derive(Debug)]
@@ -23,7 +24,6 @@ impl Bin for SampleBin {
         self.n += 1;
         self.t_sum += t;
         if self.n >= self.binsize {
-            dbg!();
             let t = self.t_sum/(self.binsize as i64);
             self.t_sum = 0;
             self.n = 0;
@@ -31,6 +31,9 @@ impl Bin for SampleBin {
         } else {
             None
         }
+    }
+    fn binsize(&self) -> usize {
+        self.binsize
     }
 }
 
@@ -58,6 +61,12 @@ impl Bin for TimeBin {
             None
         }
     }
+    //since we don not have a concept of binsize
+    //we return one, this will cause sampler to return
+    //a unknown amount of points
+    fn binsize(&self) -> usize {
+        1
+    }
 }
 
 
@@ -66,11 +75,8 @@ impl Bin for TimeBin {
 /// to combine values and time for example to calculate the derivative
 pub trait SampleCombiner<T: Sized>: Debug {
     fn process(&mut self, time: i64, values: Vec<T>) -> Option<(i64, Vec<T>)>;
-    // // binsize multiplier, used when combining.... combiners
-    // // unless you are doing anything crazy keep the default impl
-    // fn binsize(&self) -> usize {
-    //     1
-    // }
+    fn binsize(&self) -> usize;
+    fn binoffset(&self) -> usize {0}
     fn set_decoded_size(&mut self, _n_values: usize) {}
 }
 
@@ -79,6 +85,9 @@ pub struct Empty {}
 impl<T: Debug + Clone + Sized> SampleCombiner<T> for Empty {
     fn process(&mut self, t: i64, v: Vec<T>) -> Option<(i64, Vec<T>)> {
         Some((t,v)) 
+    }
+    fn binsize(&self) -> usize {
+        1
     }
 }
 
@@ -110,7 +119,6 @@ where
         self.n += 1;
 
         if let Some(binned_time) = self.bin.update_bin(time){
-            dbg!();
             let v = self.v_sum.iter().map(|s| s/(self.n as f32)).collect();
             self.v_sum.iter_mut().for_each(|s| *s=0.0);
             self.n = 0;
@@ -119,183 +127,88 @@ where
             None
         }
     }
-    // fn binsize(&self) -> usize {
-    //     self.binsize
-    // }
+    fn binsize(&self) -> usize {
+        self.bin.binsize()
+    }
     fn set_decoded_size(&mut self, n_values: usize) {
         self.v_sum = vec![0.0; n_values];
     }
 }
 
-// #[derive(Debug, Clone, Default)]
-// pub struct Combiner<T,A,B> 
-// where 
-//     A: SampleCombiner<T>,
-//     B: SampleCombiner<T>,
-//     T: Debug + Clone + Default
-// {
-//     a: A,
-//     b: B,
-//     binsize_a: usize,
-//     n: usize,
-//     time_sum: i64,
-//     t: PhantomData<T>,
-// }
+#[derive(Debug, Clone, Default)]
+pub struct Combiner<A,B> 
+where 
+    A: SampleCombiner<f32>,
+    B: SampleCombiner<f32>,
+{
+    a: A,
+    b: B,
+}
 
-// impl<T,A,B> Combiner<T,A,B>
-// where 
-//     T: Debug + Clone + Default,
-//     A: SampleCombiner<T>,
-//     B: SampleCombiner<T>,
-// {
-//     #[allow(dead_code)]
-//     fn new(a: A, b: B, binsize_a: usize) -> Self {
-//         Self {
-//             a,
-//             b,
-//             binsize_a,
-//             n: 0,
-//             time_sum: 0,
-//             t: PhantomData,
-//         }
-//     }
-// }
+impl<A,B> Combiner<A,B>
+where 
+    A: SampleCombiner<f32>,
+    B: SampleCombiner<f32>,
+{
+    #[allow(dead_code)]
+    pub fn new(a: A, b: B) -> Self {
+        Self {
+            a,
+            b,
+        }
+    }
+}
 
-// impl<A,B,T> SampleCombiner<T> for Combiner<T,A,B> 
-// where 
-//     T: Debug + Clone + Default,
-//     A: SampleCombiner<T>,
-//     B: SampleCombiner<T>,
-// {
+impl<A,B> SampleCombiner<f32> for Combiner<A,B> 
+where 
+    A: SampleCombiner<f32>,
+    B: SampleCombiner<f32>,
+{
+    fn process(&mut self, time: i64, values: Vec<f32>) -> Option<(i64,Vec<f32>)> {
+        if let Some((time, values)) = self.a.process(time, values){
+            if let Some((time, values)) = self.b.process(time, values){
+                return Some((time,values));
+            }
+        }
+        None
+    }
+    fn set_decoded_size(&mut self, n_values: usize) {
+        self.a.set_decoded_size(n_values);
+        self.b.set_decoded_size(n_values);
+    }
+    fn binsize(&self) -> usize {
+        self.a.binsize()*self.b.binsize()
+    }
+    fn binoffset(&self) -> usize {
+        self.a.binoffset()*self.b.binsize()+self.b.binoffset()
+    }
+}
 
-//     fn add(&mut self, value: T, time: i64){
-//         if self.n < self.binsize_a {
-//             self.n += 1;
-//             self.time_sum += time;
-//             self.a.add(value,time);
-//         } else {
-//             let time = self.time_sum/(self.n as i64);
-//             self.b.add(self.a.combine(), time);
-//             self.n = 0;
-//         }
-//     }
-//     fn combine(&mut self) -> T {
-//         self.b.combine()
-//     }
-//     // the wanted binsize should be multiplied by the binsize of B
-//     // in the read loop of the sampler
-//     fn binsize(&self) -> usize {
-//         self.binsize_a
-//     }
-// }
+//minimum sample size is 2
+#[derive(Debug, Clone, Default)]
+pub struct Differentiate {
+    pair_1: Option<(i64, Vec<f32>)>,
+}
+impl SampleCombiner<f32> for Differentiate {
+    fn process(&mut self, t2: i64, v2: Vec<f32>) -> Option<(i64,Vec<f32>)> {
+        if self.pair_1.is_none() {
+            self.pair_1 = Some((t2, v2));
+            None
+        } else {
+            let (t1, v1) = self.pair_1.as_ref().unwrap();
 
-
-// #[derive(Debug, Clone, Default)]
-// pub struct Mean {
-//     v_sum: f32,
-//     t_sum: i64,
-//     n: usize,
-//     binsize: usize,
-// }
-
-//impl SampleCombiner<f32> for Mean
-//where
-//{
-//    fn add(&mut self, value: f32, time: i64) {
-//        self.v_sum += value;
-//        self.t_sum += time;
-//        self.n += 1;
-//    }
-//    fn combine(&mut self) -> f32 {
-//        let v = (self.v_sum.clone() / self.n as f32).into();
-//        self.v_sum = f32::zero(); 
-//        self.n = 0;
-//        v
-//    }
-//    fn binsize(&self) -> usize {
-//        self.binsize
-//    }
-//}
-
-//#[derive(Debug, Clone, Default)]
-//pub struct Empty<T> {v: T, t: i64}
-//impl<T: Debug + Clone> SampleCombiner<T> for Empty<T> {
-//    fn add(&mut self, value: T, time: i64){
-//        self.v = value;
-//        self.t = time;
-//    }
-//    fn combine(&mut self) -> T {
-//        self.v.clone() 
-//    }
-//    fn binsize(&self) -> usize {
-//        1
-//    }
-//}
-
-//////TODO generic over array length when it stabilizes
-//////minimum sample size is 2
-////#[derive(Debug, Clone, Default)]
-////pub struct Differentiate {
-////    values: Vec<f32>, 
-////    times: Vec<i64>,
-////}
-//////ENHANCEMENT rewrite using Sum<&T> (stuck on lifetimes)
-////impl SampleCombiner<f32> for Differentiate {
-////    fn add(&mut self, v: f32, t: i64){
-////        self.values.push(v);
-////        self.times.push(t);
-////    }
-////    fn combine(&mut self) -> f32 {
-////        let len = self.values.len();
-////        let v1: f32 = self.values[..len/2].iter().cloned().sum();
-////        let v2: f32 = self.values[len/2..].iter().cloned().sum();
-////        let t1: i64 = self.times[..len/2].iter().sum();
-////        let t2: i64 = self.times[len/2..].iter().sum();
-
-////        self.values.clear();
-////        self.times.clear();
-////        (v2-v1)/((t2-t1) as f32)
-////    }
-////}
-
-////minimum sample size is 2
-//#[derive(Debug, Clone, Default)]
-//pub struct Differentiate {
-//    pair_1: Option<(f32, i64)>,
-//    pair_2: Option<(f32, i64)>,
-//}
-//impl SampleCombiner<f32> for Differentiate {
-//    fn add(&mut self, v: f32, t: i64){
-//        if self.pair_1.is_none() {
-//            self.pair_1 = Some((v,t));
-//        } else {
-//            self.pair_2 = Some((v,t));
-//        }
-//    }
-//    fn combine(&mut self) -> f32 {
-//        let p1 = self.pair_1.take().expect("binsize must be at least 2 to determine numerical derivative");
-//        let p2 = self.pair_2.take().expect("binsize must be at least 2 to determine numerical derivative");
-//        (p2.0-p1.0)/((p2.1-p1.1) as f32)
-//    }
-//}
-
-/////should be used with a binsize of 1
-//#[derive(Debug, Clone, Default)]
-//pub struct MovingAverage {
-//    pair_1: Option<(f32, i64)>,
-//    pair_2: Option<(f32, i64)>,
-//}
-//impl SampleCombiner<f32> for MovingAverage {
-//    fn add(&mut self, v: f32, t: i64){
-//        if self.pair_1.is_none() {
-//            self.pair_1 = Some((v,t));
-//        } else {
-//            self.pair_2 = Some((v,t));
-//        }
-//    }
-//    fn combine(&mut self) -> f32 {
-//        let p1 = self.pair_1.take().expect("binsize must be at least 2 to determine numerical derivative");
-//        let p2 = self.pair_2.take().expect("binsize must be at least 2 to determine numerical derivative");
-//        (p2.0-p1.0)/((p2.1-p1.1) as f32)
-//    }
-//}
+            let dt = (t2 - t1) as f32;
+            let dv = v1.iter().zip(v2.iter()).map(|(v1, v2)| v2-v1);
+            let dvdt = dv.map(|dv| dv/dt).collect();
+            let mean_time = (t1+t2)/2;
+            self.pair_1 = Some((t2, v2));
+            Some((mean_time, dvdt))
+        }
+    }
+    fn binsize(&self) -> usize {
+        1 //we return after receiving a sample
+    }
+    fn binoffset(&self) -> usize {
+        1 //we need the first sample to get started
+    }
+}

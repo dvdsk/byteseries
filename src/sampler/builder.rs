@@ -34,7 +34,6 @@ where
     decoder: &'a mut (dyn Decoder<T> + 'a),
     start: Option<chrono::DateTime<chrono::Utc>>,
     stop: Option<chrono::DateTime<chrono::Utc>>,
-    binsize: usize,
     points: Option<usize>,
 }
 
@@ -46,7 +45,6 @@ pub fn new_sampler<'a,T>(series: &Series, decoder: &'a mut (dyn Decoder<T> + 'a)
         decoder,
         start: None,
         stop: None,
-        binsize: 0,
         points: None,
     }
 }
@@ -66,7 +64,6 @@ where
             decoder: self.decoder,
             start: Some(start),
             stop: self.stop,
-            binsize: self.binsize,
             points: self.points,
         }
     }
@@ -100,8 +97,7 @@ where
             decoder,
             start,
             stop,
-            points,
-            binsize, ..
+            points, ..
         } = self;
         let mut byteseries = series.shared.lock().unwrap();
         
@@ -110,8 +106,9 @@ where
             .ok_or(Error::NoData)?;
         let seek = TimeSeek::new(&mut byteseries, start.unwrap(), stop)?;
         
+        let lines = seek.lines(&byteseries);
         let selector = points
-            .map(|p| Selector::new(p, seek.lines(&byteseries), binsize))
+            .map(|p| Selector::new(p, lines, combiner.binsize(), combiner.binoffset()))
             .flatten();
 
         let dummy = vec![0u8; byteseries.full_line_size];
@@ -124,7 +121,6 @@ where
             selector,
             decoder,
             combiner,
-            binsize,
             seek,
             time: Vec::new(),
             values: Vec::new(),
