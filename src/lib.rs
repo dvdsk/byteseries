@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -34,9 +34,10 @@ impl Series {
     pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &'a mut (dyn Decoder<T> + 'a),
-    ) -> Result<(i64, Vec<T>), Error> {
+    ) -> Result<(DateTime<Utc>, Vec<T>), Error> {
         let mut series = self.lock();
         let (time, bytes) = series.decode_last_line()?;
+        let time = DateTime::from_utc(NaiveDateTime::from_timestamp(time, 0), Utc);
         let data = decoder.decoded(&bytes);
         Ok((time, data))
     }

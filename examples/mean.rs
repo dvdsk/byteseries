@@ -1,5 +1,5 @@
 use byteseries::{Decoder, new_sampler, Series, combiners};
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono::Duration;
 
 #[derive(Debug)]
 struct TestDecoder {}
@@ -14,7 +14,6 @@ fn main() {
     let mut decoder = TestDecoder {};
     let mut ts = Series::open("examples/data/4", 24).unwrap();
     let (endtime, _data) = ts.last_line(&mut decoder).unwrap();
-    let endtime = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(endtime, 0), Utc);
     
     let bin = combiners::SampleBin::new(5);
     let combiner = combiners::Mean::new(bin);
