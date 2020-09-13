@@ -42,6 +42,15 @@ impl Series {
         Ok((time, data))
     }
 
+    pub fn last_line_raw<'a, T: std::fmt::Debug + std::clone::Clone>(
+        &mut self,
+    ) -> Result<(DateTime<Utc>, Vec<u8>), Error> {
+        let mut series = self.lock();
+        let (time, bytes) = series.decode_last_line()?;
+        let time = DateTime::from_utc(NaiveDateTime::from_timestamp(time, 0), Utc);
+        Ok((time, bytes))
+    }
+
     pub fn append(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
         let mut series = self.lock();
         series.append(time, line)?;
