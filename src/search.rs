@@ -141,7 +141,7 @@ impl ByteSeries {
                 <= end_time.timestamp() as u16
             {
                 let stop_byte = start + line_start as u64;
-                return Ok(stop_byte+self.full_line_size as u64);
+                return Ok(stop_byte + self.full_line_size as u64);
             }
         }
         Ok(stop)

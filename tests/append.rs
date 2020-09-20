@@ -106,8 +106,8 @@ fn hashes_then_verify() {
     );
 
     let n = 8_000;
-    let mut decoder = HashDecoder {};
-    let mut sampler = new_sampler(&data, &mut decoder)
+    let decoder = HashDecoder {};
+    let mut sampler = new_sampler(&data, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -147,8 +147,8 @@ fn hashes_read_skipping_then_verify() {
     );
 
     let n = 100;
-    let mut decoder = HashDecoder {};
-    let mut sampler = new_sampler(&data, &mut decoder)
+    let decoder = HashDecoder {};
+    let mut sampler = new_sampler(&data, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -200,8 +200,8 @@ fn timestamps_then_verify() {
     );
 
     let n = 8_000;
-    let mut decoder = TimestampDecoder {};
-    let mut sampler = new_sampler(&data, &mut decoder)
+    let decoder = TimestampDecoder {};
+    let mut sampler = new_sampler(&data, decoder)
         .points(n)
         .start(t1)
         .stop(t2)

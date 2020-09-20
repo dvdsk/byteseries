@@ -1,14 +1,14 @@
 #![cfg(test)]
 
 use byteseries::{combiners, new_sampler, Decoder, Series};
-use chrono::{Duration, DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
+use float_eq::assert_float_eq;
+use std::f32::consts::PI;
 use std::fs;
 use std::path::Path;
-use std::f32::consts::PI;
-use float_eq::assert_float_eq;
 
-fn insert_vector(ts: &mut Series, t_start: DateTime<Utc>, t_end: DateTime<Utc>, data: &[f32]){
-    let dt = (t_end-t_start)/(data.len() as i32);
+fn insert_vector(ts: &mut Series, t_start: DateTime<Utc>, t_end: DateTime<Utc>, data: &[f32]) {
+    let dt = (t_end - t_start) / (data.len() as i32);
     let mut time = t_start;
 
     for x in data {
@@ -20,24 +20,21 @@ fn insert_vector(ts: &mut Series, t_start: DateTime<Utc>, t_end: DateTime<Utc>, 
 //period in numb of data points
 fn sine_array(n: usize, mid: f32, period: f32) -> Vec<f32> {
     (0..n)
-        .map(|i| i as f32 *2.*PI/period)
-        .map(|x| mid*x.sin())
+        .map(|i| i as f32 * 2. * PI / period)
+        .map(|x| mid * x.sin())
         .collect()
 }
 
 //period in numb of data points
 fn linear_array(n: usize, slope: f32) -> Vec<f32> {
-    (0..n)
-        .map(|i| i as f32 * slope)
-        .collect()
+    (0..n).map(|i| i as f32 * slope).collect()
 }
-
 
 #[derive(Debug)]
 struct FloatDecoder {}
 impl Decoder<f32> for FloatDecoder {
-    fn decode(&mut self, bytes: &[u8], out: &mut Vec<f32>){
-        let mut arr = [0u8;4];
+    fn decode(&mut self, bytes: &[u8], out: &mut Vec<f32>) {
+        let mut arr = [0u8; 4];
         arr.copy_from_slice(&bytes[0..4]);
         let v = f32::from_be_bytes(arr);
         out.push(v)
@@ -64,8 +61,8 @@ fn mean() {
     insert_vector(&mut ts, t1, t2, &data);
 
     let combiner = combiners::Mean::new(combiners::SampleBin::new(s));
-    let mut decoder = FloatDecoder{};
-    let mut sampler = new_sampler(&ts, &mut decoder)
+    let decoder = FloatDecoder {};
+    let mut sampler = new_sampler(&ts, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -73,9 +70,12 @@ fn mean() {
         .unwrap();
     sampler.sample_all().unwrap();
 
-    assert_eq!(sampler.values().len(), n/s);
-    for (sample, mean) in sampler.values().iter().zip(
-        data.chunks(s).map(|c| c.iter().sum::<f32>()/(s as f32))){
+    assert_eq!(sampler.values().len(), n / s);
+    for (sample, mean) in sampler
+        .values()
+        .iter()
+        .zip(data.chunks(s).map(|c| c.iter().sum::<f32>() / (s as f32)))
+    {
         assert_eq!(*sample, mean);
     }
 }
@@ -99,8 +99,8 @@ fn diff_linear() {
     let data = linear_array(n, slope);
     insert_vector(&mut ts, t1, t2, &data);
 
-    let mut decoder = FloatDecoder{};
-    let mut sampler = new_sampler(&ts, &mut decoder)
+    let decoder = FloatDecoder {};
+    let mut sampler = new_sampler(&ts, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -108,9 +108,9 @@ fn diff_linear() {
         .unwrap();
     sampler.sample_all().unwrap();
 
-    let dt = (t2-t1).num_seconds()/(data.len() as i64);
+    let dt = (t2 - t1).num_seconds() / (data.len() as i64);
     let slope = slope / (dt as f32);
-    for v in sampler.values(){
+    for v in sampler.values() {
         assert_float_eq!(*v, slope, abs <= 0.000_05);
     }
 }
@@ -135,8 +135,8 @@ fn diff_sine() {
     let data = sine_array(n, 5.0, 100.0);
     insert_vector(&mut ts, t1, t2, &data);
 
-    let mut decoder = FloatDecoder{};
-    let mut sampler = new_sampler(&ts, &mut decoder)
+    let decoder = FloatDecoder {};
+    let mut sampler = new_sampler(&ts, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -145,7 +145,11 @@ fn diff_sine() {
     sampler.sample_all().unwrap();
 
     let values = sampler.values();
-    assert_float_eq!(*values.first().unwrap(), *values.last().unwrap(), abs <= 0.001);
+    assert_float_eq!(
+        *values.first().unwrap(),
+        *values.last().unwrap(),
+        abs <= 0.001
+    );
     assert_float_eq!(*values.first().unwrap(), 0.0, abs <= 0.01);
 }
 
@@ -172,8 +176,8 @@ fn diff_linear_of_mean() {
     let first = combiners::Mean::new(bin);
     let second = combiners::Differentiate::default();
     let combiner = combiners::Combiner::new(first, second);
-    let mut decoder = FloatDecoder{};
-    let mut sampler = new_sampler(&ts, &mut decoder)
+    let decoder = FloatDecoder {};
+    let mut sampler = new_sampler(&ts, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -182,9 +186,9 @@ fn diff_linear_of_mean() {
     sampler.sample_all().unwrap();
 
     assert_eq!(sampler.values().len(), n);
-    let dt = (t2-t1).num_seconds()/(data.len() as i64);
+    let dt = (t2 - t1).num_seconds() / (data.len() as i64);
     let slope = slope / (dt as f32);
-    for v in sampler.values(){
+    for v in sampler.values() {
         assert_float_eq!(*v, slope, abs <= 0.000_05);
     }
 }

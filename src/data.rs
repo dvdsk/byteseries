@@ -65,7 +65,6 @@ impl ByteSeries {
         header: &Header,
         full_line_size: usize,
     ) -> Option<i64> {
-        
         let mut buf = [0u8; 2]; //rewrite to use bufferd data
         if data.seek(SeekFrom::End(-(full_line_size as i64))).is_ok() {
             data.read_exact(&mut buf).unwrap();
@@ -137,7 +136,10 @@ impl ByteSeries {
         T: FromPrimitive,
     {
         //update full timestamp when needed
-        if full_ts.next_pos.map_or(false, |next_pos| pos + 1 > next_pos) {
+        if full_ts
+            .next_pos
+            .map_or(false, |next_pos| pos + 1 > next_pos)
+        {
             log::debug!(
                 "updating ts, pos: {:?}, next ts pos: {:?}",
                 pos,

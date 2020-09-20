@@ -11,7 +11,9 @@ mod util;
 
 use data::ByteSeries;
 pub use error::Error;
-pub use sampler::{Decoder, EmptyDecoder, SampleCombiner, combiners, Sampler, SamplerBuilder, new_sampler};
+pub use sampler::{
+    combiners, new_sampler, Decoder, EmptyDecoder, SampleCombiner, Sampler, SamplerBuilder,
+};
 pub use search::TimeSeek;
 
 #[derive(Debug, Clone)]

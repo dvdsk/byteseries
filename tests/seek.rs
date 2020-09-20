@@ -1,7 +1,7 @@
 #![cfg(test)]
 
-use byteseries::{EmptyDecoder, new_sampler, Series};
 use byteseries::error::{Error, SeekError};
+use byteseries::{new_sampler, EmptyDecoder, Series};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use std::fs;
 use std::path::Path;
@@ -20,7 +20,7 @@ fn beyond_range() {
     const LINE_SIZE: usize = 8;
     const STEP: i64 = 5;
     const N_TO_INSERT: u32 = 100;
-    let start_read_inlines = N_TO_INSERT as i64+1;
+    let start_read_inlines = N_TO_INSERT as i64 + 1;
     let read_length_inlines = 10;
 
     let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1539180000, 0), Utc);
@@ -42,8 +42,8 @@ fn beyond_range() {
         Utc,
     );
 
-    let mut decoder = EmptyDecoder {};
-    let sampler = new_sampler(&data, &mut decoder)
+    let decoder = EmptyDecoder {};
+    let sampler = new_sampler(&data, decoder)
         .points(10)
         .start(t1)
         .stop(t2)
@@ -51,9 +51,11 @@ fn beyond_range() {
 
     match sampler {
         Err(e) => match e {
-            Error::Seek(e) => assert!(std::mem::discriminant(&e) == std::mem::discriminant(&SeekError::StartAfterData)),
+            Error::Seek(e) => assert!(
+                std::mem::discriminant(&e) == std::mem::discriminant(&SeekError::StartAfterData)
+            ),
             _ => panic!("sampler should be error StartAfterData"),
-        }
+        },
         Ok(_) => panic!("should return an error as we are trying to read beyond the data"),
     }
 }

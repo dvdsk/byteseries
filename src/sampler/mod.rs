@@ -1,31 +1,32 @@
 use crate::{Error, Series, TimeSeek};
-use std::fmt::Debug;
 use std::clone::Clone;
+use std::fmt::Debug;
 
-mod decoders;
-pub mod combiners;
 mod builder;
-pub use combiners::SampleCombiner;
+pub mod combiners;
+mod decoders;
 pub use builder::{new_sampler, SamplerBuilder};
+pub use combiners::SampleCombiner;
 pub use decoders::{Decoder, EmptyDecoder};
 
-pub struct Sampler<'a, T, C> {
+pub struct Sampler<D, T, C> {
     series: Series,
     selector: Option<Selector>,
-    decoder: &'a mut (dyn Decoder<T> + 'a), //check if generic better fit
-    combiner: C, 
+    decoder: D, //check if generic better fit
+    combiner: C,
     seek: TimeSeek,
 
     time: Vec<i64>,
     values: Vec<T>,
-    buff: Vec<u8>, 
+    buff: Vec<u8>,
     decoded_per_line: usize,
 }
 
-impl<'a, T, C> Debug for Sampler<'a, T, C>
+impl<D, T, C> Debug for Sampler<D, T, C>
 where
-    T: Clone + Debug,  
-    C: Debug
+    T: Clone + Debug,
+    C: Debug,
+    D: Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         //only print first n values
@@ -46,10 +47,11 @@ where
     }
 }
 
-impl<'a, T, C> Sampler<'a, T, C>
+impl<D, T, C> Sampler<D, T, C>
 where
     C: SampleCombiner<T>,
     T: Debug + Clone,
+    D: Decoder<T>,
 {
     pub fn sample_all(&mut self) -> Result<(), Error> {
         loop {
@@ -69,11 +71,11 @@ where
 
         let mut series = self.series.clone();
         let mut byteseries = series.lock();
-        
+
         let seek = &mut self.seek;
         let selector = &mut self.selector;
         let full_line_size = byteseries.full_line_size;
-        
+
         let n_read = byteseries.read(&mut self.buff, &mut seek.start, seek.stop)?;
 
         for (line, pos) in self.buff[..n_read]
@@ -81,13 +83,13 @@ where
             .zip((seek.curr..).step_by(full_line_size))
             .filter(|_| selector.as_mut().map(|s| s.use_index()).unwrap_or(true))
         {
-            let time = byteseries.get_timestamp::<i64>(line, pos, &mut seek.full_time); 
+            let time = byteseries.get_timestamp::<i64>(line, pos, &mut seek.full_time);
             let values = self.decoder.decoded(&line[2..]);
-            if let Some((t,combined)) = self.combiner.process(time, values){
+            if let Some((t, combined)) = self.combiner.process(time, values) {
                 self.values.extend(combined.into_iter());
                 self.time.push(t);
             }
-        } 
+        }
         seek.curr += n_read as u64;
         drop(byteseries);
         Ok(())
@@ -113,10 +115,11 @@ where
     }
 }
 
-impl<'a, T, C> std::iter::IntoIterator for Sampler<'a, T, C>
+impl<D, T, C> std::iter::IntoIterator for Sampler<D, T, C>
 where
     T: Debug + Clone,
     C: SampleCombiner<T>,
+    D: Decoder<T>,
 {
     type Item = (i64, T);
     type IntoIter = std::iter::Zip<std::vec::IntoIter<i64>, std::vec::IntoIter<T>>;
@@ -130,23 +133,28 @@ where
 #[derive(Debug)]
 pub struct Selector {
     spacing: f32, //in lines
-    next_to_use: u64, 
+    next_to_use: u64,
     line: u64, //starts at 0
-    used: u64
+    used: u64,
 }
 
 impl Selector {
-    pub fn new(mut max_plot_points: usize, n_lines: u64, binsize: usize, offset: usize) -> Option<Self> {
-        max_plot_points += offset; 
+    pub fn new(
+        mut max_plot_points: usize,
+        n_lines: u64,
+        binsize: usize,
+        offset: usize,
+    ) -> Option<Self> {
+        max_plot_points += offset;
         max_plot_points *= binsize;
         if n_lines as usize <= max_plot_points {
             return None;
         }
-       
+
         let spacing = n_lines as f32 / max_plot_points as f32;
         Some(Self {
             spacing,
-            next_to_use: 0,//spacing/2.0) as u64,
+            next_to_use: 0, //spacing/2.0) as u64,
             line: 0,
             used: 0,
         })
@@ -157,7 +165,7 @@ impl Selector {
         if self.line == self.next_to_use {
             self.line += 1;
             self.used += 1;
-            self.next_to_use = (self.used as f32*self.spacing) as u64;
+            self.next_to_use = (self.used as f32 * self.spacing) as u64;
             true
         } else {
             self.line += 1;
