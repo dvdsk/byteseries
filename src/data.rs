@@ -69,7 +69,7 @@ impl ByteSeries {
         if data.seek(SeekFrom::End(-(full_line_size as i64))).is_ok() {
             data.read_exact(&mut buf).unwrap();
             let timestamp_low = LittleEndian::read_u16(&buf) as i64;
-            let timestamp_high = header.last_timestamp & !0b1111_1111_1111_11111;
+            let timestamp_high = header.last_timestamp & !0b1_1111_1111_1111_1111;
             let timestamp = timestamp_high | timestamp_low;
             Some(timestamp)
         } else {
