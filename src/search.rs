@@ -114,7 +114,7 @@ impl ByteSeries {
                 let end = self.data_size;
                 self.find_read_stop(end_time, pos, end)?
             }
-            SearchBounds::Window(start, stop) => self.find_read_stop(end_time, start, stop)?,
+            SearchBounds::Window(start, stop) => dbg!(self.find_read_stop(end_time, start, stop)?),
             SearchBounds::Clipped => panic!("should never occur"),
         };
 
@@ -140,7 +140,8 @@ impl ByteSeries {
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
                 <= end_time.timestamp() as u16
             {
-                let stop_byte = start + line_start as u64;
+                dbg!(start);
+                let stop_byte = dbg!(start + line_start as u64);
                 return Ok(stop_byte + self.full_line_size as u64);
             }
         }

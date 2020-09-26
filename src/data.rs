@@ -101,13 +101,12 @@ impl ByteSeries {
         Ok(())
     }
 
+    // needs to be called before self.data_size is increased
     fn update_header(&mut self) -> Result<(), Error> {
         let new_timestamp_numb = self.timestamp / 2i64.pow(16);
-        //println!("inserting; ts_low: {}, ts_numb: {}",self.timestamp as u16, new_timestamp_numb);
         if new_timestamp_numb > self.header.last_timestamp_numb {
             log::info!("updating file header");
-            //println!("updating header");
-            let line_start = self.data.metadata().unwrap().len() - self.full_line_size as u64;
+            let line_start = self.data_size;
             self.header
                 .update(self.timestamp, line_start, new_timestamp_numb)?;
         }
@@ -169,39 +168,33 @@ impl ByteSeries {
 
         T::from_u64(timestamp).unwrap()
     }
-
     pub fn read(
         &mut self,
         buf: &mut [u8],
-        start_byte: &mut u64,
+        start_byte: u64,
         stop_byte: u64,
     ) -> Result<usize, Error> {
-        self.data.seek(SeekFrom::Start(*start_byte))?;
-        let mut nread = self.data.read(buf)?;
-
-        nread = if (*start_byte + nread as u64) >= stop_byte {
-            (stop_byte - *start_byte) as usize
-        } else {
-            nread
-        };
-        *start_byte += nread as u64; //todo move to seek?
-        Ok(nread - nread % self.full_line_size)
+        self.data.seek(SeekFrom::Start(start_byte))?;
+        let nread = self.data.read(buf)?;
+        let left = stop_byte + self.full_line_size as u64 - start_byte;
+        let nread = nread.min(left as usize);
+        let nread = nread - nread % self.full_line_size;
+        Ok(nread)
     }
 
     pub fn decode_time(
         &mut self,
         lines_to_read: usize,
-        start_byte: &mut u64,
+        start_byte: u64,
         stop_byte: u64,
         full_ts: &mut FullTime,
     ) -> Result<(Vec<u64>, Vec<u8>), Error> {
-        //let mut buf = Vec::with_capacity(lines_to_read*self.full_line_size);
         let mut buf = vec![0; lines_to_read * self.full_line_size];
 
         let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
         let mut line_data: Vec<u8> = Vec::with_capacity(lines_to_read);
         //save file pos indicator before read call moves it around
-        let mut file_pos = *start_byte;
+        let mut file_pos = start_byte;
         let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
         log::trace!("read: {} bytes", n_read);
         for line in buf[..n_read].chunks(self.full_line_size) {
@@ -216,11 +209,11 @@ impl ByteSeries {
             return Err(Error::NoData);
         }
 
-        let mut start_byte = self.data_size - self.full_line_size as u64;
+        let start_byte = self.data_size - self.full_line_size as u64;
         let stop_byte = self.data_size;
 
         let mut full_line = vec![0; self.full_line_size];
-        let nread = self.read(&mut full_line, &mut start_byte, stop_byte)?;
+        let nread = self.read(&mut full_line, start_byte, stop_byte)?;
 
         if nread < self.full_line_size {
             return Err(Error::PartialLine);

@@ -1,6 +1,6 @@
 use byteseries::{combiners, new_sampler, Decoder, Series};
 use chrono::Duration;
-use simplelog::{LevelFilter, Config, SimpleLogger};
+use simplelog::{Config, LevelFilter, SimpleLogger};
 
 #[derive(Debug)]
 struct TestDecoder {}
@@ -15,7 +15,7 @@ fn main() {
     SimpleLogger::init(LevelFilter::Trace, Config::default()).unwrap();
 
     let mut decoder = TestDecoder {};
-    let mut ts = Series::open("data/2", 103).unwrap();
+    let mut ts = Series::open("examples/data/2", 103).unwrap();
     let (endtime, _data) = ts.last_line(&mut decoder).unwrap();
 
     let bin = combiners::SampleBin::new(5);

@@ -113,6 +113,7 @@ impl Header {
                     )
                 } else {
                     //end is not 0 or 1 thus data[end] and data[end-1] exist
+                    dbg!(self.data.iter().map(|e| e.pos % 105).collect::<Vec<_>>());
                     (
                         SearchBounds::Window(self.data[end - 1].pos, self.data[end].pos),
                         FullTime {

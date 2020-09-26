@@ -136,7 +136,7 @@ where
             seek,
             time: Vec::new(),
             values: Vec::new(),
-            buff: vec![0u8; 409600], //TODO MAKE BUFFER SMALLER
+            buff: vec![0u8; 4096],
             decoded_per_line,
         })
     }

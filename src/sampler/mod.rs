@@ -76,7 +76,7 @@ where
         let selector = &mut self.selector;
         let full_line_size = byteseries.full_line_size;
 
-        let n_read = byteseries.read(&mut self.buff, &mut seek.start, seek.stop)?;
+        let n_read = byteseries.read(&mut self.buff, seek.curr, seek.stop)?;
 
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
@@ -96,7 +96,7 @@ where
     }
     ///returns true if this sampler has read its entire range
     pub fn done(&self) -> bool {
-        self.seek.curr == self.seek.stop
+        self.seek.curr >= self.seek.stop
     }
     ///swap the time and values vectors with the given ones, returning the
     ///original
