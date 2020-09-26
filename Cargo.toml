@@ -16,3 +16,4 @@ arraydeque = "0.4"
 fxhash = "0.2"
 fern = { version = "0.6", features = ["colored"] }
 float_eq = "0.5"
+simplelog = "0.8.0"
