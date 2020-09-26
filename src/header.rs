@@ -113,7 +113,6 @@ impl Header {
                     )
                 } else {
                     //end is not 0 or 1 thus data[end] and data[end-1] exist
-                    dbg!(self.data.iter().map(|e| e.pos % 105).collect::<Vec<_>>());
                     (
                         SearchBounds::Window(self.data[end - 1].pos, self.data[end].pos),
                         FullTime {
@@ -223,7 +222,6 @@ mod tests {
         let stop = 23 * 2i64.pow(16);
         let (start, _stop, ft) = h.search_bounds(start, stop);
 
-        // dbg!(&start);
         assert_eq!(
             std::mem::discriminant(&start),
             std::mem::discriminant(&SearchBounds::Window(0, 0))
@@ -239,7 +237,6 @@ mod tests {
         let stop = 25 * 2i64.pow(16);
         let (start, _stop, ft) = h.search_bounds(start, stop);
 
-        // dbg!(&start);
         assert_eq!(
             std::mem::discriminant(&start),
             std::mem::discriminant(&SearchBounds::TillEnd(0))
