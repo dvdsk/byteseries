@@ -22,7 +22,7 @@ pub struct Series {
 }
 
 impl Series {
-    fn lock(&mut self) -> MutexGuard<data::ByteSeries> {
+    fn lock<'a>(&'a self) -> MutexGuard<'a, data::ByteSeries> {
         self.shared.lock().unwrap()
     }
 
@@ -34,7 +34,7 @@ impl Series {
     }
 
     pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
-        &mut self,
+        &self,
         decoder: &'a mut (dyn Decoder<T> + 'a),
     ) -> Result<(DateTime<Utc>, Vec<T>), Error> {
         let mut series = self.lock();
@@ -44,14 +44,14 @@ impl Series {
         Ok((time, data))
     }
 
-    pub fn last_line_raw(&mut self) -> Result<(DateTime<Utc>, Vec<u8>), Error> {
+    pub fn last_line_raw(&self) -> Result<(DateTime<Utc>, Vec<u8>), Error> {
         let mut series = self.lock();
         let (time, bytes) = series.decode_last_line()?;
         let time = DateTime::from_utc(NaiveDateTime::from_timestamp(time, 0), Utc);
         Ok((time, bytes))
     }
 
-    pub fn append(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
+    pub fn append(&self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
         let mut series = self.lock();
         series.append(time, line)?;
         Ok(())

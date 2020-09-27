@@ -69,7 +69,7 @@ where
         self.values
             .reserve_exact(self.values.len() + self.decoded_per_line);
 
-        let mut series = self.series.clone();
+        let series = self.series.clone();
         let mut byteseries = series.lock();
 
         let seek = &mut self.seek;
