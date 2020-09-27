@@ -136,7 +136,7 @@ where
             seek,
             time: Vec::new(),
             values: Vec::new(),
-            buff: vec![0u8; 4096],
+            buff: vec![0u8; 64_000],
             decoded_per_line,
         })
     }
