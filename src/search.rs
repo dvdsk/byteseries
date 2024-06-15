@@ -1,6 +1,6 @@
 use byteorder::{ByteOrder, LittleEndian};
-use chrono::{DateTime, Utc};
 use std::io::{Read, Seek, SeekFrom};
+use time::OffsetDateTime;
 
 use crate::data::FullTime;
 use crate::header::SearchBounds;
@@ -23,17 +23,17 @@ pub enum SeekError {
 
 #[derive(Debug)]
 pub struct TimeSeek {
-    pub start: u64,
-    pub stop: u64,
-    pub curr: u64,
-    pub full_time: FullTime,
+    pub(crate) start: u64,
+    pub(crate) stop: u64,
+    pub(crate) curr: u64,
+    pub(crate) full_time: FullTime,
 }
 
 impl TimeSeek {
     pub fn new(
         series: &mut ByteSeries,
-        start: chrono::DateTime<Utc>,
-        stop: chrono::DateTime<Utc>,
+        start: OffsetDateTime,
+        stop: OffsetDateTime,
     ) -> Result<Self, Error> {
         let (start, stop, full_time) = series.get_bounds(start, stop)?;
 
@@ -53,7 +53,7 @@ impl ByteSeries {
     ///returns the offset from the start of the file where the first line starts
     fn find_read_start(
         &mut self,
-        start_time: DateTime<Utc>,
+        start_time: OffsetDateTime,
         start: u64,
         stop: u64,
     ) -> Result<u64, SeekError> {
@@ -64,9 +64,9 @@ impl ByteSeries {
 
         for line_start in (0..buf.len().saturating_sub(2)).step_by(self.full_line_size) {
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
-                >= start_time.timestamp() as u16
+                >= start_time.unix_timestamp() as u16
             {
-                log::debug!("setting start_byte from liniar search, pos: {}", line_start);
+                tracing::debug!("setting start_byte from liniar search, pos: {}", line_start);
                 let start_byte = start + line_start as u64;
                 return Ok(start_byte);
             }
@@ -76,26 +76,26 @@ impl ByteSeries {
         Ok(stop)
     }
 
-    pub fn get_bounds(
+    fn get_bounds(
         &mut self,
-        start_time: DateTime<Utc>,
-        end_time: DateTime<Utc>,
+        start_time: OffsetDateTime,
+        end_time: OffsetDateTime,
     ) -> Result<(u64, u64, FullTime), SeekError> {
         //check if the datafile isnt empty
 
         if self.data_size == 0 {
             return Err(SeekError::EmptyFile);
         }
-        if start_time.timestamp() >= self.last_time_in_data.unwrap() {
+        if start_time.unix_timestamp() >= self.last_time_in_data.unwrap() {
             return Err(SeekError::StartAfterData);
         }
-        if end_time.timestamp() <= self.first_time_in_data.unwrap() {
+        if end_time.unix_timestamp() <= self.first_time_in_data.unwrap() {
             return Err(SeekError::StopBeforeData);
         }
 
         let (start_bound, stop_bound, full_time) = self
             .header
-            .search_bounds(start_time.timestamp(), end_time.timestamp());
+            .search_bounds(start_time.unix_timestamp(), end_time.unix_timestamp());
 
         //must be a solvable request
         let start_byte = match start_bound {
@@ -124,7 +124,7 @@ impl ByteSeries {
     ///returns the offset from the start of the file where last line **stops**
     fn find_read_stop(
         &mut self,
-        end_time: DateTime<Utc>,
+        end_time: OffsetDateTime,
         start: u64,
         stop: u64,
     ) -> Result<u64, SeekError> {
@@ -138,7 +138,7 @@ impl ByteSeries {
             .step_by(self.full_line_size)
         {
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
-                <= end_time.timestamp() as u16
+                <= end_time.unix_timestamp() as u16
             {
                 let stop_byte = start + line_start as u64;
                 return Ok(stop_byte + self.full_line_size as u64);

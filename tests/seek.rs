@@ -1,10 +1,10 @@
 #![cfg(test)]
 
 use byteseries::error::{Error, SeekError};
-use byteseries::{new_sampler, EmptyDecoder, Series};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use byteseries::{new_sampler, ByteSeries, EmptyDecoder};
 use std::fs;
 use std::path::Path;
+use time::OffsetDateTime;
 
 mod shared;
 use shared::insert_uniform_arrays;
@@ -23,27 +23,23 @@ fn beyond_range() {
     let start_read_inlines = N_TO_INSERT as i64 + 1;
     let read_length_inlines = 10;
 
-    let time = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(1539180000, 0), Utc);
-    let timestamp = time.timestamp();
+    let time = OffsetDateTime::from_unix_timestamp(1539180000).expect("valid unix timestamp");
+
+    let timestamp = time.unix_timestamp();
     println!("start timestamp {}", timestamp);
-    let mut data = Series::open("test_beyond_range", LINE_SIZE).unwrap();
+    let mut data = ByteSeries::open("test_beyond_range", LINE_SIZE).unwrap();
 
     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
-    let t1 = DateTime::<Utc>::from_utc(
-        NaiveDateTime::from_timestamp(timestamp + start_read_inlines * STEP, 0),
-        Utc,
-    );
-    let t2 = DateTime::<Utc>::from_utc(
-        NaiveDateTime::from_timestamp(
-            timestamp + (start_read_inlines + read_length_inlines) * STEP,
-            0,
-        ),
-        Utc,
-    );
+    let t1 = OffsetDateTime::from_unix_timestamp(timestamp + start_read_inlines * STEP)
+        .expect("valid timestamp");
+    let t2 = OffsetDateTime::from_unix_timestamp(
+        timestamp + (start_read_inlines + read_length_inlines) * STEP,
+    )
+    .expect("valid timestamp");
 
     let decoder = EmptyDecoder {};
-    let sampler = new_sampler(&data, decoder)
+    let sampler = new_sampler(data, decoder)
         .points(10)
         .start(t1)
         .stop(t2)

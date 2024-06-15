@@ -1,37 +1,37 @@
 use byteorder::{ByteOrder, LittleEndian};
-use chrono::{DateTime, Utc};
 use num_traits::cast::FromPrimitive;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use time::OffsetDateTime;
 
 use crate::header::Header;
 use crate::util::open_and_check;
-use crate::Error;
+use crate::{Decoder, Error};
 
 #[derive(Debug)]
 pub struct ByteSeries {
-    pub data: File,
-    pub header: Header,
+    pub(crate) data: File,
+    pub(crate) header: Header,
 
-    pub line_size: usize,
-    pub full_line_size: usize,
+    pub(crate) line_size: usize,
+    pub(crate) full_line_size: usize,
     timestamp: i64,
 
-    pub first_time_in_data: Option<i64>,
-    pub last_time_in_data: Option<i64>,
+    pub(crate) first_time_in_data: Option<i64>,
+    pub(crate) last_time_in_data: Option<i64>,
 
-    pub data_size: u64,
+    pub(crate) data_size: u64,
 }
 
 // ---------------------------------------------------------------------
 // -- we store only the last 4 bytes of the timestamp ------------------
 // ---------------------------------------------------------------------
 #[derive(Debug)]
-pub struct FullTime {
-    pub curr: i64,
-    pub next: Option<i64>,
-    pub next_pos: Option<u64>,
+pub(crate) struct FullTime {
+    pub(crate) curr: i64,
+    pub(crate) next: Option<i64>,
+    pub(crate) next_pos: Option<u64>,
 }
 
 impl ByteSeries {
@@ -41,7 +41,7 @@ impl ByteSeries {
         let header = Header::open(name)?;
 
         let first_time = header.first_time_in_data();
-        let last_time = Self::get_last_time_in_data(&mut data, &header, full_line_size);
+        let last_time = Self::load_last_time_in_data(&mut data, &header, full_line_size);
 
         Ok(ByteSeries {
             data,
@@ -60,7 +60,23 @@ impl ByteSeries {
         })
     }
 
-    fn get_last_time_in_data(
+    pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
+        &mut self,
+        decoder: &'a mut (dyn Decoder<T> + 'a),
+    ) -> Result<(OffsetDateTime, Vec<T>), Error> {
+        let (time, data) = self.last_line_raw()?;
+        let data = decoder.decoded(&data);
+        Ok((time, data))
+    }
+
+    pub fn last_line_raw(&mut self) -> Result<(OffsetDateTime, Vec<u8>), Error> {
+        let (time, bytes) = self.decode_last_line()?;
+        let time = OffsetDateTime::from_unix_timestamp(time)
+            .expect("only current timestamps are written to file");
+        Ok((time, bytes))
+    }
+
+    fn load_last_time_in_data(
         data: &mut File,
         header: &Header,
         full_line_size: usize,
@@ -73,18 +89,21 @@ impl ByteSeries {
             let timestamp = timestamp_high | timestamp_low;
             Some(timestamp)
         } else {
-            log::warn!("file is empty");
+            tracing::warn!("file is empty");
             None
         }
     }
 
-    pub fn append(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
+    /// Append the line and force a flush to disk.
+    /// When this returns all data is safely stored
+    pub fn append_flush(&mut self, time: OffsetDateTime, line: &[u8]) -> Result<(), Error> {
         self.append_fast(time, line)?;
         self.force_write_to_disk();
         Ok(())
     }
 
-    pub fn append_fast(&mut self, time: DateTime<Utc>, line: &[u8]) -> Result<(), Error> {
+    /// Append data to disk but do not flush, a crash can still lead to the data being lost
+    pub fn append_fast(&mut self, time: OffsetDateTime, line: &[u8]) -> Result<(), Error> {
         //TODO decide if a lock is needed here
         //write 16 bit timestamp and then the line to file
         let timestamp = self.time_to_line_timestamp(time);
@@ -96,8 +115,8 @@ impl ByteSeries {
         self.update_header()?;
         self.data_size += self.full_line_size as u64;
 
-        self.last_time_in_data = Some(time.timestamp());
-        self.first_time_in_data.get_or_insert(time.timestamp());
+        self.last_time_in_data = Some(time.unix_timestamp());
+        self.first_time_in_data.get_or_insert(time.unix_timestamp());
         Ok(())
     }
 
@@ -105,7 +124,7 @@ impl ByteSeries {
     fn update_header(&mut self) -> Result<(), Error> {
         let new_timestamp_numb = self.timestamp / 2i64.pow(16);
         if new_timestamp_numb > self.header.last_timestamp_numb {
-            log::info!("updating file header");
+            tracing::info!("updating file header");
             let line_start = self.data_size;
             self.header
                 .update(self.timestamp, line_start, new_timestamp_numb)?;
@@ -113,24 +132,29 @@ impl ByteSeries {
         Ok(())
     }
 
-    pub fn force_write_to_disk(&mut self) {
+    /// asks the os to write its buffers out before
+    /// continuing
+    pub(crate) fn force_write_to_disk(&mut self) {
         self.data.sync_data().unwrap();
         self.header.file.sync_data().unwrap();
     }
 
-    fn time_to_line_timestamp(&mut self, time: DateTime<Utc>) -> [u8; 2] {
+    fn time_to_line_timestamp(&mut self, time: OffsetDateTime) -> [u8; 2] {
         //for now no support for sign bit since data will always be after 0 (1970)
-        self.timestamp = time.timestamp().abs();
+        self.timestamp = time.unix_timestamp();
+        if self.timestamp < 0 {
+            panic!("dates before 1970 are not supported")
+        }
 
         //we store the timestamp in little endian Signed magnitude representation
-        //(least significant (lowest value) byte at lowest adress)
+        //(least significant (lowest value) byte at lowest address)
         //for the line timestamp we use only the 2 lower bytes
         let mut line_timestamp = [0; 2];
         LittleEndian::write_u16(&mut line_timestamp, self.timestamp as u16);
         line_timestamp
     }
 
-    pub fn get_timestamp<T>(&mut self, line: &[u8], pos: u64, full_ts: &mut FullTime) -> T
+    pub(crate) fn get_timestamp<T>(&mut self, line: &[u8], pos: u64, full_ts: &mut FullTime) -> T
     where
         T: FromPrimitive,
     {
@@ -139,7 +163,7 @@ impl ByteSeries {
             .next_pos
             .map_or(false, |next_pos| pos + 1 > next_pos)
         {
-            log::debug!(
+            tracing::debug!(
                 "updating ts, pos: {:?}, next ts pos: {:?}",
                 pos,
                 full_ts.next_pos
@@ -154,7 +178,7 @@ impl ByteSeries {
                 full_ts.next_pos = Some(next.pos);
             } else {
                 //TODO handle edge case, last full timestamp
-                log::debug!(
+                tracing::debug!(
                     "loaded last timestamp in header, no next TS, current pos: {}",
                     pos
                 );
@@ -168,7 +192,7 @@ impl ByteSeries {
 
         T::from_u64(timestamp).unwrap()
     }
-    pub fn read(
+    pub(crate) fn read(
         &mut self,
         buf: &mut [u8],
         start_byte: u64,
@@ -182,29 +206,7 @@ impl ByteSeries {
         Ok(nread)
     }
 
-    pub fn decode_time(
-        &mut self,
-        lines_to_read: usize,
-        start_byte: u64,
-        stop_byte: u64,
-        full_ts: &mut FullTime,
-    ) -> Result<(Vec<u64>, Vec<u8>), Error> {
-        let mut buf = vec![0; lines_to_read * self.full_line_size];
-
-        let mut timestamps: Vec<u64> = Vec::with_capacity(lines_to_read);
-        let mut line_data: Vec<u8> = Vec::with_capacity(lines_to_read);
-        //save file pos indicator before read call moves it around
-        let mut file_pos = start_byte;
-        let n_read = self.read(&mut buf, start_byte, stop_byte)? as usize;
-        log::trace!("read: {} bytes", n_read);
-        for line in buf[..n_read].chunks(self.full_line_size) {
-            timestamps.push(self.get_timestamp::<u64>(line, file_pos, full_ts));
-            file_pos += self.full_line_size as u64;
-            line_data.extend_from_slice(&line[2..]);
-        }
-        Ok((timestamps, line_data))
-    }
-    pub fn decode_last_line(&mut self) -> Result<(i64, Vec<u8>), Error> {
+    pub(crate) fn decode_last_line(&mut self) -> Result<(i64, Vec<u8>), Error> {
         if self.data_size < self.full_line_size as u64 {
             return Err(Error::NoData);
         }
@@ -224,5 +226,11 @@ impl ByteSeries {
         let line = full_line;
         let time = self.last_time_in_data.ok_or(Error::NoData)?;
         Ok((time, line))
+    }
+
+    pub(crate) fn last_time_in_data(&self) -> Option<OffsetDateTime> {
+        self.last_time_in_data
+            .map(OffsetDateTime::from_unix_timestamp)
+            .map(|res| res.expect("only current timestamps are used"))
     }
 }

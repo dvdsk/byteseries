@@ -5,15 +5,13 @@ authors = ["David Kleingeld <dskleingeld@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-chrono = "0.4"
 thiserror = "1.0"
-log = "0.4"
 byteorder = "1.2"
 num-traits = "0.2"
 arraydeque = "0.4"
+time = "0.3.36"
+tracing = "0.1.40"
 
 [dev-dependencies]
 fxhash = "0.2"
-fern = { version = "0.6", features = ["colored"] }
 float_eq = "0.5"
-simplelog = "0.8.0"

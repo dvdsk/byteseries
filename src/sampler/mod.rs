@@ -1,4 +1,4 @@
-use crate::{Error, Series, TimeSeek};
+use crate::{ByteSeries, Error, TimeSeek};
 use std::clone::Clone;
 use std::fmt::Debug;
 
@@ -10,7 +10,7 @@ pub use combiners::SampleCombiner;
 pub use decoders::{Decoder, EmptyDecoder};
 
 pub struct Sampler<D, T, C> {
-    series: Series,
+    series: ByteSeries,
     selector: Option<Selector>,
     decoder: D, //check if generic better fit
     combiner: C,
@@ -69,21 +69,20 @@ where
         self.values
             .reserve_exact(self.values.len() + self.decoded_per_line);
 
-        let series = self.series.clone();
-        let mut byteseries = series.lock();
-
         let seek = &mut self.seek;
         let selector = &mut self.selector;
-        let full_line_size = byteseries.full_line_size;
+        let full_line_size = self.series.full_line_size;
 
-        let n_read = byteseries.read(&mut self.buff, seek.curr, seek.stop)?;
+        let n_read = self.series.read(&mut self.buff, seek.curr, seek.stop)?;
 
         for (line, pos) in self.buff[..n_read]
             .chunks(full_line_size)
             .zip((seek.curr..).step_by(full_line_size))
             .filter(|_| selector.as_mut().map(|s| s.use_index()).unwrap_or(true))
         {
-            let time = byteseries.get_timestamp::<i64>(line, pos, &mut seek.full_time);
+            let time = self
+                .series
+                .get_timestamp::<i64>(line, pos, &mut seek.full_time);
             let values = self.decoder.decoded(&line[2..]);
             if let Some((t, combined)) = self.combiner.process(time, values) {
                 self.values.extend(combined.into_iter());
@@ -91,7 +90,6 @@ where
             }
         }
         seek.curr += n_read as u64;
-        drop(byteseries);
         Ok(())
     }
     ///returns true if this sampler has read its entire range

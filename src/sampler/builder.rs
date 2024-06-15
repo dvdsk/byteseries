@@ -1,10 +1,10 @@
 use super::{combiners, Decoder, SampleCombiner, Sampler, Selector};
 
-use crate::{Error, Series, TimeSeek};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use crate::{ByteSeries, Error, TimeSeek};
 use std::default::Default;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use time::OffsetDateTime;
 
 //some stuff to create the builder struct
 //see: https://dev.to/mindflavor/rust-builder-pattern-with-types-3chf
@@ -32,14 +32,14 @@ where
     start_set: PhantomData<StartSet>,
     decoded: PhantomData<T>,
 
-    series: Series,
+    series: ByteSeries,
     decoder: D,
-    start: Option<chrono::DateTime<chrono::Utc>>,
-    stop: Option<chrono::DateTime<chrono::Utc>>,
+    start: Option<OffsetDateTime>,
+    stop: Option<OffsetDateTime>,
     points: Option<usize>,
 }
 
-pub fn new_sampler<D, T>(series: &Series, decoder: D) -> SamplerBuilder<D, T, No>
+pub fn new_sampler<D, T>(series: ByteSeries, decoder: D) -> SamplerBuilder<D, T, No>
 where
     T: Debug + Clone,
     D: Decoder<T>,
@@ -48,7 +48,7 @@ where
         start_set: PhantomData {},
         decoded: PhantomData {},
 
-        series: series.clone(),
+        series,
         decoder,
         start: None,
         stop: None,
@@ -63,7 +63,7 @@ where
     StartSet: ToAssign,
 {
     /// set the start time
-    pub fn start(self, start: chrono::DateTime<chrono::Utc>) -> SamplerBuilder<D, T, Yes> {
+    pub fn start(self, start: OffsetDateTime) -> SamplerBuilder<D, T, Yes> {
         SamplerBuilder {
             start_set: PhantomData {},
             decoded: PhantomData {},
@@ -75,7 +75,7 @@ where
         }
     }
     /// set the stop time
-    pub fn stop(mut self, stop: chrono::DateTime<chrono::Utc>) -> Self {
+    pub fn stop(mut self, stop: OffsetDateTime) -> Self {
         self.stop = Some(stop);
         self
     }
@@ -100,33 +100,27 @@ where
         C: SampleCombiner<T>,
     {
         let SamplerBuilder {
-            series,
+            mut series,
             mut decoder,
             start,
             stop,
             points,
             ..
         } = self;
-        let mut byteseries = series.shared.lock().unwrap();
 
         let stop = stop
-            .or_else(|| {
-                byteseries
-                    .last_time_in_data
-                    .map(|ts| DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(ts, 0), Utc))
-            })
+            .or_else(|| series.last_time_in_data())
             .ok_or(Error::NoData)?;
-        let seek = TimeSeek::new(&mut byteseries, start.unwrap(), stop)?;
+        let seek = TimeSeek::new(&mut series, start.unwrap(), stop)?;
 
-        let lines = seek.lines(&byteseries);
+        let lines = seek.lines(&series);
         let selector = points
             .map(|p| Selector::new(p, lines, combiner.binsize(), combiner.binoffset()))
             .flatten();
 
-        let dummy = vec![0u8; byteseries.full_line_size];
+        let dummy = vec![0u8; series.full_line_size];
         let decoded_per_line = decoder.decoded(&dummy).len();
         combiner.set_decoded_size(decoded_per_line);
-        drop(byteseries);
 
         Ok(Sampler {
             series,

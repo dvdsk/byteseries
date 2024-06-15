@@ -47,9 +47,9 @@ pub struct TimeBin {
     first: Option<i64>,
 }
 impl TimeBin {
-    pub fn new(period: chrono::Duration) -> Self {
+    pub fn new(period: std::time::Duration) -> Self {
         Self {
-            period: period.num_seconds(),
+            period: period.as_secs() as i64,
             first: None,
         }
     }
@@ -102,7 +102,6 @@ impl<T: Debug + Clone + Sized> SampleCombiner<T> for Empty {
 #[derive(Debug, Clone)]
 pub struct Mean<B> {
     v_sum: Vec<f32>,
-    t_sum: i64,
     n: usize,
     bin: B,
 }
@@ -111,7 +110,6 @@ impl<B> Mean<B> {
     pub fn new(bin: B) -> Self {
         Mean {
             v_sum: Vec::new(),
-            t_sum: 0,
             n: 0,
             bin,
         }

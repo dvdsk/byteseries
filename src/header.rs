@@ -52,7 +52,7 @@ impl Header {
             .map(|n| *n as i64)
             .unwrap_or(0);
 
-        log::trace!("last_timestamp: {}", last_timestamp);
+        tracing::trace!("last_timestamp: {}", last_timestamp);
         Ok(Header {
             file,
             data,
@@ -70,7 +70,7 @@ impl Header {
         let ts = timestamp as u64;
         self.file.write_u64::<LittleEndian>(ts)?;
         self.file.write_u64::<LittleEndian>(line_start)?;
-        log::trace!("wrote headerline: {}, {}", ts, line_start);
+        tracing::trace!("wrote headerline: {}, {}", ts, line_start);
 
         self.data.push(Entry {
             timestamp,

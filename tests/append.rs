@@ -1,52 +1,14 @@
 #![cfg(test)]
 
 use byteorder::{ByteOrder, NativeEndian};
-use byteseries::{new_sampler, Decoder, Series};
-use chrono::{DateTime, NaiveDateTime, Utc};
-use fern::colors::{Color, ColoredLevelConfig};
+use byteseries::{new_sampler, ByteSeries, Decoder};
 use fxhash::hash64;
 use std::fs;
 use std::path::Path;
+use time::OffsetDateTime;
 
 mod shared;
 use shared::{insert_timestamp_arrays, insert_timestamp_hashes, insert_uniform_arrays};
-
-#[allow(dead_code)]
-fn setup_debug_logging(verbosity: u8) -> Result<(), fern::InitError> {
-    let mut base_config = fern::Dispatch::new();
-    let colors = ColoredLevelConfig::new()
-        .info(Color::Green)
-        .debug(Color::Yellow)
-        .warn(Color::Magenta);
-
-    base_config = match verbosity {
-        0 =>
-        // Let's say we depend on something which whose "info" level messages are too
-        // verbose to include in end-user output. If we don't need them,
-        // let's not include them.
-        {
-            base_config.level(log::LevelFilter::Info)
-        }
-        1 => base_config.level(log::LevelFilter::Debug),
-        2 => base_config.level(log::LevelFilter::Trace),
-        _3_or_more => base_config.level(log::LevelFilter::Trace),
-    };
-
-    let stdout_config = fern::Dispatch::new()
-        .format(move |out, message, record| {
-            out.finish(format_args!(
-                "[{}][{}][{}] {}",
-                chrono::Local::now().format("%H:%M"),
-                record.target(),
-                colors.color(record.level()),
-                message
-            ))
-        })
-        .chain(std::io::stdout());
-
-    base_config.chain(stdout_config).apply()?;
-    Ok(())
-}
 
 #[test]
 fn basic() {
@@ -60,9 +22,9 @@ fn basic() {
     const STEP: i64 = 5;
     const N_TO_INSERT: u32 = 100;
 
-    let time = Utc::now();
+    let time = OffsetDateTime::now_utc();
 
-    let mut data = Series::open("test_append", LINE_SIZE).unwrap();
+    let mut data = ByteSeries::open("test_append", LINE_SIZE).unwrap();
     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
     assert_eq!(
@@ -94,20 +56,18 @@ fn hashes_then_verify() {
         fs::remove_file("test_append_hashes_then_verify.dat").unwrap();
     }
 
-    let time = Utc::now();
-    let mut data = Series::open("test_append_hashes_then_verify", 8).unwrap();
+    let time = OffsetDateTime::now_utc();
+    let mut data = ByteSeries::open("test_append_hashes_then_verify", 8).unwrap();
     insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
-    let timestamp = time.timestamp();
-    let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-    let t2 = DateTime::<Utc>::from_utc(
-        NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0),
-        Utc,
-    );
+    let timestamp = time.unix_timestamp();
+    let t1 = OffsetDateTime::from_unix_timestamp(timestamp).expect("valid timestamp");
+    let t2 = OffsetDateTime::from_unix_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD)
+        .expect("valid timestamp");
 
     let n = 8_000;
     let decoder = HashDecoder {};
-    let mut sampler = new_sampler(&data, decoder)
+    let mut sampler = new_sampler(data, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -134,21 +94,18 @@ fn hashes_read_skipping_then_verify() {
         fs::remove_file("test_read_skipping_then_verify.dat").unwrap();
     }
 
-    let time = Utc::now();
+    let time = OffsetDateTime::now_utc();
 
-    let mut data = Series::open("test_read_skipping_then_verify", 8).unwrap();
+    let mut data = ByteSeries::open("test_read_skipping_then_verify", 8).unwrap();
     insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
-    let timestamp = time.timestamp();
-    let t1 = DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(timestamp, 0), Utc);
-    let t2 = DateTime::<Utc>::from_utc(
-        NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0),
-        Utc,
-    );
+    let timestamp = time.unix_timestamp();
+    let t1 = OffsetDateTime::from_unix_timestamp(timestamp).unwrap();
+    let t2 = OffsetDateTime::from_unix_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD).unwrap();
 
     let n = 100;
     let decoder = HashDecoder {};
-    let mut sampler = new_sampler(&data, decoder)
+    let mut sampler = new_sampler(data, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
@@ -187,21 +144,18 @@ fn timestamps_then_verify() {
         fs::remove_file("test_append_timestamps_then_verify.dat").unwrap();
     }
 
-    let time = Utc::now();
+    let time = OffsetDateTime::now_utc();
 
-    let mut data = Series::open("test_append_timestamps_then_verify", 8).unwrap();
+    let mut data = ByteSeries::open("test_append_timestamps_then_verify", 8).unwrap();
     insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
-    let timestamp = time.timestamp();
+    let timestamp = time.unix_timestamp();
     let t1 = time;
-    let t2 = DateTime::<Utc>::from_utc(
-        NaiveDateTime::from_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD, 0),
-        Utc,
-    );
+    let t2 = OffsetDateTime::from_unix_timestamp(timestamp + NUMBER_TO_INSERT * PERIOD).unwrap();
 
     let n = 8_000;
     let decoder = TimestampDecoder {};
-    let mut sampler = new_sampler(&data, decoder)
+    let mut sampler = new_sampler(data, decoder)
         .points(n)
         .start(t1)
         .stop(t2)
