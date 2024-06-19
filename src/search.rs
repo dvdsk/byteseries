@@ -94,7 +94,7 @@ impl ByteSeries {
         }
 
         let (start_bound, stop_bound, full_time) = self
-            .header
+            .index
             .search_bounds(start_time.unix_timestamp(), end_time.unix_timestamp());
 
         //must be a solvable request

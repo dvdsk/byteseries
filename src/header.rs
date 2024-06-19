@@ -14,7 +14,7 @@ pub struct Entry {
 }
 
 #[derive(Debug)]
-pub struct Header {
+pub struct Index {
     pub file: File,
 
     pub data: Vec<Entry>,
@@ -30,8 +30,8 @@ pub enum SearchBounds {
     Window(u64, u64),
 }
 
-impl Header {
-    pub fn open<P: AsRef<Path>>(name: P) -> Result<Header, Error> {
+impl Index {
+    pub fn open<P: AsRef<Path>>(name: P) -> Result<Index, Error> {
         let (mut file, _) = open_and_check(name.as_ref().with_extension("h"), 16)?;
 
         let mut bytes = Vec::new();
@@ -53,7 +53,7 @@ impl Header {
             .unwrap_or(0);
 
         tracing::trace!("last_timestamp: {}", last_timestamp);
-        Ok(Header {
+        Ok(Index {
             file,
             data,
             last_timestamp,
@@ -168,16 +168,16 @@ fn unwrap_result<T>(res: Result<T, T>) -> T {
 mod tests {
     use super::*;
 
-    fn test_header(n: usize) -> Header {
+    fn test_header(n: usize) -> Index {
         let path = format!("/tmp/test_header_{}.h", n);
         let mut path = std::path::PathBuf::from(path);
         if path.exists() {
             std::fs::remove_file(&path).unwrap();
         }
         path.set_extension("");
-        Header::open(path).unwrap()
+        Index::open(path).unwrap()
     }
-    fn fill_header(h: &mut Header) {
+    fn fill_header(h: &mut Index) {
         for i in 20..24 {
             let ts = i * 2i64.pow(16);
             let new_timestamp_numb = ts / 2i64.pow(16);

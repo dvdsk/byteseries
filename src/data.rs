@@ -5,14 +5,14 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use time::OffsetDateTime;
 
-use crate::header::Header;
+use crate::header::Index;
 use crate::util::open_and_check;
 use crate::{Decoder, Error};
 
 #[derive(Debug)]
 pub struct ByteSeries {
     pub(crate) data: File,
-    pub(crate) header: Header,
+    pub(crate) index: Index,
 
     pub(crate) line_size: usize,
     pub(crate) full_line_size: usize,
@@ -35,17 +35,18 @@ pub(crate) struct FullTime {
 }
 
 impl ByteSeries {
+    /// line size in bytes
     pub fn open<P: AsRef<Path>>(name: P, line_size: usize) -> Result<ByteSeries, Error> {
         let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
         let (mut data, size) = open_and_check(name.as_ref().with_extension("dat"), line_size + 2)?;
-        let header = Header::open(name)?;
+        let header = Index::open(name)?;
 
         let first_time = header.first_time_in_data();
         let last_time = Self::load_last_time_in_data(&mut data, &header, full_line_size);
 
         Ok(ByteSeries {
             data,
-            header, // add triple headers
+            index: header, // add triple headers
 
             line_size,
             full_line_size, //+2 accounts for u16 timestamp
@@ -78,7 +79,7 @@ impl ByteSeries {
 
     fn load_last_time_in_data(
         data: &mut File,
-        header: &Header,
+        header: &Index,
         full_line_size: usize,
     ) -> Option<i64> {
         let mut buf = [0u8; 2]; //rewrite to use bufferd data
@@ -123,10 +124,10 @@ impl ByteSeries {
     // needs to be called before self.data_size is increased
     fn update_header(&mut self) -> Result<(), Error> {
         let new_timestamp_numb = self.timestamp / 2i64.pow(16);
-        if new_timestamp_numb > self.header.last_timestamp_numb {
+        if new_timestamp_numb > self.index.last_timestamp_numb {
             tracing::info!("updating file header");
             let line_start = self.data_size;
-            self.header
+            self.index
                 .update(self.timestamp, line_start, new_timestamp_numb)?;
         }
         Ok(())
@@ -136,7 +137,7 @@ impl ByteSeries {
     /// continuing
     pub(crate) fn force_write_to_disk(&mut self) {
         self.data.sync_data().unwrap();
-        self.header.file.sync_data().unwrap();
+        self.index.file.sync_data().unwrap();
     }
 
     fn time_to_line_timestamp(&mut self, time: OffsetDateTime) -> [u8; 2] {
@@ -173,7 +174,7 @@ impl ByteSeries {
 
             //set next timestamp and timestamp pos
             //minimum in map greater then current timestamp
-            if let Some(next) = self.header.next_full_timestamp(full_ts.curr) {
+            if let Some(next) = self.index.next_full_timestamp(full_ts.curr) {
                 full_ts.next = Some(next.timestamp);
                 full_ts.next_pos = Some(next.pos);
             } else {
