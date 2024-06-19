@@ -3,8 +3,8 @@
 use byteorder::{ByteOrder, NativeEndian};
 use byteseries::{new_sampler, ByteSeries, Decoder};
 use fxhash::hash64;
+use temp_dir::TempDir;
 use std::fs;
-use std::path::Path;
 use time::OffsetDateTime;
 
 mod shared;
@@ -12,26 +12,24 @@ use shared::{insert_timestamp_arrays, insert_timestamp_hashes, insert_uniform_ar
 
 #[test]
 fn basic() {
-    if Path::new("test_append.byteseries_index").exists() {
-        fs::remove_file("test_append.byteseries_index").unwrap();
-    }
-    if Path::new("test_append.byteseries").exists() {
-        fs::remove_file("test_append.byteseries").unwrap();
-    }
     const LINE_SIZE: usize = 10;
     const STEP: i64 = 5;
     const N_TO_INSERT: u32 = 100;
 
     let time = OffsetDateTime::now_utc();
 
-    let mut data = ByteSeries::open("test_append", LINE_SIZE).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_append");
+    let mut data = ByteSeries::open(&test_path, LINE_SIZE).unwrap();
     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
+    let data_path = test_path.with_extension("byteseries");
     assert_eq!(
-        fs::metadata("test_append.byteseries").unwrap().len(),
+        fs::metadata(data_path).unwrap().len(),
         ((LINE_SIZE + 2) as u32 * N_TO_INSERT) as u64
     );
-    assert_eq!(fs::metadata("test_append.byteseries_index").unwrap().len(), 16);
+    let index_path = test_path.with_extension("byteseries_index");
+    assert_eq!(fs::metadata(index_path).unwrap().len(), 16);
 }
 
 #[derive(Debug)]
@@ -49,15 +47,10 @@ fn hashes_then_verify() {
     const NUMBER_TO_INSERT: i64 = 1_000;
     const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
 
-    if Path::new("test_append_hashes_then_verify.byteseries_index").exists() {
-        fs::remove_file("test_append_hashes_then_verify.byteseries_index").unwrap();
-    }
-    if Path::new("test_append_hashes_then_verify.byteseries").exists() {
-        fs::remove_file("test_append_hashes_then_verify.byteseries").unwrap();
-    }
-
     let time = OffsetDateTime::now_utc();
-    let mut data = ByteSeries::open("test_append_hashes_then_verify", 8).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_append_hashes_then_verify");
+    let mut data = ByteSeries::open(test_path, 8).unwrap();
     insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
     let timestamp = time.unix_timestamp();
@@ -87,16 +80,11 @@ fn hashes_read_skipping_then_verify() {
     const NUMBER_TO_INSERT: i64 = 1_007;
     const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
 
-    if Path::new("test_read_skipping_then_verify.byteseries_index").exists() {
-        fs::remove_file("test_read_skipping_then_verify.byteseries_index").unwrap();
-    }
-    if Path::new("test_read_skipping_then_verify.byteseries").exists() {
-        fs::remove_file("test_read_skipping_then_verify.byteseries").unwrap();
-    }
-
     let time = OffsetDateTime::now_utc();
 
-    let mut data = ByteSeries::open("test_read_skipping_then_verify", 8).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_read_skipping_then_verify");
+    let mut data = ByteSeries::open(test_path, 8).unwrap();
     insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
     let timestamp = time.unix_timestamp();
@@ -135,18 +123,11 @@ fn timestamps_then_verify() {
     const NUMBER_TO_INSERT: i64 = 10_000;
     const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
 
-    //setup_debug_logging(2).unwrap();
-
-    if Path::new("test_append_timestamps_then_verify.byteseries_index").exists() {
-        fs::remove_file("test_append_timestamps_then_verify.byteseries_index").unwrap();
-    }
-    if Path::new("test_append_timestamps_then_verify.byteseries").exists() {
-        fs::remove_file("test_append_timestamps_then_verify.byteseries").unwrap();
-    }
-
     let time = OffsetDateTime::now_utc();
 
-    let mut data = ByteSeries::open("test_append_timestamps_then_verify", 8).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_append_timestamps_then_verify");
+    let mut data = ByteSeries::open(test_path, 8).unwrap();
     insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
     let timestamp = time.unix_timestamp();

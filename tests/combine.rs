@@ -2,9 +2,8 @@
 
 use byteseries::{combiners, new_sampler, ByteSeries, Decoder};
 use float_eq::assert_float_eq;
+use temp_dir::TempDir;
 use std::f32::consts::PI;
-use std::fs;
-use std::path::Path;
 use time::{Duration, OffsetDateTime};
 
 fn insert_vector(
@@ -48,20 +47,15 @@ impl Decoder<f32> for FloatDecoder {
 
 #[test]
 fn mean() {
-    if Path::new("test_combiner_mean.byteseries_index").exists() {
-        fs::remove_file("test_combiner_mean.byteseries_index").unwrap();
-    }
-    if Path::new("test_combiner_mean.byteseries").exists() {
-        fs::remove_file("test_combiner_mean.byteseries").unwrap();
-    }
-
     let now = OffsetDateTime::now_utc();
     let t1 = now - Duration::hours(2);
     let t2 = now;
     let n = 200;
     let s = 10;
 
-    let mut ts = ByteSeries::open("test_combiner_mean", 4).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_combiner_mean");
+    let mut ts = ByteSeries::open(test_path, 4).unwrap();
     let data = sine_array(n, 5.0, 100.0);
     insert_vector(&mut ts, t1, t2, &data);
 
@@ -87,20 +81,15 @@ fn mean() {
 
 #[test]
 fn diff_linear() {
-    if Path::new("test_combiner_diff_linear.byteseries_index").exists() {
-        fs::remove_file("test_combiner_diff_linear.byteseries_index").unwrap();
-    }
-    if Path::new("test_combiner_diff_linear.byteseries").exists() {
-        fs::remove_file("test_combiner_diff_linear.byteseries").unwrap();
-    }
-
     let now = OffsetDateTime::now_utc();
     let t1 = now - Duration::hours(2);
     let t2 = now;
     let n = 10;
     let slope = 0.2;
 
-    let mut ts = ByteSeries::open("test_combiner_diff_linear", 4).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_combiner_diff_linear");
+    let mut ts = ByteSeries::open(test_path, 4).unwrap();
     let data = linear_array(n, slope);
     insert_vector(&mut ts, t1, t2, &data);
 
@@ -124,19 +113,14 @@ fn diff_linear() {
 //use cargo t -- --nocapture diff_sine
 #[test]
 fn diff_sine() {
-    if Path::new("test_combiner_diff_sine.byteseries_index").exists() {
-        fs::remove_file("test_combiner_diff_sine.byteseries_index").unwrap();
-    }
-    if Path::new("test_combiner_diff_sine.byteseries").exists() {
-        fs::remove_file("test_combiner_diff_sine.byteseries").unwrap();
-    }
-
     let now = OffsetDateTime::now_utc();
     let t1 = now - Duration::hours(2);
     let t2 = now;
     let n = 200;
 
-    let mut ts = ByteSeries::open("test_combiner_diff_sine", 4).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_combiner_diff_sine");
+    let mut ts = ByteSeries::open(test_path, 4).unwrap();
     let data = sine_array(n, 5.0, 100.0);
     insert_vector(&mut ts, t1, t2, &data);
 
@@ -160,20 +144,15 @@ fn diff_sine() {
 
 #[test]
 fn diff_linear_of_mean() {
-    if Path::new("test_combiner_diff_linear_mean.byteseries_index").exists() {
-        fs::remove_file("test_combiner_diff_linear_mean.byteseries_index").unwrap();
-    }
-    if Path::new("test_combiner_diff_linear_mean.byteseries").exists() {
-        fs::remove_file("test_combiner_diff_linear_mean.byteseries").unwrap();
-    }
-
     let now = OffsetDateTime::now_utc();
     let t1 = now - Duration::hours(2);
     let t2 = now;
     let n = 10;
     let slope = 0.2;
 
-    let mut ts = ByteSeries::open("test_combiner_diff_linear_mean", 4).unwrap();
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_combiner_diff_linear_mean");
+    let mut ts = ByteSeries::open(test_path, 4).unwrap();
     let data = linear_array(400, slope);
     insert_vector(&mut ts, t1, t2, &data);
 

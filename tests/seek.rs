@@ -2,8 +2,7 @@
 
 use byteseries::error::{Error, SeekError};
 use byteseries::{new_sampler, ByteSeries, EmptyDecoder};
-use std::fs;
-use std::path::Path;
+use temp_dir::TempDir;
 use time::OffsetDateTime;
 
 mod shared;
@@ -11,12 +10,6 @@ use shared::insert_uniform_arrays;
 
 #[test]
 fn beyond_range() {
-    if Path::new("test_beyond_range.h").exists() {
-        fs::remove_file("test_beyond_range.h").unwrap();
-    }
-    if Path::new("test_beyond_range.dat").exists() {
-        fs::remove_file("test_beyond_range.dat").unwrap();
-    }
     const LINE_SIZE: usize = 8;
     const STEP: i64 = 5;
     const N_TO_INSERT: u32 = 100;
@@ -27,7 +20,10 @@ fn beyond_range() {
 
     let timestamp = time.unix_timestamp();
     println!("start timestamp {}", timestamp);
-    let mut data = ByteSeries::open("test_beyond_range", LINE_SIZE).unwrap();
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_beyond_range");
+    let mut data = ByteSeries::open(test_path, LINE_SIZE).unwrap();
 
     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
