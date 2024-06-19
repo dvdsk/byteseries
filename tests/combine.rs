@@ -48,11 +48,11 @@ impl Decoder<f32> for FloatDecoder {
 
 #[test]
 fn mean() {
-    if Path::new("test_combiner_mean.h").exists() {
-        fs::remove_file("test_combiner_mean.h").unwrap();
+    if Path::new("test_combiner_mean.byteseries_index").exists() {
+        fs::remove_file("test_combiner_mean.byteseries_index").unwrap();
     }
-    if Path::new("test_combiner_mean.dat").exists() {
-        fs::remove_file("test_combiner_mean.dat").unwrap();
+    if Path::new("test_combiner_mean.byteseries").exists() {
+        fs::remove_file("test_combiner_mean.byteseries").unwrap();
     }
 
     let now = OffsetDateTime::now_utc();
@@ -87,11 +87,11 @@ fn mean() {
 
 #[test]
 fn diff_linear() {
-    if Path::new("test_combiner_diff_linear.h").exists() {
-        fs::remove_file("test_combiner_diff_linear.h").unwrap();
+    if Path::new("test_combiner_diff_linear.byteseries_index").exists() {
+        fs::remove_file("test_combiner_diff_linear.byteseries_index").unwrap();
     }
-    if Path::new("test_combiner_diff_linear.dat").exists() {
-        fs::remove_file("test_combiner_diff_linear.dat").unwrap();
+    if Path::new("test_combiner_diff_linear.byteseries").exists() {
+        fs::remove_file("test_combiner_diff_linear.byteseries").unwrap();
     }
 
     let now = OffsetDateTime::now_utc();
@@ -124,11 +124,11 @@ fn diff_linear() {
 //use cargo t -- --nocapture diff_sine
 #[test]
 fn diff_sine() {
-    if Path::new("test_combiner_diff_sine.h").exists() {
-        fs::remove_file("test_combiner_diff_sine.h").unwrap();
+    if Path::new("test_combiner_diff_sine.byteseries_index").exists() {
+        fs::remove_file("test_combiner_diff_sine.byteseries_index").unwrap();
     }
-    if Path::new("test_combiner_diff_sine.dat").exists() {
-        fs::remove_file("test_combiner_diff_sine.dat").unwrap();
+    if Path::new("test_combiner_diff_sine.byteseries").exists() {
+        fs::remove_file("test_combiner_diff_sine.byteseries").unwrap();
     }
 
     let now = OffsetDateTime::now_utc();
@@ -160,11 +160,11 @@ fn diff_sine() {
 
 #[test]
 fn diff_linear_of_mean() {
-    if Path::new("test_combiner_diff_linear_mean.h").exists() {
-        fs::remove_file("test_combiner_diff_linear_mean.h").unwrap();
+    if Path::new("test_combiner_diff_linear_mean.byteseries_index").exists() {
+        fs::remove_file("test_combiner_diff_linear_mean.byteseries_index").unwrap();
     }
-    if Path::new("test_combiner_diff_linear_mean.dat").exists() {
-        fs::remove_file("test_combiner_diff_linear_mean.dat").unwrap();
+    if Path::new("test_combiner_diff_linear_mean.byteseries").exists() {
+        fs::remove_file("test_combiner_diff_linear_mean.byteseries").unwrap();
     }
 
     let now = OffsetDateTime::now_utc();
