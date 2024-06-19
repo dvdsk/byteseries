@@ -35,10 +35,11 @@ pub(crate) struct FullTime {
 }
 
 impl ByteSeries {
-    /// line size in bytes
+    /// line size in bytes, path is *without* any extension
     pub fn open<P: AsRef<Path>>(name: P, line_size: usize) -> Result<ByteSeries, Error> {
         let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
-        let (mut data, size) = open_and_check(name.as_ref().with_extension("dat"), line_size + 2)?;
+        let (mut data, size) =
+            open_and_check(name.as_ref().with_extension("byteseries"), line_size + 2)?;
         let header = Index::open(name)?;
 
         let first_time = header.first_time_in_data();

@@ -32,7 +32,7 @@ pub enum SearchBounds {
 
 impl Index {
     pub fn open<P: AsRef<Path>>(name: P) -> Result<Index, Error> {
-        let (mut file, _) = open_and_check(name.as_ref().with_extension("h"), 16)?;
+        let (mut file, _) = open_and_check(name.as_ref().with_extension("byteseries_index"), 16)?;
 
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
