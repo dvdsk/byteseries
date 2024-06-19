@@ -12,11 +12,11 @@ use shared::{insert_timestamp_arrays, insert_timestamp_hashes, insert_uniform_ar
 
 #[test]
 fn basic() {
-    if Path::new("test_append.byteseries_index").exists() {
-        fs::remove_file("test_append.byteseries_index").unwrap();
+    if Path::new("test_append.h").exists() {
+        fs::remove_file("test_append.h").unwrap();
     }
-    if Path::new("test_append.byteseries").exists() {
-        fs::remove_file("test_append.byteseries").unwrap();
+    if Path::new("test_append.dat").exists() {
+        fs::remove_file("test_append.dat").unwrap();
     }
     const LINE_SIZE: usize = 10;
     const STEP: i64 = 5;
@@ -28,10 +28,10 @@ fn basic() {
     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
     assert_eq!(
-        fs::metadata("test_append.byteseries").unwrap().len(),
+        fs::metadata("test_append.dat").unwrap().len(),
         ((LINE_SIZE + 2) as u32 * N_TO_INSERT) as u64
     );
-    assert_eq!(fs::metadata("test_append.byteseries_index").unwrap().len(), 16);
+    assert_eq!(fs::metadata("test_append.h").unwrap().len(), 16);
 }
 
 #[derive(Debug)]
@@ -49,11 +49,11 @@ fn hashes_then_verify() {
     const NUMBER_TO_INSERT: i64 = 1_000;
     const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
 
-    if Path::new("test_append_hashes_then_verify.byteseries_index").exists() {
-        fs::remove_file("test_append_hashes_then_verify.byteseries_index").unwrap();
+    if Path::new("test_append_hashes_then_verify.h").exists() {
+        fs::remove_file("test_append_hashes_then_verify.h").unwrap();
     }
-    if Path::new("test_append_hashes_then_verify.byteseries").exists() {
-        fs::remove_file("test_append_hashes_then_verify.byteseries").unwrap();
+    if Path::new("test_append_hashes_then_verify.dat").exists() {
+        fs::remove_file("test_append_hashes_then_verify.dat").unwrap();
     }
 
     let time = OffsetDateTime::now_utc();
@@ -87,11 +87,11 @@ fn hashes_read_skipping_then_verify() {
     const NUMBER_TO_INSERT: i64 = 1_007;
     const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
 
-    if Path::new("test_read_skipping_then_verify.byteseries_index").exists() {
-        fs::remove_file("test_read_skipping_then_verify.byteseries_index").unwrap();
+    if Path::new("test_read_skipping_then_verify.h").exists() {
+        fs::remove_file("test_read_skipping_then_verify.h").unwrap();
     }
-    if Path::new("test_read_skipping_then_verify.byteseries").exists() {
-        fs::remove_file("test_read_skipping_then_verify.byteseries").unwrap();
+    if Path::new("test_read_skipping_then_verify.dat").exists() {
+        fs::remove_file("test_read_skipping_then_verify.dat").unwrap();
     }
 
     let time = OffsetDateTime::now_utc();
@@ -137,11 +137,11 @@ fn timestamps_then_verify() {
 
     //setup_debug_logging(2).unwrap();
 
-    if Path::new("test_append_timestamps_then_verify.byteseries_index").exists() {
-        fs::remove_file("test_append_timestamps_then_verify.byteseries_index").unwrap();
+    if Path::new("test_append_timestamps_then_verify.h").exists() {
+        fs::remove_file("test_append_timestamps_then_verify.h").unwrap();
     }
-    if Path::new("test_append_timestamps_then_verify.byteseries").exists() {
-        fs::remove_file("test_append_timestamps_then_verify.byteseries").unwrap();
+    if Path::new("test_append_timestamps_then_verify.dat").exists() {
+        fs::remove_file("test_append_timestamps_then_verify.dat").unwrap();
     }
 
     let time = OffsetDateTime::now_utc();
