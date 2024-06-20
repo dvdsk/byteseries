@@ -3,8 +3,8 @@
 use byteorder::{ByteOrder, NativeEndian};
 use byteseries::{new_sampler, ByteSeries, Decoder};
 use fxhash::hash64;
-use temp_dir::TempDir;
 use std::fs;
+use temp_dir::TempDir;
 use time::OffsetDateTime;
 
 mod shared;
@@ -20,16 +20,18 @@ fn basic() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append");
-    let mut data = ByteSeries::open(&test_path, LINE_SIZE).unwrap();
+    let mut data = ByteSeries::new(&test_path, LINE_SIZE, ()).unwrap();
     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 
     let data_path = test_path.with_extension("byteseries");
+    const FULL_LINE_SIZE: u32 = (LINE_SIZE + 2) as u32;
+    const HEADER: u64 = 6;
     assert_eq!(
         fs::metadata(data_path).unwrap().len(),
-        ((LINE_SIZE + 2) as u32 * N_TO_INSERT) as u64
+        (FULL_LINE_SIZE * N_TO_INSERT) as u64 + HEADER
     );
     let index_path = test_path.with_extension("byteseries_index");
-    assert_eq!(fs::metadata(index_path).unwrap().len(), 16);
+    assert_eq!(fs::metadata(index_path).unwrap().len(), 16 + HEADER);
 }
 
 #[derive(Debug)]
@@ -50,7 +52,7 @@ fn hashes_then_verify() {
     let time = OffsetDateTime::now_utc();
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append_hashes_then_verify");
-    let mut data = ByteSeries::open(test_path, 8).unwrap();
+    let mut data = ByteSeries::new(test_path, 8, ()).unwrap();
     insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
     let timestamp = time.unix_timestamp();
@@ -84,7 +86,7 @@ fn hashes_read_skipping_then_verify() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_read_skipping_then_verify");
-    let mut data = ByteSeries::open(test_path, 8).unwrap();
+    let mut data = ByteSeries::new(test_path, 8, ()).unwrap();
     insert_timestamp_hashes(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
     let timestamp = time.unix_timestamp();
@@ -127,7 +129,7 @@ fn timestamps_then_verify() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append_timestamps_then_verify");
-    let mut data = ByteSeries::open(test_path, 8).unwrap();
+    let mut data = ByteSeries::new(test_path, 8, ()).unwrap();
     insert_timestamp_arrays(&mut data, NUMBER_TO_INSERT as u32, PERIOD, time);
 
     let timestamp = time.unix_timestamp();

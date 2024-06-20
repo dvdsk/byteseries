@@ -2,7 +2,7 @@
 name = "byteseries"
 version = "0.4.0"
 authors = ["David Kleingeld <dskleingeld@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 thiserror = "1.0"
@@ -11,6 +11,8 @@ num-traits = "0.2"
 arraydeque = "0.5"
 time = "0.3.36"
 tracing = "0.1.40"
+ron = "0.8.1"
+serde = { version = "1.0.203", features = ["derive"] }
 
 [dev-dependencies]
 fxhash = "0.2"

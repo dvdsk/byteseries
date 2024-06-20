@@ -59,8 +59,8 @@ impl ByteSeries {
     ) -> Result<u64, SeekError> {
         //compare partial (16 bit) timestamps in between the bounds
         let mut buf = vec![0u8; (stop - start) as usize];
-        self.data.seek(SeekFrom::Start(start))?;
-        self.data.read_exact(&mut buf)?;
+        self.file_handle.seek(SeekFrom::Start(start))?;
+        self.file_handle.read_exact(&mut buf)?;
 
         for line_start in (0..buf.len().saturating_sub(2)).step_by(self.full_line_size) {
             if LittleEndian::read_u16(&buf[line_start..line_start + 2])
@@ -130,8 +130,8 @@ impl ByteSeries {
     ) -> Result<u64, SeekError> {
         //compare partial (16 bit) timestamps in between these bounds
         let mut buf = vec![0u8; (stop - start) as usize];
-        self.data.seek(SeekFrom::Start(start))?;
-        self.data.read_exact(&mut buf)?;
+        self.file_handle.seek(SeekFrom::Start(start))?;
+        self.file_handle.read_exact(&mut buf)?;
 
         for line_start in (0..buf.len() - self.full_line_size + 1)
             .rev()

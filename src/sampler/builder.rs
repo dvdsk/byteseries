@@ -111,7 +111,11 @@ where
         let stop = stop
             .or_else(|| series.last_time_in_data())
             .ok_or(Error::NoData)?;
-        let seek = TimeSeek::new(&mut series, start.unwrap(), stop)?;
+        let seek = TimeSeek::new(
+            &mut series,
+            start.expect("builder guarantees this is set"),
+            stop,
+        )?;
 
         let lines = seek.lines(&series);
         let selector = points

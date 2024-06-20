@@ -3,7 +3,7 @@ use time::Duration;
 
 fn main() {
     let mut decoder = EmptyDecoder {};
-    let mut ts = ByteSeries::open("examples/data/4", 24).unwrap();
+    let mut ts = ByteSeries::new("examples/data/4", 24, ()).unwrap();
     let (endtime, _data) = ts.last_line(&mut decoder).unwrap();
 
     let mut sampler = new_sampler(ts, decoder)

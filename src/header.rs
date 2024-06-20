@@ -1,10 +1,12 @@
 use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
-use std::fs::File;
-use std::io::Read;
+use core::fmt;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 use crate::data::FullTime;
-use crate::util::open_and_check;
+use crate::util::{FileWithHeader, OffsetFile};
 use crate::Error;
 
 #[derive(Debug)]
@@ -15,7 +17,7 @@ pub struct Entry {
 
 #[derive(Debug)]
 pub struct Index {
-    pub file: File,
+    pub file: OffsetFile,
 
     pub data: Vec<Entry>,
     pub last_timestamp: i64,
@@ -31,11 +33,36 @@ pub enum SearchBounds {
 }
 
 impl Index {
-    pub fn open<P: AsRef<Path>>(name: P) -> Result<Index, Error> {
-        let (mut file, _) = open_and_check(name.as_ref().with_extension("byteseries_index"), 16)?;
+    pub fn new<H>(name: impl AsRef<Path>, header: H) -> Result<Index, Error>
+    where
+        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+    {
+        let file: FileWithHeader<H> =
+            FileWithHeader::new(name.as_ref().with_extension("byteseries_index"), header)?;
+
+        Ok(Index {
+            file: file.split_off_header().0,
+
+            data: Vec::new(),
+            last_timestamp: 0,
+            last_timestamp_numb: 0,
+        })
+    }
+    pub fn open_existing<H>(name: impl AsRef<Path>, header: &H) -> Result<Index, Error>
+    where
+        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+    {
+        let mut file: FileWithHeader<H> =
+            FileWithHeader::open_existing(name.as_ref().with_extension("byteseries_index"), 16)?;
+
+        if *header != file.header {
+            return Err(Error::IndexAndDataHeaderDifferent);
+        }
 
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        file.handle
+            .seek(std::io::SeekFrom::Start(file.data_offset))?;
+        file.handle.read_to_end(&mut bytes)?;
         let mut numbers = vec![0u64; bytes.len() / 8];
         LittleEndian::read_u64_into(&bytes, numbers.as_mut_slice());
 
@@ -54,7 +81,8 @@ impl Index {
 
         tracing::trace!("last_timestamp: {}", last_timestamp);
         Ok(Index {
-            file,
+            file: file.split_off_header().0,
+
             data,
             last_timestamp,
             last_timestamp_numb: last_timestamp / (u16::max_value() as i64),
@@ -166,18 +194,16 @@ fn unwrap_result<T>(res: Result<T, T>) -> T {
 //
 #[cfg(test)]
 mod tests {
+    use temp_dir::TempDir;
+
     use super::*;
 
-    fn test_header(n: usize) -> Index {
-        let path = format!("/tmp/test_header_{}.h", n);
-        let mut path = std::path::PathBuf::from(path);
-        if path.exists() {
-            std::fs::remove_file(&path).unwrap();
-        }
-        path.set_extension("");
-        Index::open(path).unwrap()
+    fn test_index() -> Index {
+        let test_dir = TempDir::new().unwrap();
+        let test_path = test_dir.child("test.byteseries_index");
+        Index::new(test_path, ()).unwrap()
     }
-    fn fill_header(h: &mut Index) {
+    fn fill_index(h: &mut Index) {
         for i in 20..24 {
             let ts = i * 2i64.pow(16);
             let new_timestamp_numb = ts / 2i64.pow(16);
@@ -187,8 +213,8 @@ mod tests {
 
     #[test]
     fn start_found() {
-        let mut h = test_header(0);
-        fill_header(&mut h);
+        let mut h = test_index();
+        fill_index(&mut h);
         let start = 22 * 2i64.pow(16);
         let stop = 23 * 2i64.pow(16);
         let (start, _stop, ft) = h.search_bounds(start, stop);
@@ -201,8 +227,8 @@ mod tests {
     }
     #[test]
     fn start_clipped() {
-        let mut h = test_header(1);
-        fill_header(&mut h);
+        let mut h = test_index();
+        fill_index(&mut h);
         let start = 12342;
         let stop = 23 * 2i64.pow(16);
         let (start, _stop, ft) = h.search_bounds(start, stop);
@@ -216,8 +242,8 @@ mod tests {
     }
     #[test]
     fn start_window() {
-        let mut h = test_header(2);
-        fill_header(&mut h);
+        let mut h = test_index();
+        fill_index(&mut h);
         let start = 22 * 2i64.pow(16) + 400;
         let stop = 23 * 2i64.pow(16);
         let (start, _stop, ft) = h.search_bounds(start, stop);
@@ -231,8 +257,8 @@ mod tests {
     }
     #[test]
     fn start_till_end() {
-        let mut h = test_header(3);
-        fill_header(&mut h);
+        let mut h = test_index();
+        fill_index(&mut h);
         let start = 24 * 2i64.pow(16) + 400;
         let stop = 25 * 2i64.pow(16);
         let (start, _stop, ft) = h.search_bounds(start, stop);

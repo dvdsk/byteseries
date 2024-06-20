@@ -23,7 +23,7 @@ fn beyond_range() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut data = ByteSeries::open(test_path, LINE_SIZE).unwrap();
+    let mut data = ByteSeries::new(test_path, LINE_SIZE, ()).unwrap();
 
     insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
 

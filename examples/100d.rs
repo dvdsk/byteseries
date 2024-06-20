@@ -12,7 +12,7 @@ impl Decoder<f32> for TestDecoder {
 
 fn main() {
     let mut decoder = TestDecoder {};
-    let mut ts = ByteSeries::open("examples/data/2", 103).unwrap();
+    let mut ts = ByteSeries::new("examples/data/2", 103, ()).unwrap();
     let (endtime, _data) = ts.last_line(&mut decoder).unwrap();
 
     let bin = combiners::SampleBin::new(5);

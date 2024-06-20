@@ -55,7 +55,7 @@ fn mean() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_combiner_mean");
-    let mut ts = ByteSeries::open(test_path, 4).unwrap();
+    let mut ts = ByteSeries::new(test_path, 4, ()).unwrap();
     let data = sine_array(n, 5.0, 100.0);
     insert_vector(&mut ts, t1, t2, &data);
 
@@ -89,7 +89,7 @@ fn diff_linear() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_combiner_diff_linear");
-    let mut ts = ByteSeries::open(test_path, 4).unwrap();
+    let mut ts = ByteSeries::new(test_path, 4, ()).unwrap();
     let data = linear_array(n, slope);
     insert_vector(&mut ts, t1, t2, &data);
 
@@ -120,7 +120,7 @@ fn diff_sine() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_combiner_diff_sine");
-    let mut ts = ByteSeries::open(test_path, 4).unwrap();
+    let mut ts = ByteSeries::new(test_path, 4, ()).unwrap();
     let data = sine_array(n, 5.0, 100.0);
     insert_vector(&mut ts, t1, t2, &data);
 
@@ -152,7 +152,7 @@ fn diff_linear_of_mean() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_combiner_diff_linear_mean");
-    let mut ts = ByteSeries::open(test_path, 4).unwrap();
+    let mut ts = ByteSeries::new(test_path, 4, ()).unwrap();
     let data = linear_array(400, slope);
     insert_vector(&mut ts, t1, t2, &data);
 

@@ -1,17 +1,19 @@
 use byteorder::{ByteOrder, LittleEndian};
+use core::fmt;
 use num_traits::cast::FromPrimitive;
-use std::fs::File;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use time::OffsetDateTime;
 
 use crate::header::Index;
-use crate::util::open_and_check;
+use crate::util::{FileWithHeader, OffsetFile};
 use crate::{Decoder, Error};
 
 #[derive(Debug)]
 pub struct ByteSeries {
-    pub(crate) data: File,
+    pub(crate) file_handle: OffsetFile,
     pub(crate) index: Index,
 
     pub(crate) line_size: usize,
@@ -21,6 +23,7 @@ pub struct ByteSeries {
     pub(crate) first_time_in_data: Option<i64>,
     pub(crate) last_time_in_data: Option<i64>,
 
+    /// data starts at this index
     pub(crate) data_size: u64,
 }
 
@@ -34,20 +37,26 @@ pub(crate) struct FullTime {
     pub(crate) next_pos: Option<u64>,
 }
 
-impl ByteSeries {
-    /// line size in bytes, path is *without* any extension
-    pub fn open<P: AsRef<Path>>(name: P, line_size: usize) -> Result<ByteSeries, Error> {
-        let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
-        let (mut data, size) =
-            open_and_check(name.as_ref().with_extension("byteseries"), line_size + 2)?;
-        let header = Index::open(name)?;
 
-        let first_time = header.first_time_in_data();
-        let last_time = Self::load_last_time_in_data(&mut data, &header, full_line_size);
+impl ByteSeries {
+    pub fn new<H>(name: impl AsRef<Path>, line_size: usize, header: H) -> Result<ByteSeries, Error>
+    where
+        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+    {
+        let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
+        let mut file =
+            FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())?;
+        let index = Index::new(name, header)?;
+
+        let first_time = index.first_time_in_data();
+        let last_time = Self::load_last_time_in_data(&mut file, &index, full_line_size);
+        let data_size = file.len - file.data_offset;
+
+        let (file_handle, _) = file.split_off_header();
 
         Ok(ByteSeries {
-            data,
-            index: header, // add triple headers
+            file_handle,
+            index, // add triple headers
 
             line_size,
             full_line_size, //+2 accounts for u16 timestamp
@@ -58,8 +67,49 @@ impl ByteSeries {
 
             //these are set during: set_read_start, set_read_end then read is
             //bound by these points
-            data_size: size,
+            data_size,
         })
+    }
+
+    /// line size in bytes, path is *without* any extension
+    pub fn open_existing<H>(
+        name: impl AsRef<Path>,
+        line_size: usize,
+    ) -> Result<(ByteSeries, H), Error>
+    where
+        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+    {
+        let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
+        let mut file = FileWithHeader::open_existing(
+            name.as_ref().with_extension("byteseries"),
+            full_line_size,
+        )?;
+        let index = Index::open_existing(name, &file.header)?;
+
+        let first_time = index.first_time_in_data();
+        let last_time = Self::load_last_time_in_data(&mut file, &index, full_line_size);
+        let data_size = file.len - file.data_offset;
+
+        let (file_handle, header) = file.split_off_header();
+
+        Ok((
+            ByteSeries {
+                file_handle,
+                index, // add triple headers
+
+                line_size,
+                full_line_size, //+2 accounts for u16 timestamp
+                timestamp: 0,
+
+                first_time_in_data: first_time,
+                last_time_in_data: last_time,
+
+                //these are set during: set_read_start, set_read_end then read is
+                //bound by these points
+                data_size,
+            },
+            header,
+        ))
     }
 
     pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
@@ -78,14 +128,25 @@ impl ByteSeries {
         Ok((time, bytes))
     }
 
-    fn load_last_time_in_data(
-        data: &mut File,
+    fn load_last_time_in_data<H>(
+        data: &mut FileWithHeader<H>,
         header: &Index,
         full_line_size: usize,
-    ) -> Option<i64> {
+    ) -> Option<i64>
+    where
+        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static,
+    {
+        if data.len <= data.data_offset {
+            return None;
+        }
+
         let mut buf = [0u8; 2]; //rewrite to use bufferd data
-        if data.seek(SeekFrom::End(-(full_line_size as i64))).is_ok() {
-            data.read_exact(&mut buf).unwrap();
+        if data
+            .handle
+            .seek(SeekFrom::End(-(full_line_size as i64)))
+            .is_ok()
+        {
+            data.handle.read_exact(&mut buf).unwrap();
             let timestamp_low = LittleEndian::read_u16(&buf) as i64;
             let timestamp_high = header.last_timestamp & !0b1_1111_1111_1111_1111;
             let timestamp = timestamp_high | timestamp_low;
@@ -109,8 +170,8 @@ impl ByteSeries {
         //TODO decide if a lock is needed here
         //write 16 bit timestamp and then the line to file
         let timestamp = self.time_to_line_timestamp(time);
-        self.data.write_all(&timestamp)?;
-        self.data.write_all(&line[..self.line_size])?;
+        self.file_handle.write_all(&timestamp)?;
+        self.file_handle.write_all(&line[..self.line_size])?;
 
         //write 64 bit timestamp to header
         //(needed no more then once every 18 hours)
@@ -137,7 +198,7 @@ impl ByteSeries {
     /// asks the os to write its buffers out before
     /// continuing
     pub(crate) fn force_write_to_disk(&mut self) {
-        self.data.sync_data().unwrap();
+        self.file_handle.sync_data().unwrap();
         self.index.file.sync_data().unwrap();
     }
 
@@ -200,8 +261,8 @@ impl ByteSeries {
         start_byte: u64,
         stop_byte: u64,
     ) -> Result<usize, Error> {
-        self.data.seek(SeekFrom::Start(start_byte))?;
-        let nread = self.data.read(buf)?;
+        self.file_handle.seek(SeekFrom::Start(start_byte))?;
+        let nread = self.file_handle.read(buf)?;
         let left = stop_byte + self.full_line_size as u64 - start_byte;
         let nread = nread.min(left as usize);
         let nread = nread - nread % self.full_line_size;
