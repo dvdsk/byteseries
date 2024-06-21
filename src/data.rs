@@ -11,9 +11,12 @@ use crate::header::Index;
 use crate::util::{FileWithHeader, OffsetFile};
 use crate::{Decoder, Error};
 
+mod inline_meta;
+use inline_meta::FileWithInlineMeta;
+
 #[derive(Debug)]
 pub struct ByteSeries {
-    pub(crate) file_handle: OffsetFile,
+    pub(crate) file_handle: FileWithInlineMeta<OffsetFile>,
     pub(crate) index: Index,
 
     pub(crate) line_size: usize,
@@ -37,22 +40,23 @@ pub(crate) struct FullTime {
     pub(crate) next_pos: Option<u64>,
 }
 
-
 impl ByteSeries {
     pub fn new<H>(name: impl AsRef<Path>, line_size: usize, header: H) -> Result<ByteSeries, Error>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
         let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
-        let mut file =
-            FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())?;
+        let file = FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())?;
         let index = Index::new(name, header)?;
+        let data_size = file.len - file.data_offset;
+        let (file_handle, _) = file.split_off_header();
+        let mut file_handle = FileWithInlineMeta {
+            file_handle,
+            full_line_size,
+        };
 
         let first_time = index.first_time_in_data();
-        let last_time = Self::load_last_time_in_data(&mut file, &index, full_line_size);
-        let data_size = file.len - file.data_offset;
-
-        let (file_handle, _) = file.split_off_header();
+        let last_time = Self::load_last_time_in_data(&mut file_handle, &index, full_line_size);
 
         Ok(ByteSeries {
             file_handle,
@@ -80,17 +84,20 @@ impl ByteSeries {
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
         let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
-        let mut file = FileWithHeader::open_existing(
+        let file = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries"),
             full_line_size,
         )?;
-        let index = Index::open_existing(name, &file.header)?;
+        let data_size = file.len - file.data_offset;
+        let (file_handle, header) = file.split_off_header();
+        let index = Index::open_existing(name, &header)?;
+        let mut file_handle = FileWithInlineMeta {
+            file_handle,
+            full_line_size,
+        };
 
         let first_time = index.first_time_in_data();
-        let last_time = Self::load_last_time_in_data(&mut file, &index, full_line_size);
-        let data_size = file.len - file.data_offset;
-
-        let (file_handle, header) = file.split_off_header();
+        let last_time = Self::load_last_time_in_data(&mut file_handle, &index, full_line_size);
 
         Ok((
             ByteSeries {
@@ -128,25 +135,14 @@ impl ByteSeries {
         Ok((time, bytes))
     }
 
-    fn load_last_time_in_data<H>(
-        data: &mut FileWithHeader<H>,
+    fn load_last_time_in_data(
+        data: &mut FileWithInlineMeta<OffsetFile>,
         header: &Index,
         full_line_size: usize,
-    ) -> Option<i64>
-    where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static,
-    {
-        if data.len <= data.data_offset {
-            return None;
-        }
-
+    ) -> Option<i64> {
         let mut buf = [0u8; 2]; //rewrite to use bufferd data
-        if data
-            .handle
-            .seek(SeekFrom::End(-(full_line_size as i64)))
-            .is_ok()
-        {
-            data.handle.read_exact(&mut buf).unwrap();
+        if data.seek(SeekFrom::End(-(full_line_size as i64))).is_ok() {
+            data.read_exact(&mut buf).unwrap();
             let timestamp_low = LittleEndian::read_u16(&buf) as i64;
             let timestamp_high = header.last_timestamp & !0b1_1111_1111_1111_1111;
             let timestamp = timestamp_high | timestamp_low;
@@ -169,13 +165,14 @@ impl ByteSeries {
     pub fn append_fast(&mut self, time: OffsetDateTime, line: &[u8]) -> Result<(), Error> {
         //TODO decide if a lock is needed here
         //write 16 bit timestamp and then the line to file
+        self.update_full_time()?;
         let timestamp = self.time_to_line_timestamp(time);
         self.file_handle.write_all(&timestamp)?;
         self.file_handle.write_all(&line[..self.line_size])?;
 
         //write 64 bit timestamp to header
         //(needed no more then once every 18 hours)
-        self.update_header()?;
+        self.update_index()?;
         self.data_size += self.full_line_size as u64;
 
         self.last_time_in_data = Some(time.unix_timestamp());
@@ -184,7 +181,20 @@ impl ByteSeries {
     }
 
     // needs to be called before self.data_size is increased
-    fn update_header(&mut self) -> Result<(), Error> {
+    fn update_full_time(&mut self) -> Result<(), Error> {
+        let new_timestamp_numb = self.timestamp / 2i64.pow(16);
+        if new_timestamp_numb > self.index.last_timestamp_numb {
+            tracing::info!("inserting full timestamp through meta lines");
+            let meta_line = vec![0; self.full_line_size];
+            self.file_handle.write_all(&meta_line)?;
+            self.file_handle.write_all(&meta_line)?;
+            self.data_size += 2 * self.full_line_size as u64
+        }
+        Ok(())
+    }
+
+    // needs to be called before self.data_size is increased
+    fn update_index(&mut self) -> Result<(), Error> {
         let new_timestamp_numb = self.timestamp / 2i64.pow(16);
         if new_timestamp_numb > self.index.last_timestamp_numb {
             tracing::info!("updating file header");
@@ -198,7 +208,7 @@ impl ByteSeries {
     /// asks the os to write its buffers out before
     /// continuing
     pub(crate) fn force_write_to_disk(&mut self) {
-        self.file_handle.sync_data().unwrap();
+        self.file_handle.inner_mut().sync_data().unwrap();
         self.index.file.sync_data().unwrap();
     }
 
