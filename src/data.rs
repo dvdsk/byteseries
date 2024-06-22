@@ -11,7 +11,7 @@ use crate::header::Index;
 use crate::util::{FileWithHeader, OffsetFile};
 use crate::{Decoder, Error};
 
-mod inline_meta;
+pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
 
 #[derive(Debug)]
@@ -47,6 +47,9 @@ impl ByteSeries {
     {
         let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
         let file = FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())?;
+        // TODO, check for zero pattern at the end
+        // a single u16 time of zeros
+        // may only exists with a full timestamp in front
         let index = Index::new(name, header)?;
         let data_size = file.len - file.data_offset;
         let (file_handle, _) = file.split_off_header();
@@ -84,16 +87,21 @@ impl ByteSeries {
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
         let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
-        let file = FileWithHeader::open_existing(
+        let file: FileWithHeader<H> = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries"),
             full_line_size,
         )?;
         let data_size = file.len - file.data_offset;
         let (file_handle, header) = file.split_off_header();
-        let index = Index::open_existing(name, &header)?;
         let mut file_handle = FileWithInlineMeta {
             file_handle,
             full_line_size,
+        };
+        let index = match Index::open_existing(&name, &header) {
+            Ok(index) => index,
+            Err(_) => {
+                Index::create_from_byteseries(&mut file_handle, line_size, name, header.clone())?
+            }
         };
 
         let first_time = index.first_time_in_data();
@@ -165,14 +173,14 @@ impl ByteSeries {
     pub fn append_fast(&mut self, time: OffsetDateTime, line: &[u8]) -> Result<(), Error> {
         //TODO decide if a lock is needed here
         //write 16 bit timestamp and then the line to file
-        self.update_full_time()?;
+        self.add_meta_section_if_needed()?;
         let timestamp = self.time_to_line_timestamp(time);
         self.file_handle.write_all(&timestamp)?;
         self.file_handle.write_all(&line[..self.line_size])?;
 
         //write 64 bit timestamp to header
         //(needed no more then once every 18 hours)
-        self.update_index()?;
+        self.update_index_if_needed()?;
         self.data_size += self.full_line_size as u64;
 
         self.last_time_in_data = Some(time.unix_timestamp());
@@ -180,21 +188,62 @@ impl ByteSeries {
         Ok(())
     }
 
-    // needs to be called before self.data_size is increased
-    fn update_full_time(&mut self) -> Result<(), Error> {
+    /// needs to be called before self.data_size is increased
+    /// adds a meta section if needed
+    fn add_meta_section_if_needed(&mut self) -> Result<(), Error> {
         let new_timestamp_numb = self.timestamp / 2i64.pow(16);
         if new_timestamp_numb > self.index.last_timestamp_numb {
             tracing::info!("inserting full timestamp through meta lines");
-            let meta_line = vec![0; self.full_line_size];
-            self.file_handle.write_all(&meta_line)?;
-            self.file_handle.write_all(&meta_line)?;
-            self.data_size += 2 * self.full_line_size as u64
+            let t = self.timestamp.to_le_bytes();
+            let lines = match self.line_size {
+                0 => {
+                    self.file_handle.write_all(&[0, 0])?;
+                    self.file_handle.write_all(&[0, 0])?;
+                    self.file_handle.write_all(&t[0..2])?;
+                    self.file_handle.write_all(&t[2..4])?;
+                    self.file_handle.write_all(&t[4..6])?;
+                    self.file_handle.write_all(&t[6..8])?;
+                    6
+                }
+                1 => {
+                    self.file_handle.write_all(&[0, 0, t[0]])?;
+                    self.file_handle.write_all(&[0, 0, t[1]])?;
+                    self.file_handle.write_all(&t[2..5])?;
+                    self.file_handle.write_all(&t[5..8])?;
+                    4
+                }
+                2 => {
+                    self.file_handle.write_all(&[0, 0, t[0], t[1]])?;
+                    self.file_handle.write_all(&[0, 0, t[2], t[3]])?;
+                    self.file_handle.write_all(&t[4..8])?;
+                    3
+                }
+                3 => {
+                    self.file_handle.write_all(&[0, 0, t[0], t[1], t[2]])?;
+                    self.file_handle.write_all(&[0, 0, t[3], t[4], t[5]])?;
+                    self.file_handle.write_all(&[t[6], t[7], 0, 0, 0])?;
+                    3
+                }
+                4.. => {
+                    let mut line = vec![0u8; self.full_line_size];
+                    line[2..6].copy_from_slice(&[t[0], t[1], t[2], t[3]]);
+                    self.file_handle.write_all(&line)?;
+                    line[2..6].copy_from_slice(&[t[4], t[5], t[6], t[7]]);
+                    self.file_handle.write_all(&line)?;
+                    2
+                }
+            };
+            // compile_error!("finish this, then build index from these timestamps,
+            //     then refactor to lessen use of index if not needed
+            //     due to these new timestamps");
+            //
+            self.data_size += lines * self.full_line_size as u64
         }
         Ok(())
     }
 
-    // needs to be called before self.data_size is increased
-    fn update_index(&mut self) -> Result<(), Error> {
+    /// needs to be called before self.data_size is increased
+    fn update_index_if_needed(&mut self) -> Result<(), Error> {
         let new_timestamp_numb = self.timestamp / 2i64.pow(16);
         if new_timestamp_numb > self.index.last_timestamp_numb {
             tracing::info!("updating file header");

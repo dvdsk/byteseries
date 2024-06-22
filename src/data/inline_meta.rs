@@ -5,12 +5,13 @@ use std::iter;
 use itertools::Itertools;
 
 #[derive(Debug)]
-pub struct FileWithInlineMeta<F: fmt::Debug> {
+pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
     pub(crate) file_handle: F,
     pub(crate) full_line_size: usize,
 }
 
-fn meta_lines_indices(buf: &[u8], full_line_size: usize) -> Vec<usize> {
+
+pub(crate) fn meta_lines_indices(buf: &[u8], full_line_size: usize) -> Vec<usize> {
     buf.chunks_exact(full_line_size)
         .enumerate()
         .tuple_windows::<(_, _)>()
@@ -21,8 +22,20 @@ fn meta_lines_indices(buf: &[u8], full_line_size: usize) -> Vec<usize> {
         .collect()
 }
 
+pub(crate) fn lines_per_metainfo(line_size: usize) -> usize {
+    let base_lines = 2; // needed to recognise meta section
+    let extra_lines_needed = match line_size {
+        0 => 2,
+        1 => 2,
+        2 => 1,
+        3 => 1,
+        4.. => 0,
+    };
+    base_lines + extra_lines_needed
+}
+
 fn shift_over_meta_lines(buf: &mut [u8], meta_lines: Vec<usize>, full_line_size: usize) -> usize {
-    let n_meta_lines = 2;
+    let n_meta_lines = dbg!(lines_per_metainfo(full_line_size - 2));
     let n_meta_bytes = n_meta_lines * full_line_size;
     let mut shifted = 0;
     let total_to_shift = meta_lines.len() * n_meta_bytes;
@@ -88,6 +101,8 @@ mod test {
     use std::io::Read;
 
     use super::*;
+    const FULL_LINE_SIZE: usize = 6;
+    const TWO_ZERO_LINES: [u8; 2 * FULL_LINE_SIZE] = [0u8; 2 * FULL_LINE_SIZE];
 
     fn data_lines<const N: usize>(n: usize) -> Vec<u8> {
         assert!(N >= 2);
@@ -104,58 +119,57 @@ mod test {
     }
 
     #[test]
-    fn meta_line_at_start() {
+    fn meta_section_at_start() {
         let n_data_lines = 5;
-        let mut lines = vec![0, 0, 0, 0, 0, 0, 0, 0];
-        lines.extend_from_slice(&data_lines::<4>(n_data_lines));
+        let mut lines = TWO_ZERO_LINES.to_vec();
+        lines.extend_from_slice(&data_lines::<FULL_LINE_SIZE>(n_data_lines));
 
         let file = Cursor::new(lines);
         let mut file = FileWithInlineMeta {
             file_handle: file,
-            full_line_size: 4,
+            full_line_size: FULL_LINE_SIZE,
         };
 
         let mut buf = vec![0u8; 100];
         let n_read = file.read(&mut buf).unwrap();
         let read = &buf[0..n_read];
-        assert_eq!(read, &data_lines::<4>(n_data_lines))
+        assert_eq!(read, &data_lines::<FULL_LINE_SIZE>(n_data_lines))
     }
 
     #[test]
-    fn meta_line_at_end() {
+    fn meta_section_at_end() {
         let n_data_lines = 5;
-        let mut lines = data_lines::<4>(n_data_lines);
-        lines.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut lines = data_lines::<FULL_LINE_SIZE>(n_data_lines);
+        lines.extend_from_slice(&TWO_ZERO_LINES);
 
         let file = Cursor::new(lines);
         let mut file = FileWithInlineMeta {
             file_handle: file,
-            full_line_size: 4,
+            full_line_size: FULL_LINE_SIZE,
         };
 
         let mut buf = vec![0u8; 100];
         let n_read = file.read(&mut buf).unwrap();
         let read = &buf[0..n_read];
-        assert_eq!(read, &data_lines::<4>(n_data_lines))
+        assert_eq!(read, &data_lines::<FULL_LINE_SIZE>(n_data_lines))
     }
 
     #[test]
-    fn meta_line_in_middle() {
+    fn meta_sections_around() {
         let n_data_lines = 2;
-        let mut lines = vec![0, 0, 0, 0, 0, 0, 0, 0];
-        lines.extend_from_slice(&data_lines::<4>(n_data_lines));
-        lines.extend_from_slice(&[0, 0, 0, 0]);
-        lines.extend_from_slice(&[0, 0, 0, 0]);
+        let mut lines = TWO_ZERO_LINES.to_vec();
+        lines.extend_from_slice(&data_lines::<FULL_LINE_SIZE>(n_data_lines));
+        lines.extend_from_slice(&TWO_ZERO_LINES);
 
         let file = Cursor::new(lines);
         let mut file = FileWithInlineMeta {
             file_handle: file,
-            full_line_size: 4,
+            full_line_size: FULL_LINE_SIZE,
         };
 
         let mut buf = vec![0u8; 100];
         let n_read = file.read(&mut buf).unwrap();
         let read = &buf[0..n_read];
-        assert_eq!(read, &data_lines::<4>(n_data_lines))
+        assert_eq!(read, &data_lines::<FULL_LINE_SIZE>(n_data_lines))
     }
 }

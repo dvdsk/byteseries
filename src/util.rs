@@ -137,6 +137,14 @@ impl OffsetFile {
     pub fn sync_data(&self) -> std::io::Result<()> {
         self.handle.sync_data()
     }
+
+    /// length needed to read the entire file without the header. 
+    /// You can use this as input for read_exact though you might
+    /// want to spread the read.
+    pub fn data_len(&self) -> std::io::Result<u64> {
+        self.handle.metadata().map(|m| m.len())
+        
+    }
 }
 
 impl Seek for OffsetFile {

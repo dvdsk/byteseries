@@ -1,4 +1,4 @@
-mod data;
+pub(crate) mod data;
 pub mod error;
 mod header;
 mod sampler;
