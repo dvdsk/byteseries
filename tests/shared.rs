@@ -4,6 +4,21 @@ use byteseries::ByteSeries;
 use fxhash::hash64;
 use time::OffsetDateTime;
 
+pub fn setup_tracing() {
+    use tracing_subscriber::filter;
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::prelude::*;
+
+    let filter = filter::EnvFilter::builder().from_env().unwrap();
+
+    let fmt = fmt::layer().pretty().with_line_number(true);
+
+    let _ignore_err = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt)
+        .try_init();
+}
+
 pub fn insert_uniform_arrays(
     data: &mut ByteSeries,
     n_to_insert: u32,

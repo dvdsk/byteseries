@@ -1,18 +1,21 @@
-use byteorder::{ByteOrder, LittleEndian, WriteBytesExt};
+use byteorder::{ByteOrder, LittleEndian};
 use core::fmt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
+use tracing::instrument;
 
 use crate::data::FullTime;
 use crate::util::{FileWithHeader, OffsetFile};
 use crate::Error;
 
+pub(crate) mod restore;
+
 #[derive(Debug)]
 pub struct Entry {
     pub timestamp: i64,
-    pub pos: u64,
+    pub line_start: u64,
 }
 
 #[derive(Debug)]
@@ -33,12 +36,15 @@ pub enum SearchBounds {
 }
 
 impl Index {
-    pub fn new<H>(name: impl AsRef<Path>, header: H) -> Result<Index, Error>
+    #[instrument]
+    pub fn new<H>(name: impl AsRef<Path> + fmt::Debug, user_header: H) -> Result<Index, Error>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
-        let file: FileWithHeader<H> =
-            FileWithHeader::new(name.as_ref().with_extension("byteseries_index"), header)?;
+        let file: FileWithHeader<H> = FileWithHeader::new(
+            name.as_ref().with_extension("byteseries_index"),
+            user_header,
+        )?;
 
         Ok(Index {
             file: file.split_off_header().0,
@@ -48,14 +54,18 @@ impl Index {
             last_timestamp_numb: 0,
         })
     }
-    pub fn open_existing<H>(name: impl AsRef<Path>, header: &H) -> Result<Index, Error>
+    #[instrument]
+    pub fn open_existing<H>(
+        name: impl AsRef<Path> + fmt::Debug,
+        user_header: &H,
+    ) -> Result<Index, Error>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
         let mut file: FileWithHeader<H> =
             FileWithHeader::open_existing(name.as_ref().with_extension("byteseries_index"), 16)?;
 
-        if *header != file.header {
+        if *user_header != file.user_header {
             return Err(Error::IndexAndDataHeaderDifferent);
         }
 
@@ -70,7 +80,7 @@ impl Index {
         for i in (0..numbers.len()).step_by(2) {
             data.push(Entry {
                 timestamp: numbers[i] as i64,
-                pos: numbers[i + 1],
+                line_start: numbers[i + 1],
             });
         }
 
@@ -88,47 +98,21 @@ impl Index {
             last_timestamp_numb: last_timestamp / (u16::max_value() as i64),
         })
     }
-
-    pub fn create_from_byteseries<H>(
-        byteseries: &mut crate::data::inline_meta::FileWithInlineMeta<OffsetFile>,
-        line_size: usize,
-        name: impl AsRef<Path>,
-        header: H,
-    ) -> Result<Self, Error>
-    where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
-    {
-        let entries = extract_entries(byteseries, line_size)?;
-        let index_file: FileWithHeader<H> =
-            FileWithHeader::new(name.as_ref().with_extension("byteseries_index"), header)?;
-        let last_timestamp = entries
-            .last()
-            .map(|Entry { timestamp, .. }| *timestamp)
-            .unwrap_or(0);
-
-        Ok(Self {
-            last_timestamp,
-            last_timestamp_numb: last_timestamp / (u16::MAX as i64),
-            file: index_file.split_off_header().0,
-            entries,
-        })
-    }
-
-    pub fn update(
-        &mut self,
-        timestamp: i64,
-        line_start: u64,
-        new_timestamp_numb: i64,
-    ) -> Result<(), Error> {
+    pub fn update(&mut self, timestamp: i64, line_start: u64) -> Result<(), std::io::Error> {
         let ts = timestamp as u64;
-        self.file.write_u64::<LittleEndian>(ts)?;
-        self.file.write_u64::<LittleEndian>(line_start)?;
-        tracing::trace!("wrote headerline: {}, {}", ts, line_start);
+        self.file.write_all(&ts.to_le_bytes())?;
+        self.file.write_all(&line_start.to_le_bytes())?;
+        tracing::trace!(
+            "wrote headerline: {ts}, {line_start} as line: {:?} {:?}",
+            ts.to_le_bytes(),
+            line_start.to_le_bytes()
+        );
 
         self.entries.push(Entry {
             timestamp,
-            pos: line_start,
+            line_start,
         });
+        let new_timestamp_numb = timestamp / 2i64.pow(16);
         self.last_timestamp_numb = new_timestamp_numb;
         Ok(())
     }
@@ -137,11 +121,11 @@ impl Index {
         let idx = self.entries.binary_search_by_key(&start, |e| e.timestamp);
         let (start_bound, full_time) = match idx {
             Ok(i) => (
-                SearchBounds::Found(self.entries[i].pos),
+                SearchBounds::Found(self.entries[i].line_start),
                 FullTime {
                     curr: start,
                     next: self.entries.get(i + 1).map(|e| e.timestamp),
-                    next_pos: self.entries.get(i + 1).map(|e| e.pos),
+                    next_pos: self.entries.get(i + 1).map(|e| e.line_start),
                 },
             ),
             Err(end) => {
@@ -152,12 +136,12 @@ impl Index {
                         FullTime {
                             curr: self.entries[0].timestamp,
                             next: self.entries.get(1).map(|e| e.timestamp),
-                            next_pos: self.entries.get(1).map(|e| e.pos),
+                            next_pos: self.entries.get(1).map(|e| e.line_start),
                         },
                     )
                 } else if end == self.entries.len() {
                     (
-                        SearchBounds::TillEnd(self.entries.last().unwrap().pos),
+                        SearchBounds::TillEnd(self.entries.last().unwrap().line_start),
                         FullTime {
                             curr: self.entries.last().unwrap().timestamp,
                             next: None, //there is no full timestamp beyond the end
@@ -167,11 +151,14 @@ impl Index {
                 } else {
                     //end is not 0 or 1 thus data[end] and data[end-1] exist
                     (
-                        SearchBounds::Window(self.entries[end - 1].pos, self.entries[end].pos),
+                        SearchBounds::Window(
+                            self.entries[end - 1].line_start,
+                            self.entries[end].line_start,
+                        ),
                         FullTime {
                             curr: self.entries[end - 1].timestamp,
                             next: Some(self.entries[end].timestamp),
-                            next_pos: Some(self.entries[end].pos),
+                            next_pos: Some(self.entries[end].line_start),
                         },
                     )
                 }
@@ -179,7 +166,7 @@ impl Index {
         };
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
         let stop_bound = match idx {
-            Ok(i) => SearchBounds::Found(self.entries[i].pos),
+            Ok(i) => SearchBounds::Found(self.entries[i].line_start),
             Err(end) => {
                 if end == 0 {
                     //stop lies before file
@@ -189,10 +176,13 @@ impl Index {
                         this"
                     )
                 } else if end == self.entries.len() {
-                    SearchBounds::TillEnd(self.entries.last().unwrap().pos)
+                    SearchBounds::TillEnd(self.entries.last().unwrap().line_start)
                 } else {
                     //end is not 0 or 1 thus data[end] and data[end-1] exist
-                    SearchBounds::Window(self.entries[end - 1].pos, self.entries[end].pos)
+                    SearchBounds::Window(
+                        self.entries[end - 1].line_start,
+                        self.entries[end].line_start,
+                    )
                 }
             }
         };
@@ -209,111 +199,6 @@ impl Index {
         let i = unwrap_result(i);
         self.entries.get(i)
     }
-}
-
-pub(crate) fn extract_entries(
-    file: &mut crate::data::inline_meta::FileWithInlineMeta<OffsetFile>,
-    line_size: usize,
-) -> Result<Vec<Entry>, Error> {
-    /// max metadata size when the metadata does not fit on
-    /// the two line that contain the metadata pattern
-    /// (first two bytes are zero).
-    const MAX_META_FOR_SMALL_LINESIZE: usize = 3 * 5;
-    let mut entries = Vec::new();
-
-    let data_len = file.inner_mut().data_len()?;
-    let chunk_size = 16384usize.next_multiple_of(line_size);
-
-    // max size of the metadata section.
-    let overlap = usize::max(MAX_META_FOR_SMALL_LINESIZE, 2 * (line_size + 2));
-
-    // do not init with zero or the initially empty overlap
-    // will be seen as a full timestamp
-    let mut buffer = vec![1u8; chunk_size + overlap];
-    for i in 0..(data_len / chunk_size as u64) {
-        file.read_exact(&mut buffer[overlap..])?;
-        entries.extend(
-            meta(&buffer, line_size, overlap)
-                .into_iter()
-                .map(|(pos, timestamp)| Entry {
-                    timestamp: timestamp as i64,
-                    pos: i * (chunk_size as u64) + pos as u64,
-                }),
-        );
-    }
-
-    let left = (data_len % (chunk_size as u64)) as usize;
-    file.read_exact(&mut buffer[overlap..overlap + left])?;
-    entries.extend(meta(&buffer[..left], line_size, overlap).into_iter().map(
-        |(pos, timestamp)| Entry {
-            timestamp: timestamp as i64,
-            pos: data_len - left as u64 + pos as u64,
-        },
-    ));
-
-    Ok(entries)
-}
-
-pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, u64)> {
-    let mut chunks = buf.chunks_exact(line_size).enumerate();
-    let mut res = Vec::new();
-    loop {
-        let (idx, chunk) = chunks.next().unwrap();
-        if chunk[..2] != [0, 0] {
-            continue;
-        }
-
-        let (_, next_chunk) = chunks.next().unwrap();
-        if next_chunk[..2] != [0, 0] {
-            continue;
-        }
-
-        // TODO correct index for shift (was needed for overlap)
-        let chunks = chunks.by_ref().map(|(_, chunk)| chunk);
-        let ts = read_timestamp(chunks, chunk, next_chunk, line_size);
-        let index = idx * line_size - overlap;
-        res.push((index, ts));
-    }
-}
-
-/// returns None if not enough data was left to decode a u64
-fn read_timestamp<'a>(
-    mut chunks: impl Iterator<Item = &'a [u8]>,
-    first_chunk: &'a [u8],
-    next_chunk: &'a [u8],
-    line_size: usize,
-) -> Option<u64> {
-    let mut result = 0u64.to_le_bytes();
-    match line_size {
-        0 => {
-            result[0..2].copy_from_slice(&chunks.next()?);
-            result[2..4].copy_from_slice(&chunks.next()?);
-            result[4..6].copy_from_slice(&chunks.next()?);
-            result[6..8].copy_from_slice(&chunks.next()?);
-        }
-        1 => {
-            result[0] = first_chunk[2];
-            result[1] = next_chunk[2];
-            result[2..5].copy_from_slice(&chunks.next()?);
-            result[5..8].copy_from_slice(&chunks.next()?);
-        }
-        2 => {
-            result[0..2].copy_from_slice(&first_chunk[2..]);
-            result[2..4].copy_from_slice(&next_chunk[2..]);
-            result[4..8].copy_from_slice(&chunks.next()?);
-        }
-        3 => {
-            result[0..3].copy_from_slice(&first_chunk[2..]);
-            result[3..6].copy_from_slice(&next_chunk[2..]);
-            result[6..8].copy_from_slice(&chunks.next()?[0..2]);
-        }
-        4.. => {
-            result[0..4].copy_from_slice(&first_chunk[2..6]);
-            result[4..8].copy_from_slice(&next_chunk[2..6]);
-        }
-    }
-
-    Some(u64::from_le_bytes(result))
 }
 
 fn unwrap_result<T>(res: Result<T, T>) -> T {
@@ -338,8 +223,7 @@ mod tests {
     fn fill_index(h: &mut Index) {
         for i in 20..24 {
             let ts = i * 2i64.pow(16);
-            let new_timestamp_numb = ts / 2i64.pow(16);
-            h.update(ts, i as u64, new_timestamp_numb).unwrap();
+            h.update(ts, i as u64).unwrap();
         }
     }
 

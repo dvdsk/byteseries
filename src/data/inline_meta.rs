@@ -3,13 +3,13 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::iter;
 
 use itertools::Itertools;
+use tracing::instrument;
 
 #[derive(Debug)]
 pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
     pub(crate) file_handle: F,
     pub(crate) full_line_size: usize,
 }
-
 
 pub(crate) fn meta_lines_indices(buf: &[u8], full_line_size: usize) -> Vec<usize> {
     buf.chunks_exact(full_line_size)
@@ -35,7 +35,7 @@ pub(crate) fn lines_per_metainfo(line_size: usize) -> usize {
 }
 
 fn shift_over_meta_lines(buf: &mut [u8], meta_lines: Vec<usize>, full_line_size: usize) -> usize {
-    let n_meta_lines = dbg!(lines_per_metainfo(full_line_size - 2));
+    let n_meta_lines = lines_per_metainfo(full_line_size - 2);
     let n_meta_bytes = n_meta_lines * full_line_size;
     let mut shifted = 0;
     let total_to_shift = meta_lines.len() * n_meta_bytes;
@@ -93,6 +93,100 @@ impl<F: Seek + fmt::Debug> Seek for FileWithInlineMeta<F> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.file_handle.seek(pos)
     }
+    fn stream_position(&mut self) -> std::io::Result<u64> {
+        dbg!(self.file_handle.stream_position())
+    }
+}
+
+/// returns number of bytes written
+#[instrument(level = "trace", skip(file_handle), ret)]
+pub(crate) fn write_meta(
+    file_handle: &mut impl Write,
+    meta: [u8; 8],
+    line_size: usize,
+) -> std::io::Result<u64> {
+    tracing::info!("inserting full timestamp through meta lines");
+    let t = meta;
+    let lines = match line_size {
+        0 => {
+            file_handle.write_all(&[0, 0])?;
+            file_handle.write_all(&[0, 0])?;
+            file_handle.write_all(&t[0..2])?;
+            file_handle.write_all(&t[2..4])?;
+            file_handle.write_all(&t[4..6])?;
+            file_handle.write_all(&t[6..8])?;
+            6
+        }
+        1 => {
+            file_handle.write_all(&[0, 0, t[0]])?;
+            file_handle.write_all(&[0, 0, t[1]])?;
+            file_handle.write_all(&t[2..5])?;
+            file_handle.write_all(&t[5..8])?;
+            4
+        }
+        2 => {
+            file_handle.write_all(&[0, 0, t[0], t[1]])?;
+            file_handle.write_all(&[0, 0, t[2], t[3]])?;
+            file_handle.write_all(&t[4..8])?;
+            3
+        }
+        3 => {
+            file_handle.write_all(&[0, 0, t[0], t[1], t[2]])?;
+            file_handle.write_all(&[0, 0, t[3], t[4], t[5]])?;
+            file_handle.write_all(&[t[6], t[7], 0, 0, 0])?;
+            3
+        }
+        4.. => {
+            let mut line = vec![0u8; line_size + 2];
+            line[2..6].copy_from_slice(&[t[0], t[1], t[2], t[3]]);
+            file_handle.write_all(&line)?;
+            line[2..6].copy_from_slice(&[t[4], t[5], t[6], t[7]]);
+            file_handle.write_all(&line)?;
+            2
+        }
+    };
+    Ok(lines * (line_size + 2) as u64)
+}
+
+/// returns None if not enough data was left to decode a u64
+#[instrument(level = "trace", skip(chunks), ret)]
+pub(crate) fn read_meta<'a>(
+    mut chunks: impl Iterator<Item = &'a [u8]>,
+    first_chunk: &'a [u8],
+    next_chunk: &'a [u8],
+    line_size: usize,
+) -> Option<[u8; 8]> {
+    let mut result = [0u8; 8];
+    match line_size {
+        0 => {
+            result[0..2].copy_from_slice(&chunks.next()?);
+            result[2..4].copy_from_slice(&chunks.next()?);
+            result[4..6].copy_from_slice(&chunks.next()?);
+            result[6..8].copy_from_slice(&chunks.next()?);
+        }
+        1 => {
+            result[0] = first_chunk[2];
+            result[1] = next_chunk[2];
+            result[2..5].copy_from_slice(&chunks.next()?);
+            result[5..8].copy_from_slice(&chunks.next()?);
+        }
+        2 => {
+            result[0..2].copy_from_slice(&first_chunk[2..]);
+            result[2..4].copy_from_slice(&next_chunk[2..]);
+            result[4..8].copy_from_slice(&chunks.next()?);
+        }
+        3 => {
+            result[0..3].copy_from_slice(&first_chunk[2..]);
+            result[3..6].copy_from_slice(&next_chunk[2..]);
+            result[6..8].copy_from_slice(&chunks.next()?[0..2]);
+        }
+        4.. => {
+            result[0..4].copy_from_slice(&first_chunk[2..6]);
+            result[4..8].copy_from_slice(&next_chunk[2..6]);
+        }
+    }
+
+    Some(result)
 }
 
 #[cfg(test)]

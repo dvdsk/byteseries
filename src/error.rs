@@ -1,3 +1,4 @@
+use crate::index::restore;
 pub use crate::search::SeekError;
 
 #[derive(thiserror::Error, Debug)]
@@ -15,4 +16,6 @@ pub enum Error {
     Seek(#[from] SeekError),
     #[error("The header in the index and byteseries are different")]
     IndexAndDataHeaderDifferent,
+    #[error("Could not restore the index")]
+    RestoringIndex(restore::Error),
 }

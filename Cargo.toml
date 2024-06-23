@@ -19,3 +19,4 @@ itertools = "0.13.0"
 fxhash = "0.2"
 float_eq = "1.0"
 temp-dir = "0.1.13"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }

@@ -1,14 +1,14 @@
-use core::fmt;
+use core::{fmt, mem};
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::{self, SeekFrom};
 use std::io::{Read, Seek, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use byteorder::{ReadBytesExt, WriteBytesExt};
 use ron::ser::PrettyConfig;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use tracing::instrument;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
@@ -27,14 +27,15 @@ pub enum OpenError {
 pub(crate) struct FileWithHeader<T> {
     pub(crate) handle: File,
     pub(crate) len: u64,
-    pub(crate) header: T,
+    pub(crate) user_header: T,
     /// data starts at this offset from the start
     pub(crate) data_offset: u64,
 }
 
 /// size comes from the u16 encoded length of the
 /// header followed by 2 line ends.
-pub(crate) const EMPTY_HEADER_SIZE: usize = 4;
+const LINE_ENDS: &[u8; 2] = b"\n\n";
+pub(crate) const USER_HEADER_STARTS: usize = LINE_ENDS.len() + mem::size_of::<u16>();
 
 /// open file and check if it has the right length
 /// (an integer multiple of the line length) if it
@@ -46,7 +47,7 @@ impl<H> FileWithHeader<H>
 where
     H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
 {
-    pub fn new(path: PathBuf, header: H) -> Result<FileWithHeader<H>, OpenError> {
+    pub fn new(path: impl AsRef<Path>, user_header: H) -> Result<FileWithHeader<H>, OpenError> {
         let mut file = match OpenOptions::new()
             .read(true)
             .append(true)
@@ -59,23 +60,29 @@ where
             }
             Err(err) => return Err(err)?,
         };
-        let encoded_header = ron::ser::to_string_pretty(&header, PrettyConfig::new())
+        let config = PrettyConfig::new();
+        let encoded_user_header = ron::ser::to_string_pretty(&user_header, config)
             .map_err(OpenError::SerializingHeader)?;
-        let encoded_len = encoded_header
+        let user_header_len: u16 = encoded_user_header
             .len()
             .try_into()
             .map_err(|_| OpenError::HeaderTooLarge)?;
-        file.write_u16::<byteorder::LittleEndian>(encoded_len)?;
-        file.write(b"\n\n")?;
-        file.write(encoded_header.as_bytes())?;
+        file.write_all(&user_header_len.to_le_bytes())?;
+        file.write_all(LINE_ENDS)?;
+        file.write_all(encoded_user_header.as_bytes())?;
+
+        let len = LINE_ENDS.len() as u64
+            + mem::size_of_val(&user_header_len) as u64
+            + user_header_len as u64;
         return Ok(FileWithHeader {
             handle: file,
-            len: 2 + 2 + encoded_len as u64,
-            header,
-            data_offset: encoded_len as u64 + EMPTY_HEADER_SIZE as u64,
+            len,
+            user_header,
+            data_offset: len,
         });
     }
 
+    #[instrument(fields(file_len, user_header_len, header_len))]
     pub fn open_existing(
         path: PathBuf,
         full_line_size: usize,
@@ -90,11 +97,20 @@ where
             .open(path)?;
         let metadata = file.metadata()?;
 
-        let header_len = file.read_u16::<byteorder::LittleEndian>()?;
-        let mut header = vec![0; header_len as usize + 2];
-        file.seek(std::io::SeekFrom::Start(EMPTY_HEADER_SIZE as u64))?;
-        file.read_exact(&mut header)?;
-        let header = ron::de::from_bytes(&header)?;
+        let mut user_header_len = [0u8, 2];
+        file.read_exact(&mut user_header_len)?;
+        let user_header_len = u16::from_le_bytes(user_header_len);
+        let mut user_header = vec![0; user_header_len as usize];
+        file.seek(std::io::SeekFrom::Start(USER_HEADER_STARTS as u64))?;
+        file.read_exact(&mut user_header)?;
+        let user_header = ron::de::from_bytes(&user_header)?;
+        let header_len =
+            user_header_len as usize + LINE_ENDS.len() + mem::size_of_val(&user_header_len);
+
+        tracing::Span::current()
+            .record("file_len", &metadata.len())
+            .record("user_header_len", &user_header_len)
+            .record("header_len", &header_len);
 
         let len_without_header = metadata.len() - header_len as u64;
         let rest = len_without_header % (full_line_size as u64);
@@ -108,8 +124,10 @@ where
         Ok(FileWithHeader {
             handle: file,
             len: metadata.len(),
-            data_offset: 2u64 + header_len as u64,
-            header,
+            data_offset: LINE_ENDS.len() as u64
+                + mem::size_of_val(&user_header_len) as u64
+                + user_header_len as u64,
+            user_header,
         })
     }
 
@@ -119,7 +137,7 @@ where
                 handle: self.handle,
                 offset: self.data_offset,
             },
-            self.header,
+            self.user_header,
         )
     }
 }
@@ -129,7 +147,7 @@ where
 /// file seeks. We can use this as if the header does not exist.
 #[derive(Debug)]
 pub(crate) struct OffsetFile {
-    handle: File,
+    pub(crate) handle: File,
     offset: u64,
 }
 
@@ -138,12 +156,13 @@ impl OffsetFile {
         self.handle.sync_data()
     }
 
-    /// length needed to read the entire file without the header. 
+    /// length needed to read the entire file without the header.
     /// You can use this as input for read_exact though you might
     /// want to spread the read.
     pub fn data_len(&self) -> std::io::Result<u64> {
-        self.handle.metadata().map(|m| m.len())
-        
+        self.handle
+            .metadata()
+            .map(|m| m.len() - self.offset)
     }
 }
 
@@ -155,6 +174,10 @@ impl Seek for OffsetFile {
             SeekFrom::Current(p) => SeekFrom::Current(p),
         };
         self.handle.seek(offset_pos)
+    }
+
+    fn stream_position(&mut self) -> io::Result<u64> {
+        self.handle.stream_position().map(|p| p - self.offset)
     }
 }
 

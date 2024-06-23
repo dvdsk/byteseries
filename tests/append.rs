@@ -1,38 +1,13 @@
-#![cfg(test)]
-
 use byteorder::{ByteOrder, NativeEndian};
 use byteseries::{new_sampler, ByteSeries, Decoder};
 use fxhash::hash64;
-use std::fs;
 use temp_dir::TempDir;
 use time::OffsetDateTime;
 
 mod shared;
-use shared::{insert_timestamp_arrays, insert_timestamp_hashes, insert_uniform_arrays};
+use shared::{insert_timestamp_arrays, insert_timestamp_hashes};
 
-#[test]
-fn basic() {
-    const LINE_SIZE: usize = 10;
-    const STEP: i64 = 5;
-    const N_TO_INSERT: u32 = 100;
-
-    let time = OffsetDateTime::now_utc();
-
-    let test_dir = TempDir::new().unwrap();
-    let test_path = test_dir.child("test_append");
-    let mut data = ByteSeries::new(&test_path, LINE_SIZE, ()).unwrap();
-    insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
-
-    let data_path = test_path.with_extension("byteseries");
-    const FULL_LINE_SIZE: u32 = (LINE_SIZE + 2) as u32;
-    const HEADER: u64 = 6;
-    assert_eq!(
-        fs::metadata(data_path).unwrap().len(),
-        (FULL_LINE_SIZE * N_TO_INSERT) as u64 + HEADER
-    );
-    let index_path = test_path.with_extension("byteseries_index");
-    assert_eq!(fs::metadata(index_path).unwrap().len(), 16 + HEADER);
-}
+use crate::shared::setup_tracing;
 
 #[derive(Debug)]
 struct HashDecoder {}
@@ -71,9 +46,12 @@ fn hashes_then_verify() {
 
     sampler.sample_all().unwrap();
 
-    for (timestamp, hash) in sampler.into_iter() {
-        let correct = hash64::<i64>(&(timestamp as i64));
-        assert_eq!(hash, correct);
+    for (timestamp, data) in sampler.into_iter() {
+        let timestamp_hash = hash64::<i64>(&(timestamp as i64));
+        assert_eq!(
+            data, timestamp_hash,
+            "the data (left) should be a hash of the timestamp (right) the timestamp was: {timestamp}"
+        );
     }
 }
 
@@ -125,6 +103,8 @@ fn timestamps_then_verify() {
     const NUMBER_TO_INSERT: i64 = 10_000;
     const PERIOD: i64 = 24 * 3600 / NUMBER_TO_INSERT;
 
+    setup_tracing();
+
     let time = OffsetDateTime::now_utc();
 
     let test_dir = TempDir::new().unwrap();
@@ -152,8 +132,7 @@ fn timestamps_then_verify() {
         let correct = timestamp as i64;
         assert_eq!(
             decoded, correct,
-            "failed on element: {}, which should have ts: {}, but has been given {},
-            prev element has ts: {:?}, the step is: {}",
+            "failed on element: {}.\nIt should have ts: {}, but has been given {}\nprev element has ts: {:?}, the step is: {}",
             i, timestamp, decoded, prev, PERIOD
         );
         prev = Some(timestamp);

@@ -1,6 +1,6 @@
 pub(crate) mod data;
 pub mod error;
-mod header;
+mod index;
 mod sampler;
 mod search;
 mod util;

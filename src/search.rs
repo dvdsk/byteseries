@@ -3,7 +3,7 @@ use std::io::{Read, Seek, SeekFrom};
 use time::OffsetDateTime;
 
 use crate::data::FullTime;
-use crate::header::SearchBounds;
+use crate::index::SearchBounds;
 use crate::ByteSeries;
 use crate::Error;
 
