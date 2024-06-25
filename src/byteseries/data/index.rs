@@ -5,24 +5,23 @@ use std::io::{Read, Seek, Write};
 use std::path::Path;
 use tracing::instrument;
 
-use crate::data::Timestamp;
 use crate::util::{FileWithHeader, OffsetFile};
-use crate::Error;
+use crate::{Error, Timestamp};
 
 pub(crate) mod restore;
 
 #[derive(Debug)]
-pub struct Entry {
+pub(crate) struct Entry {
     pub timestamp: Timestamp,
     pub line_start: u64,
 }
 
 #[derive(Debug)]
-pub struct Index {
-    pub file: OffsetFile,
+pub(crate) struct Index {
+    pub(crate) file: OffsetFile,
 
-    pub entries: Vec<Entry>,
-    pub last_timestamp: Timestamp,
+    entries: Vec<Entry>,
+    last_timestamp: Timestamp,
 }
 
 #[derive(Debug)]
@@ -165,6 +164,10 @@ impl Index {
     }
     pub fn first_time_in_data(&self) -> Option<Timestamp> {
         self.entries.first().map(|e| e.timestamp)
+    }
+
+    pub fn last_timestamp(&self) -> Timestamp {
+        self.last_timestamp
     }
 }
 

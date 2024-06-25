@@ -1,6 +1,5 @@
 use byteseries::{ByteSeries, TimeSeek};
 use temp_dir::TempDir;
-use time::OffsetDateTime;
 
 mod shared;
 use shared::{insert_timestamps, Timestamp};
@@ -25,7 +24,7 @@ fn compare_written_to_read() {
     const NUMBER_TO_INSERT: u64 = 1_000;
     const PERIOD: Timestamp = 24 * 3600 / NUMBER_TO_INSERT;
 
-    let timestamp = OffsetDateTime::now_utc().unix_timestamp() as Timestamp;
+    let timestamp = 1719330938;
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append_hashes_then_verify");
     let mut series = ByteSeries::new(test_path, 8, ()).unwrap();

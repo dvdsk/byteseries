@@ -1,7 +1,6 @@
 use byteseries::ByteSeries;
 use std::fs;
 use temp_dir::TempDir;
-use time::OffsetDateTime;
 
 mod shared;
 use shared::insert_uniform_arrays;
@@ -17,7 +16,7 @@ fn reconstructed_index_works() {
     const STEP: u64 = 5;
     const N_TO_INSERT: u32 = 2;
 
-    let time = OffsetDateTime::now_utc();
+    let time = 1719330938;
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append");

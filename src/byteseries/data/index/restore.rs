@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::data::inline_meta::read_meta;
+use crate::byteseries::data::inline_meta::read_meta;
 use crate::util::{FileWithHeader, OffsetFile, OpenError};
 
 use super::{Entry, Index};

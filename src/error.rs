@@ -1,6 +1,6 @@
-use crate::data::Timestamp;
-use crate::index::restore;
+use crate::byteseries::data::index::restore;
 pub use crate::search::SeekError;
+use crate::Timestamp;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -23,5 +23,5 @@ pub enum Error {
     NewLineBeforePrevious {
         new: Timestamp,
         prev: Option<Timestamp>,
-    }
+    },
 }

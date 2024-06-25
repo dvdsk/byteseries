@@ -1,9 +1,9 @@
 use std::io::{Read, Seek, SeekFrom};
 
-use crate::data::Timestamp;
-use crate::index::SearchBounds;
+use crate::byteseries::data::index::SearchBounds;
 use crate::ByteSeries;
 use crate::Error;
+use crate::Timestamp;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SeekError {

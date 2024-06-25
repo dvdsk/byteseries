@@ -3,15 +3,15 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::Write;
 use std::path::Path;
-use time::OffsetDateTime;
 use tracing::instrument;
 
-use crate::index::Index;
 use crate::util::{FileWithHeader, OffsetFile};
-use crate::Error;
+use crate::{Decoder, Error, Timestamp};
 
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
+pub mod index;
+use index::Index;
 
 use self::inline_meta::write_meta;
 
@@ -25,11 +25,6 @@ pub struct Data {
     pub(crate) data_len: u64,
 }
 
-pub trait Decoder: core::fmt::Debug {
-    type Item: core::fmt::Debug + Clone;
-    fn decode_line(&mut self, line: &[u8]) -> Self::Item;
-}
-
 #[derive(Debug)]
 struct EmptyDecoder;
 impl Decoder for EmptyDecoder {
@@ -38,8 +33,6 @@ impl Decoder for EmptyDecoder {
         ()
     }
 }
-
-pub type Timestamp = u64;
 
 impl Data {
     pub fn new<H>(
@@ -119,7 +112,7 @@ impl Data {
             &mut data,
             start,
             end,
-            self.index.last_timestamp,
+            self.index.last_timestamp(),
         )?;
 
         let ts = timestamps.pop().ok_or(Error::NoData)?;
@@ -141,7 +134,7 @@ impl Data {
         //we store the timestamp - the last recorded full timestamp as u16. If
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
-        let diff = ts - self.index.last_timestamp;
+        let diff = ts - self.index.last_timestamp();
         let small_ts = if let Ok(small_ts) = TryInto::<u16>::try_into(diff) {
             small_ts
         } else {
@@ -182,93 +175,8 @@ impl Data {
             first_full_ts,
         )
     }
-}
 
-#[derive(Debug)]
-pub struct ByteSeries {
-    pub(crate) data: Data,
-
-    pub(crate) first_time_in_data: Option<Timestamp>,
-    pub(crate) last_time_in_data: Option<Timestamp>,
-}
-
-impl ByteSeries {
-    #[instrument]
-    pub fn new<H>(
-        name: impl AsRef<Path> + fmt::Debug,
-        payload_size: usize,
-        header: H,
-    ) -> Result<ByteSeries, Error>
-    where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
-    {
-        Ok(ByteSeries {
-            first_time_in_data: None,
-            last_time_in_data: None,
-            data: Data::new(name, payload_size, header)?,
-        })
-    }
-
-    /// line size in bytes, path is *without* any extension
-    #[instrument]
-    pub fn open_existing<H>(
-        name: impl AsRef<Path> + fmt::Debug,
-        payload_size: usize,
-    ) -> Result<(ByteSeries, H), Error>
-    where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
-    {
-        let (mut data, header) = Data::open_existing(name, payload_size)?;
-
-        let bs = ByteSeries {
-            first_time_in_data: data.first_time(),
-            last_time_in_data: data.last_time(),
-            data,
-        };
-
-        Ok((bs, header))
-    }
-
-    pub(crate) fn payload_size(&self) -> usize {
-        self.data.payload_size
-    }
-
-    pub fn push_line(&mut self, time: OffsetDateTime, line: impl AsRef<[u8]>) -> Result<(), Error> {
-        //write 16 bit timestamp and then the line to file
-        //for now no support for sign bit since data will always be after 0 (1970)
-        let ts = time.unix_timestamp() as Timestamp;
-        if ts <= self.last_time_in_data.unwrap_or(0) {
-            return Err(Error::NewLineBeforePrevious {
-                new: ts,
-                prev: self.last_time_in_data,
-            });
-        }
-        self.data.push_data(ts, line.as_ref())?;
-        self.last_time_in_data = Some(ts);
-        self.first_time_in_data.get_or_insert(ts);
-        Ok(())
-    }
-
-    pub fn flush_to_disk(&mut self) {
-        self.data.flush_to_disk()
-    }
-
-    pub fn read_to_data<D: Decoder>(
-        &mut self,
-        start_byte: u64,
-        stop_byte: u64,
-        first_full_ts: Timestamp,
-        decoder: &mut D,
-        timestamps: &mut Vec<Timestamp>,
-        data: &mut Vec<D::Item>,
-    ) -> Result<(), Error> {
-        self.data.read_to_data(
-            start_byte,
-            stop_byte,
-            first_full_ts,
-            decoder,
-            timestamps,
-            data,
-        )
+    pub(super) fn payload_size(&self) -> usize {
+        self.payload_size
     }
 }
