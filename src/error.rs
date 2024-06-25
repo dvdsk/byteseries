@@ -1,3 +1,4 @@
+use crate::data::Timestamp;
 use crate::index::restore;
 pub use crate::search::SeekError;
 
@@ -18,4 +19,9 @@ pub enum Error {
     IndexAndDataHeaderDifferent,
     #[error("Could not restore the index")]
     RestoringIndex(restore::Error),
+    #[error("The time for the new line ({new}) must be larger then the previous ({prev:?})")]
+    NewLineBeforePrevious {
+        new: Timestamp,
+        prev: Option<Timestamp>,
+    }
 }

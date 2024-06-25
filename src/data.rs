@@ -1,44 +1,190 @@
-use byteorder::{ByteOrder, LittleEndian};
 use core::fmt;
-use num_traits::cast::FromPrimitive;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::Path;
 use time::OffsetDateTime;
 use tracing::instrument;
 
 use crate::index::Index;
 use crate::util::{FileWithHeader, OffsetFile};
-use crate::{Decoder, Error};
+use crate::Error;
 
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
 
+use self::inline_meta::write_meta;
+
 #[derive(Debug)]
-pub struct ByteSeries {
+pub struct Data {
     pub(crate) file_handle: FileWithInlineMeta<OffsetFile>,
     pub(crate) index: Index,
 
-    pub(crate) line_size: usize,
-    pub(crate) full_line_size: usize,
-    timestamp: i64,
-
-    pub(crate) first_time_in_data: Option<i64>,
-    pub(crate) last_time_in_data: Option<i64>,
-
-    /// data starts at this index
-    pub(crate) data_size: u64,
+    line_size: usize,
+    /// current length of the data file in bytes
+    pub(crate) data_len: u64,
 }
 
-// ---------------------------------------------------------------------
-// -- we store only the last 4 bytes of the timestamp ------------------
-// ---------------------------------------------------------------------
 #[derive(Debug)]
-pub(crate) struct FullTime {
-    pub(crate) curr: i64,
-    pub(crate) next: Option<i64>,
-    pub(crate) next_pos: Option<u64>,
+struct EmptyDecoder;
+impl Decoder2 for EmptyDecoder {
+    type Item = ();
+    fn decode_line(&mut self, _: &[u8]) -> Self::Item {
+        ()
+    }
+}
+
+pub type Timestamp = u64;
+
+impl Data {
+    pub fn new<H>(
+        name: impl AsRef<Path> + fmt::Debug,
+        line_size: usize,
+        header: H,
+    ) -> Result<Self, Error>
+    where
+        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+    {
+        let file = FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())?;
+        let index = Index::new(name, header)?;
+        let (file_handle, _) = file.split_off_header();
+        let data_len = file_handle.data_len()?;
+        let file_handle = FileWithInlineMeta {
+            file_handle,
+            full_line_size: line_size + 2,
+        };
+        Ok(Self {
+            file_handle,
+            index,
+            line_size,
+            data_len,
+        })
+    }
+
+    #[instrument]
+    pub fn open_existing<H>(
+        name: impl AsRef<Path> + fmt::Debug,
+        line_size: usize,
+    ) -> Result<(Data, H), Error>
+    where
+        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+    {
+        // TODO, check for zero pattern at the end
+        // a single u16 time of zeros
+        // may only exists with a full timestamp in front
+        let file: FileWithHeader<H> = FileWithHeader::open_existing(
+            name.as_ref().with_extension("byteseries"),
+            line_size + 2,
+        )?;
+        let (mut file_handle, header) = file.split_off_header();
+        let index = match Index::open_existing(&name, &header) {
+            Ok(index) => index,
+            Err(_) => {
+                Index::restore_from_byteseries(&mut file_handle, line_size, name, header.clone())
+                    .map_err(Error::RestoringIndex)?
+            }
+        };
+
+        let data_len = file_handle.data_len()?;
+        let file_handle = FileWithInlineMeta {
+            file_handle,
+            full_line_size: line_size + 2,
+        };
+        let data = Self {
+            file_handle,
+            index,
+            line_size,
+            data_len,
+        };
+        Ok((data, header))
+    }
+
+    pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
+        &mut self,
+        decoder: &mut impl Decoder2<Item = T>,
+    ) -> Result<(Timestamp, T), Error> {
+        let start = self.data_len - (self.line_size + 2) as u64;
+        let end = self.data_len;
+
+        let mut timestamps = Vec::new();
+        let mut data = Vec::new();
+        self.file_handle.read2(
+            decoder,
+            &mut timestamps,
+            &mut data,
+            start,
+            end,
+            self.index.last_timestamp,
+        )?;
+
+        let ts = timestamps.pop().ok_or(Error::NoData)?;
+        let item = data.pop().ok_or(Error::NoData)?;
+
+        Ok((ts, item))
+    }
+
+    pub(crate) fn first_time(&mut self) -> Option<Timestamp> {
+        self.index.first_time_in_data()
+    }
+
+    pub(crate) fn last_time(&mut self) -> Option<Timestamp> {
+        self.last_line(&mut EmptyDecoder).map(|(ts, _)| ts).ok()
+    }
+
+    /// Append data to disk but do not flush, a crash can still lead to the data being lost
+    pub fn push_data(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), Error> {
+        //we store the timestamp - the last recorded full timestamp as u16. If
+        //that overflows a new timestamp will be inserted. The 16 bit small
+        //timestamp is stored little endian
+        let diff = ts - self.index.last_timestamp;
+        let small_ts = if let Ok(small_ts) = TryInto::<u16>::try_into(diff) {
+            small_ts
+        } else {
+            let meta = ts.to_le_bytes();
+            let written = write_meta(&mut self.file_handle, meta, self.line_size)?;
+            self.data_len += written;
+            self.index.update(ts, self.data_len)?;
+            0
+        };
+
+        self.file_handle.write_all(&small_ts.to_le_bytes())?;
+        self.file_handle.write_all(&line[..self.line_size])?;
+        self.data_len += (self.line_size + 2) as u64;
+        Ok(())
+    }
+
+    /// asks the os to write its buffers and block till its done
+    pub(crate) fn flush_to_disk(&mut self) {
+        self.file_handle.inner_mut().sync_data().unwrap();
+        self.index.file.sync_data().unwrap();
+    }
+
+    pub fn read_to_data<D: Decoder2>(
+        &mut self,
+        start_byte: u64,
+        stop_byte: u64,
+        first_full_ts: Timestamp,
+        decoder: &mut D,
+        timestamps: &mut Vec<Timestamp>,
+        data: &mut Vec<D::Item>,
+    ) -> Result<(), Error> {
+        self.file_handle.read2(
+            decoder,
+            timestamps,
+            data,
+            start_byte,
+            stop_byte,
+            first_full_ts,
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct ByteSeries {
+    pub(crate) data: Data,
+
+    pub(crate) first_time_in_data: Option<Timestamp>,
+    pub(crate) last_time_in_data: Option<Timestamp>,
 }
 
 impl ByteSeries {
@@ -51,36 +197,10 @@ impl ByteSeries {
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
-        let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
-        let file = FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())?;
-        // TODO, check for zero pattern at the end
-        // a single u16 time of zeros
-        // may only exists with a full timestamp in front
-        let index = Index::new(name, header)?;
-        let data_size = file.len - file.data_offset;
-        let (file_handle, _) = file.split_off_header();
-        let mut file_handle = FileWithInlineMeta {
-            file_handle,
-            full_line_size,
-        };
-
-        let first_time = index.first_time_in_data();
-        let last_time = Self::load_last_time_in_data(&mut file_handle, &index, full_line_size);
-
         Ok(ByteSeries {
-            file_handle,
-            index, // add triple headers
-
-            line_size,
-            full_line_size, //+2 accounts for u16 timestamp
-            timestamp: 0,
-
-            first_time_in_data: first_time,
-            last_time_in_data: last_time,
-
-            //these are set during: set_read_start, set_read_end then read is
-            //bound by these points
-            data_size,
+            first_time_in_data: None,
+            last_time_in_data: None,
+            data: Data::new(name, line_size, header)?,
         })
     }
 
@@ -93,226 +213,62 @@ impl ByteSeries {
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
-        let full_line_size = line_size + 2; //+2 accounts for u16 timestamp
-        let file: FileWithHeader<H> = FileWithHeader::open_existing(
-            name.as_ref().with_extension("byteseries"),
-            full_line_size,
-        )?;
-        let data_size = file.len - file.data_offset;
-        let (mut file_handle, header) = file.split_off_header();
-        let index = match Index::open_existing(&name, &header) {
-            Ok(index) => index,
-            Err(_) => {
-                Index::restore_from_byteseries(&mut file_handle, line_size, name, header.clone())
-                    .map_err(Error::RestoringIndex)?
-            }
+        let (mut data, header) = Data::open_existing(name, line_size)?;
+
+        let bs = ByteSeries {
+            first_time_in_data: data.first_time(),
+            last_time_in_data: data.last_time(),
+            data,
         };
 
-        let mut file_handle = FileWithInlineMeta {
-            file_handle,
-            full_line_size,
-        };
-        let first_time = index.first_time_in_data();
-        let last_time = Self::load_last_time_in_data(&mut file_handle, &index, full_line_size);
-
-        Ok((
-            ByteSeries {
-                file_handle,
-                index, // add triple headers
-
-                line_size,
-                full_line_size, //+2 accounts for u16 timestamp
-                timestamp: 0,
-
-                first_time_in_data: first_time,
-                last_time_in_data: last_time,
-
-                //these are set during: set_read_start, set_read_end then read is
-                //bound by these points
-                data_size,
-            },
-            header,
-        ))
+        Ok((bs, header))
     }
 
-    pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
-        &mut self,
-        decoder: &'a mut (dyn Decoder<T> + 'a),
-    ) -> Result<(OffsetDateTime, Vec<T>), Error> {
-        let (time, data) = self.last_line_raw()?;
-        let data = decoder.decoded(&data);
-        Ok((time, data))
+    pub(crate) fn line_size(&self) -> usize {
+        self.data.line_size
     }
 
-    pub fn last_line_raw(&mut self) -> Result<(OffsetDateTime, Vec<u8>), Error> {
-        let (time, bytes) = self.decode_last_line()?;
-        let time = OffsetDateTime::from_unix_timestamp(time)
-            .expect("only current timestamps are written to file");
-        Ok((time, bytes))
-    }
-
-    fn load_last_time_in_data(
-        data: &mut FileWithInlineMeta<OffsetFile>,
-        header: &Index,
-        full_line_size: usize,
-    ) -> Option<i64> {
-        let mut buf = [0u8; 2]; //rewrite to use bufferd data
-        if data.seek(SeekFrom::End(-(full_line_size as i64))).is_ok() {
-            data.read_exact(&mut buf).unwrap();
-            let timestamp_low = LittleEndian::read_u16(&buf) as i64;
-            let timestamp_high = header.last_timestamp & !0b1_1111_1111_1111_1111;
-            let timestamp = timestamp_high | timestamp_low;
-            Some(timestamp)
-        } else {
-            tracing::warn!("file is empty");
-            None
-        }
-    }
-
-    /// Append the line and force a flush to disk.
-    /// When this returns all data is safely stored
-    pub fn append_flush(&mut self, time: OffsetDateTime, line: &[u8]) -> Result<(), Error> {
-        self.append_fast(time, line)?;
-        self.force_write_to_disk();
-        Ok(())
-    }
-
-    /// Append data to disk but do not flush, a crash can still lead to the data being lost
-    pub fn append_fast(&mut self, time: OffsetDateTime, line: &[u8]) -> Result<(), Error> {
+    pub fn push_line(&mut self, time: OffsetDateTime, line: impl AsRef<[u8]>) -> Result<(), Error> {
         //write 16 bit timestamp and then the line to file
-        let timestamp = self.time_to_line_timestamp(time);
-        self.add_inline_index_section_if_needed()?;
-        self.update_index_if_needed()?;
-
-        self.file_handle.write_all(&timestamp)?;
-        self.file_handle.write_all(&line[..self.line_size])?;
-        self.data_size += self.full_line_size as u64;
-
-        self.last_time_in_data = Some(time.unix_timestamp());
-        self.first_time_in_data.get_or_insert(time.unix_timestamp());
-        Ok(())
-    }
-
-    /// needs to be called before self.data_size is increased
-    /// adds a meta section if needed
-    fn add_inline_index_section_if_needed(&mut self) -> Result<(), Error> {
-        let new_timestamp_numb = self.timestamp / 2i64.pow(16);
-        if new_timestamp_numb > self.index.last_timestamp_numb {
-            let meta = self.timestamp.to_le_bytes();
-            let written = inline_meta::write_meta(&mut self.file_handle, meta, self.line_size)?;
-            self.data_size += written;
-        }
-        Ok(())
-    }
-
-    /// needs to be called before self.data_size is increased
-    fn update_index_if_needed(&mut self) -> Result<(), Error> {
-        let new_timestamp_numb = self.timestamp / 2i64.pow(16);
-        if new_timestamp_numb > self.index.last_timestamp_numb {
-            tracing::info!("updating file header");
-            let line_start = self.data_size;
-            self.index.update(self.timestamp, line_start)?;
-        }
-        Ok(())
-    }
-
-    /// asks the os to write its buffers out before
-    /// continuing
-    pub(crate) fn force_write_to_disk(&mut self) {
-        self.file_handle.inner_mut().sync_data().unwrap();
-        self.index.file.sync_data().unwrap();
-    }
-
-    fn time_to_line_timestamp(&mut self, time: OffsetDateTime) -> [u8; 2] {
         //for now no support for sign bit since data will always be after 0 (1970)
-        self.timestamp = time.unix_timestamp();
-        if self.timestamp < 0 {
-            panic!("dates before 1970 are not supported")
+        let ts = time.unix_timestamp() as Timestamp;
+        if ts <= self.last_time_in_data.unwrap_or(0) {
+            return Err(Error::NewLineBeforePrevious {
+                new: ts,
+                prev: self.last_time_in_data,
+            });
         }
-
-        //we store the timestamp in little endian Signed magnitude representation
-        //(least significant (lowest value) byte at lowest address)
-        //for the line timestamp we use only the 2 lower bytes
-        let mut line_timestamp = [0; 2];
-        LittleEndian::write_u16(&mut line_timestamp, self.timestamp as u16);
-        line_timestamp
+        self.data.push_data(ts, line.as_ref())?;
+        self.last_time_in_data = Some(ts);
+        self.first_time_in_data.get_or_insert(ts);
+        Ok(())
     }
 
-    pub(crate) fn get_timestamp<T>(&mut self, line: &[u8], pos: u64, full_ts: &mut FullTime) -> T
-    where
-        T: FromPrimitive,
-    {
-        //update full timestamp when needed
-        let next_full_timestamp_at = full_ts.next_pos.unwrap_or(u64::MAX);
-        if pos >= next_full_timestamp_at {
-            tracing::debug!(
-                "updating ts, pos: {:?}, next ts pos: {:?}",
-                pos,
-                full_ts.next_pos
-            );
-            //update current timestamp
-            full_ts.curr = full_ts.next.expect("if can not be true if next is None");
-
-            //set next timestamp and timestamp pos
-            //minimum in map greater then current timestamp
-            if let Some(next) = self.index.next_full_timestamp(full_ts.curr) {
-                full_ts.next = Some(next.timestamp);
-                full_ts.next_pos = Some(next.line_start);
-            } else {
-                //TODO handle edge case, last full timestamp
-                tracing::debug!(
-                    "loaded last timestamp in header, no next TS, current pos: {}",
-                    pos
-                );
-                full_ts.next = None;
-                full_ts.next_pos = None;
-            }
-        }
-        let timestamp_low = LittleEndian::read_u16(line) as u64;
-        let timestamp_high = (full_ts.curr as u64 >> 16) << 16;
-        let timestamp = timestamp_high | timestamp_low;
-
-        T::from_u64(timestamp).unwrap()
+    pub fn flush_to_disk(&mut self) {
+        self.data.flush_to_disk()
     }
-    pub(crate) fn read(
+
+    pub fn read_to_data<D: Decoder2>(
         &mut self,
-        buf: &mut [u8],
         start_byte: u64,
         stop_byte: u64,
-    ) -> Result<usize, Error> {
-        self.file_handle.seek(SeekFrom::Start(start_byte))?;
-        let nread = self.file_handle.read(buf)?;
-        let left = stop_byte + self.full_line_size as u64 - start_byte;
-        let nread = nread.min(left as usize);
-        let nread = nread - nread % self.full_line_size;
-        Ok(nread)
+        first_full_ts: Timestamp,
+        decoder: &mut D,
+        timestamps: &mut Vec<Timestamp>,
+        data: &mut Vec<D::Item>,
+    ) -> Result<(), Error> {
+        self.data.read_to_data(
+            start_byte,
+            stop_byte,
+            first_full_ts,
+            decoder,
+            timestamps,
+            data,
+        )
     }
+}
 
-    pub(crate) fn decode_last_line(&mut self) -> Result<(i64, Vec<u8>), Error> {
-        if self.data_size < self.full_line_size as u64 {
-            return Err(Error::NoData);
-        }
-
-        let start_byte = self.data_size - self.full_line_size as u64;
-        let stop_byte = self.data_size;
-
-        let mut full_line = vec![0; self.full_line_size];
-        let nread = self.read(&mut full_line, start_byte, stop_byte)?;
-
-        if nread < self.full_line_size {
-            return Err(Error::PartialLine);
-        }
-
-        full_line.remove(0);
-        full_line.remove(0);
-        let line = full_line;
-        let time = self.last_time_in_data.ok_or(Error::NoData)?;
-        Ok((time, line))
-    }
-
-    pub(crate) fn last_time_in_data(&self) -> Option<OffsetDateTime> {
-        self.last_time_in_data
-            .map(OffsetDateTime::from_unix_timestamp)
-            .map(|res| res.expect("only current timestamps are used"))
-    }
+pub trait Decoder2: core::fmt::Debug {
+    type Item: core::fmt::Debug + Clone;
+    fn decode_line(&mut self, line: &[u8]) -> Self::Item;
 }

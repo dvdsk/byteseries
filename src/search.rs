@@ -1,8 +1,7 @@
 use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Read, Seek, SeekFrom};
-use time::OffsetDateTime;
 
-use crate::data::FullTime;
+use crate::data::Timestamp;
 use crate::index::SearchBounds;
 use crate::ByteSeries;
 use crate::Error;
@@ -23,29 +22,29 @@ pub enum SeekError {
 
 #[derive(Debug)]
 pub struct TimeSeek {
-    pub(crate) start: u64,
-    pub(crate) stop: u64,
-    pub(crate) curr: u64,
-    pub(crate) full_time: FullTime,
+    /// position from start in bytes
+    pub start: u64,
+    /// position from start in bytes
+    pub stop: u64,
+    pub first_full_ts: Timestamp,
 }
 
 impl TimeSeek {
     pub fn new(
         series: &mut ByteSeries,
-        start: OffsetDateTime,
-        stop: OffsetDateTime,
+        start: Timestamp,
+        stop: Timestamp,
     ) -> Result<Self, Error> {
-        let (start, stop, full_time) = series.get_bounds(start, stop)?;
+        let (start, stop, first_full_ts) = series.get_bounds(start, stop)?;
 
         Ok(TimeSeek {
             start,
             stop,
-            curr: start,
-            full_time,
+            first_full_ts,
         })
     }
     pub fn lines(&self, series: &ByteSeries) -> u64 {
-        (self.stop - self.start) / (series.full_line_size as u64)
+        (self.stop - self.start) / (series.line_size() + 2) as u64
     }
 }
 
@@ -53,19 +52,17 @@ impl ByteSeries {
     ///returns the offset from the start of the file where the first line starts
     fn find_read_start(
         &mut self,
-        start_time: OffsetDateTime,
+        start_time: Timestamp,
         start: u64,
         stop: u64,
     ) -> Result<u64, SeekError> {
         //compare partial (16 bit) timestamps in between the bounds
         let mut buf = vec![0u8; (stop - start) as usize];
-        self.file_handle.seek(SeekFrom::Start(start))?;
-        self.file_handle.read_exact(&mut buf)?;
+        self.data.file_handle.seek(SeekFrom::Start(start))?;
+        self.data.file_handle.read_exact(&mut buf)?;
 
-        for line_start in (0..buf.len().saturating_sub(2)).step_by(self.full_line_size) {
-            if LittleEndian::read_u16(&buf[line_start..line_start + 2])
-                >= start_time.unix_timestamp() as u16
-            {
+        for line_start in (0..buf.len().saturating_sub(2)).step_by(self.line_size() + 2) {
+            if LittleEndian::read_u16(&buf[line_start..line_start + 2]) >= start_time as u16 {
                 tracing::debug!("setting start_byte from liniar search, pos: {}", line_start);
                 let start_byte = start + line_start as u64;
                 return Ok(start_byte);
@@ -76,33 +73,31 @@ impl ByteSeries {
         Ok(stop)
     }
 
+    /// returns start, stop and full timestamp for first line
     fn get_bounds(
         &mut self,
-        start_time: OffsetDateTime,
-        end_time: OffsetDateTime,
-    ) -> Result<(u64, u64, FullTime), SeekError> {
-        //check if the datafile isnt empty
-
-        if self.data_size == 0 {
+        start_time: Timestamp,
+        end_time: Timestamp,
+    ) -> Result<(u64, u64, Timestamp), SeekError> {
+        if self.data.data_len == 0 {
             return Err(SeekError::EmptyFile);
         }
-        if start_time.unix_timestamp() >= self.last_time_in_data.unwrap() {
+        if start_time >= self.last_time_in_data.unwrap() {
             return Err(SeekError::StartAfterData);
         }
-        if end_time.unix_timestamp() <= self.first_time_in_data.unwrap() {
+        if end_time <= self.first_time_in_data.unwrap() {
             return Err(SeekError::StopBeforeData);
         }
 
-        let (start_bound, stop_bound, full_time) = self
-            .index
-            .search_bounds(start_time.unix_timestamp(), end_time.unix_timestamp());
+        let (start_bound, stop_bound, full_time) =
+            self.data.index.search_bounds(start_time, end_time);
 
         //must be a solvable request
         let start_byte = match start_bound {
             SearchBounds::Found(pos) => pos,
             SearchBounds::Clipped => 0,
             SearchBounds::TillEnd(start) => {
-                let end = self.data_size;
+                let end = self.data.data_len;
                 self.find_read_start(start_time, start, end)?
             }
             SearchBounds::Window(start, stop) => self.find_read_start(start_time, start, stop)?,
@@ -111,7 +106,7 @@ impl ByteSeries {
         let stop_byte = match stop_bound {
             SearchBounds::Found(pos) => pos,
             SearchBounds::TillEnd(pos) => {
-                let end = self.data_size;
+                let end = self.data.data_len;
                 self.find_read_stop(end_time, pos, end)?
             }
             SearchBounds::Window(start, stop) => self.find_read_stop(end_time, start, stop)?,
@@ -124,24 +119,27 @@ impl ByteSeries {
     ///returns the offset from the start of the file where last line **stops**
     fn find_read_stop(
         &mut self,
-        end_time: OffsetDateTime,
+        end_time: Timestamp,
         start: u64,
         stop: u64,
     ) -> Result<u64, SeekError> {
         //compare partial (16 bit) timestamps in between these bounds
         let mut buf = vec![0u8; (stop - start) as usize];
-        self.file_handle.seek(SeekFrom::Start(start))?;
-        self.file_handle.read_exact(&mut buf)?;
+        self.data.file_handle.seek(SeekFrom::Start(start))?;
+        self.data.file_handle.read_exact(&mut buf)?;
 
-        for line_start in (0..buf.len() - self.full_line_size + 1)
+        for line_start in (0..buf.len() - self.line_size() + 2 + 1)
             .rev()
-            .step_by(self.full_line_size)
+            .step_by(self.line_size() + 2)
         {
-            if LittleEndian::read_u16(&buf[line_start..line_start + 2])
-                <= end_time.unix_timestamp() as u16
-            {
+            let ts_small: [u8; 2] = buf[line_start..line_start + 2]
+                .try_into()
+                .expect("slice is 2 long");
+            let ts_small = u16::from_le_bytes(ts_small);
+            // TODO not how this works anymore, needs prev full timestamp
+            if ts_small <= end_time as u16 {
                 let stop_byte = start + line_start as u64;
-                return Ok(stop_byte + self.full_line_size as u64);
+                return Ok(stop_byte + self.line_size() as u64);
             }
         }
         Ok(stop)

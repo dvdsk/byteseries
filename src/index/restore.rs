@@ -39,14 +39,12 @@ impl Index {
         let temp_path = name.as_ref().with_extension("byteseries_index.part");
         let index_file: FileWithHeader<H> = FileWithHeader::new(&temp_path, header)?;
         let entries = extract_entries(byteseries, line_size)?;
-        let last_timestamp = entries
-            .last()
-            .map(|Entry { timestamp, .. }| *timestamp)
-            .unwrap_or(0);
 
         let mut index = Self {
-            last_timestamp,
-            last_timestamp_numb: last_timestamp / (u16::MAX as i64),
+            last_timestamp: entries
+                .last()
+                .map(|Entry { timestamp, .. }| *timestamp)
+                .unwrap_or(0),
             file: index_file.split_off_header().0,
             entries: Vec::new(),
         };
@@ -97,7 +95,7 @@ pub(crate) fn extract_entries(
             meta(&buffer, line_size, overlap)
                 .into_iter()
                 .map(|(pos, timestamp)| Entry {
-                    timestamp: timestamp as i64,
+                    timestamp,
                     line_start: i * (chunk_size as u64) + pos as u64,
                 }),
         );
@@ -110,7 +108,7 @@ pub(crate) fn extract_entries(
         meta(&buffer, line_size, overlap)
             .into_iter()
             .map(|(pos, timestamp)| Entry {
-                timestamp: timestamp as i64,
+                timestamp,
                 line_start: data_len - left as u64 + pos as u64,
             }),
     );
@@ -128,7 +126,6 @@ pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, 
         if chunk[..2] != [0, 0] {
             continue;
         }
-        dbg!(idx);
 
         let Some((_, next_chunk)) = chunks.next() else {
             return res;
@@ -138,7 +135,7 @@ pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, 
         }
 
         let chunks = chunks.by_ref().map(|(_, chunk)| chunk);
-        let Some(meta) = read_meta(chunks, chunk, next_chunk, line_size) else {
+        let Some(meta) = read_meta(chunks, chunk, next_chunk) else {
             return res;
         };
         let index_of_meta = idx * (2 + line_size) - overlap;

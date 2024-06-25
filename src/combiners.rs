@@ -3,7 +3,7 @@ use std::default::Default;
 use std::fmt::Debug;
 
 pub trait Bin: Debug {
-    fn update_bin(&mut self, t: i64) -> Option<i64>;
+    fn update_bin(&mut self, t: Timestamp) -> Option<Timestamp>;
     fn binsize(&self) -> usize;
 }
 
@@ -11,7 +11,7 @@ pub trait Bin: Debug {
 pub struct SampleBin {
     binsize: usize,
     n: usize,
-    t_sum: i64,
+    t_sum: Timestamp,
 }
 impl SampleBin {
     pub fn new(binsize: usize) -> Self {
@@ -24,11 +24,11 @@ impl SampleBin {
 }
 
 impl Bin for SampleBin {
-    fn update_bin(&mut self, t: i64) -> Option<i64> {
+    fn update_bin(&mut self, t: Timestamp) -> Option<Timestamp> {
         self.n += 1;
         self.t_sum += t;
         if self.n >= self.binsize {
-            let t = self.t_sum / (self.binsize as i64);
+            let t = self.t_sum / (self.binsize as Timestamp);
             self.t_sum = 0;
             self.n = 0;
             Some(t)
@@ -43,20 +43,20 @@ impl Bin for SampleBin {
 
 #[derive(Debug)]
 pub struct TimeBin {
-    period: i64,
-    first: Option<i64>,
+    period: Timestamp,
+    first: Option<Timestamp>,
 }
 impl TimeBin {
     pub fn new(period: std::time::Duration) -> Self {
         Self {
-            period: period.as_secs() as i64,
+            period: period.as_secs() as Timestamp,
             first: None,
         }
     }
 }
 
 impl Bin for TimeBin {
-    fn update_bin(&mut self, t: i64) -> Option<i64> {
+    fn update_bin(&mut self, t: Timestamp) -> Option<i64> {
         if let Some(s) = self.first {
             if t - s > self.period {
                 Some(self.first.take().unwrap() + self.period / 2)
@@ -80,7 +80,7 @@ impl Bin for TimeBin {
 /// by simple combinators such as the MeanCombiner this allows
 /// to combine values and time for example to calculate the derivative
 pub trait SampleCombiner<T: Sized>: Debug {
-    fn process(&mut self, time: i64, values: Vec<T>) -> Option<(i64, Vec<T>)>;
+    fn process(&mut self, time: Timestamp, values: Vec<T>) -> Option<(i64, Vec<T>)>;
     fn binsize(&self) -> usize;
     fn binoffset(&self) -> usize {
         0
@@ -91,7 +91,7 @@ pub trait SampleCombiner<T: Sized>: Debug {
 #[derive(Debug, Clone, Default)]
 pub struct Empty {}
 impl<T: Debug + Clone + Sized> SampleCombiner<T> for Empty {
-    fn process(&mut self, t: i64, v: Vec<T>) -> Option<(i64, Vec<T>)> {
+    fn process(&mut self, t: Timestamp, v: Vec<T>) -> Option<(i64, Vec<T>)> {
         Some((t, v))
     }
     fn binsize(&self) -> usize {
@@ -120,7 +120,7 @@ impl<B> SampleCombiner<f32> for Mean<B>
 where
     B: Bin,
 {
-    fn process(&mut self, time: i64, mut values: Vec<f32>) -> Option<(i64, Vec<f32>)> {
+    fn process(&mut self, time: Timestamp, mut values: Vec<f32>) -> Option<(i64, Vec<f32>)> {
         self.v_sum
             .iter_mut()
             .zip(values.drain(..))
@@ -170,7 +170,7 @@ where
     A: SampleCombiner<f32>,
     B: SampleCombiner<f32>,
 {
-    fn process(&mut self, time: i64, values: Vec<f32>) -> Option<(i64, Vec<f32>)> {
+    fn process(&mut self, time: Timestamp, values: Vec<f32>) -> Option<(i64, Vec<f32>)> {
         if let Some((time, values)) = self.a.process(time, values) {
             if let Some((time, values)) = self.b.process(time, values) {
                 return Some((time, values));
@@ -193,10 +193,10 @@ where
 //minimum sample size is 2
 #[derive(Debug, Clone, Default)]
 pub struct Differentiate {
-    pair_1: Option<(i64, Vec<f32>)>,
+    pair_1: Option<(Timestamp, Vec<f32>)>,
 }
 impl SampleCombiner<f32> for Differentiate {
-    fn process(&mut self, t2: i64, v2: Vec<f32>) -> Option<(i64, Vec<f32>)> {
+    fn process(&mut self, t2: Timestamp, v2: Vec<f32>) -> Option<(i64, Vec<f32>)> {
         if self.pair_1.is_none() {
             self.pair_1 = Some((t2, v2));
             None

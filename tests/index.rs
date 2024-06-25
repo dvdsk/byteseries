@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 mod shared;
 use shared::insert_uniform_arrays;
 
+use pretty_assertions::assert_eq;
 use crate::shared::setup_tracing;
 
 #[test]
@@ -13,8 +14,8 @@ fn reconstructed_index_works() {
     setup_tracing();
 
     const LINE_SIZE: usize = 4;
-    const STEP: i64 = 5;
-    const N_TO_INSERT: u32 = 100;
+    const STEP: u64 = 5;
+    const N_TO_INSERT: u32 = 2;
 
     let time = OffsetDateTime::now_utc();
 

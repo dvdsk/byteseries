@@ -5,6 +5,10 @@ use std::iter;
 use itertools::Itertools;
 use tracing::instrument;
 
+use crate::Error;
+
+use super::{Decoder2, Timestamp};
+
 #[derive(Debug)]
 pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
     pub(crate) file_handle: F,
@@ -52,9 +56,60 @@ fn shift_over_meta_lines(buf: &mut [u8], meta_lines: Vec<usize>, full_line_size:
     shifted
 }
 
-impl<F: fmt::Debug> FileWithInlineMeta<F> {
+fn decode<D: Decoder2>(decoder: &mut D, line: &[u8]) -> (Timestamp, D::Item) {
+    let small_ts: [u8; 2] = line[0..2].try_into().expect("line size is at least 2");
+    let small_ts = u16::from_le_bytes(small_ts).into();
+    let item = decoder.decode_line(&line[2..]);
+    (small_ts, item)
+}
+
+impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
     pub(crate) fn inner_mut(&mut self) -> &mut F {
         &mut self.file_handle
+    }
+
+    pub(crate) fn read2<D: Decoder2>(
+        &mut self,
+        decoder: &mut D,
+        timestamps: &mut Vec<Timestamp>,
+        data: &mut Vec<D::Item>,
+        start_byte: u64,
+        stop_byte: u64,
+        first_full_ts: Timestamp,
+    ) -> Result<(), Error> {
+        let n_lines = (stop_byte - start_byte) / self.full_line_size as u64;
+        let mut buf = vec![0; n_lines as usize];
+        self.file_handle.seek(SeekFrom::Start(start_byte))?;
+        self.file_handle.read_exact(&mut buf)?;
+
+        let mut full_ts = first_full_ts;
+        let mut lines = buf.chunks_exact(self.full_line_size);
+        loop {
+            let Some(line) = lines.next() else {
+                return Ok(());
+            };
+            if line[..2] != [0, 0] {
+                let (small_ts, item) = decode(decoder, line);
+                timestamps.push(small_ts + full_ts);
+                data.push(item);
+                continue;
+            }
+
+            let Some(next_line) = lines.next() else {
+                return Ok(());
+            };
+            if next_line[..2] != [0, 0] {
+                let (small_ts, item) = decode(decoder, next_line);
+                timestamps.push(small_ts + full_ts);
+                data.push(item);
+                continue;
+            }
+
+            let Some(meta) = read_meta(lines.by_ref(), line, next_line) else {
+                return Ok(());
+            };
+            full_ts = u64::from_le_bytes(meta);
+        }
     }
 }
 
@@ -154,10 +209,9 @@ pub(crate) fn read_meta<'a>(
     mut chunks: impl Iterator<Item = &'a [u8]>,
     first_chunk: &'a [u8],
     next_chunk: &'a [u8],
-    line_size: usize,
 ) -> Option<[u8; 8]> {
     let mut result = [0u8; 8];
-    match line_size {
+    match first_chunk.len() - 2 {
         0 => {
             result[0..2].copy_from_slice(&chunks.next()?);
             result[2..4].copy_from_slice(&chunks.next()?);
