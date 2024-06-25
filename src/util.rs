@@ -26,7 +26,6 @@ pub enum OpenError {
 
 pub(crate) struct FileWithHeader<T> {
     pub(crate) handle: File,
-    pub(crate) len: u64,
     pub(crate) user_header: T,
     /// data starts at this offset from the start
     pub(crate) data_offset: u64,
@@ -76,7 +75,6 @@ where
             + user_header_len as u64;
         return Ok(FileWithHeader {
             handle: file,
-            len,
             user_header,
             data_offset: len,
         });
@@ -85,7 +83,7 @@ where
     #[instrument(fields(file_len, user_header_len, header_len))]
     pub fn open_existing(
         path: PathBuf,
-        full_line_size: usize,
+        line_size: usize,
     ) -> Result<FileWithHeader<H>, OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
@@ -113,7 +111,7 @@ where
             .record("header_len", &header_len);
 
         let len_without_header = metadata.len() - header_len as u64;
-        let rest = len_without_header % (full_line_size as u64);
+        let rest = len_without_header % (line_size as u64);
         if rest > 0 {
             tracing::warn!(
                 "Last write incomplete, truncating to largest multiple of the line size"
@@ -123,7 +121,6 @@ where
 
         Ok(FileWithHeader {
             handle: file,
-            len: metadata.len(),
             data_offset: LINE_ENDS.len() as u64
                 + mem::size_of_val(&user_header_len) as u64
                 + user_header_len as u64,

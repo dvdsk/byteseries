@@ -1,4 +1,3 @@
-use byteorder::{ByteOrder, LittleEndian};
 use core::fmt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -32,12 +31,6 @@ pub enum SearchBounds {
     Clipped,
     TillEnd(u64),
     Window(u64, u64),
-}
-
-impl Drop for Index {
-    fn drop(&mut self) {
-        dbg!(&self.entries);
-    }
 }
 
 impl Index {
@@ -77,36 +70,37 @@ impl Index {
         file.handle
             .seek(std::io::SeekFrom::Start(file.data_offset))?;
         file.handle.read_to_end(&mut bytes)?;
-        let mut numbers = vec![0u64; bytes.len() / 8];
-        LittleEndian::read_u64_into(&bytes, numbers.as_mut_slice());
 
-        let mut data = Vec::new();
-        for i in (0..numbers.len()).step_by(2) {
-            data.push(Entry {
-                timestamp: numbers[i] as Timestamp,
-                line_start: numbers[i + 1],
-            });
-        }
+        let entries: Vec<_> = bytes
+            .chunks_exact(16)
+            .map(|line| {
+                let timestamp: [u8; 8] = line[0..8].try_into().expect("line is 2*8 bytes");
+                let timestamp = u64::from_le_bytes(timestamp);
+                let line_start: [u8; 8] = line[8..].try_into().expect("line is 2*8 bytes");
+                let line_start = u64::from_le_bytes(line_start);
+                Entry {
+                    timestamp,
+                    line_start,
+                }
+            })
+            .collect();
 
         Ok(Index {
             file: file.split_off_header().0,
-            last_timestamp: data
+            last_timestamp: entries
                 .last()
                 .map(|Entry { timestamp, .. }| timestamp)
                 .copied()
                 .unwrap_or(0),
-            entries: data,
+            entries,
         })
     }
+
+    #[instrument(level = "trace", skip(self), ret)]
     pub fn update(&mut self, timestamp: u64, line_start: u64) -> Result<(), std::io::Error> {
         let ts = timestamp as u64;
         self.file.write_all(&ts.to_le_bytes())?;
         self.file.write_all(&line_start.to_le_bytes())?;
-        tracing::trace!(
-            "wrote headerline: {ts}, {line_start} as line: {:?} {:?}",
-            ts.to_le_bytes(),
-            line_start.to_le_bytes()
-        );
 
         self.entries.push(Entry {
             timestamp,
@@ -116,7 +110,11 @@ impl Index {
         Ok(())
     }
 
-    pub fn search_bounds(&self, start: Timestamp, stop: Timestamp) -> (SearchBounds, SearchBounds, Timestamp) {
+    pub fn search_bounds(
+        &self,
+        start: Timestamp,
+        stop: Timestamp,
+    ) -> (SearchBounds, SearchBounds, Timestamp) {
         let idx = self.entries.binary_search_by_key(&start, |e| e.timestamp);
         let (start_bound, full_time) = match idx {
             Ok(i) => (SearchBounds::Found(self.entries[i].line_start), start),

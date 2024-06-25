@@ -29,7 +29,7 @@ impl Index {
     #[instrument]
     pub fn restore_from_byteseries<H>(
         byteseries: &mut OffsetFile,
-        line_size: usize,
+        payload_size: usize,
         name: impl AsRef<Path> + fmt::Debug,
         header: H,
     ) -> Result<Self, Error>
@@ -38,7 +38,7 @@ impl Index {
     {
         let temp_path = name.as_ref().with_extension("byteseries_index.part");
         let index_file: FileWithHeader<H> = FileWithHeader::new(&temp_path, header)?;
-        let entries = extract_entries(byteseries, line_size)?;
+        let entries = extract_entries(byteseries, payload_size)?;
 
         let mut index = Self {
             last_timestamp: entries
@@ -75,15 +75,15 @@ pub enum ExtractingTsError {
 
 pub(crate) fn extract_entries(
     file: &mut OffsetFile,
-    line_size: usize,
+    payload_size: usize,
 ) -> Result<Vec<Entry>, ExtractingTsError> {
     let mut entries = Vec::new();
 
     let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
-    let chunk_size = 16384usize.next_multiple_of(line_size);
+    let chunk_size = 16384usize.next_multiple_of(payload_size);
 
     // max size of the metadata section.
-    let overlap = 5 * (line_size + 2);
+    let overlap = 5 * (payload_size + 2);
 
     // do not init with zero or the initially empty overlap
     // will be seen as a full timestamp
@@ -92,7 +92,7 @@ pub(crate) fn extract_entries(
         file.read_exact(&mut buffer[overlap..])
             .map_err(ExtractingTsError::ReadChunk)?;
         entries.extend(
-            meta(&buffer, line_size, overlap)
+            meta(&buffer, payload_size, overlap)
                 .into_iter()
                 .map(|(pos, timestamp)| Entry {
                     timestamp,
@@ -105,7 +105,7 @@ pub(crate) fn extract_entries(
     file.read_exact(&mut buffer[overlap..overlap + left])
         .map_err(ExtractingTsError::ReadFinalChunk)?;
     entries.extend(
-        meta(&buffer, line_size, overlap)
+        meta(&buffer, payload_size, overlap)
             .into_iter()
             .map(|(pos, timestamp)| Entry {
                 timestamp,
@@ -116,8 +116,8 @@ pub(crate) fn extract_entries(
     Ok(entries)
 }
 
-pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, u64)> {
-    let mut chunks = buf.chunks_exact(2 + line_size).enumerate();
+pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usize, u64)> {
+    let mut chunks = buf.chunks_exact(2 + payload_size).enumerate();
     let mut res = Vec::new();
     loop {
         let Some((idx, chunk)) = chunks.next() else {
@@ -138,8 +138,8 @@ pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, 
         let Some(meta) = read_meta(chunks, chunk, next_chunk) else {
             return res;
         };
-        let index_of_meta = idx * (2 + line_size) - overlap;
-        let index_of_line = index_of_meta + 2 * (2 + line_size);
+        let index_of_meta = idx * (2 + payload_size) - overlap;
+        let index_of_line = index_of_meta + 2 * (2 + payload_size);
         let ts = u64::from_le_bytes(meta);
         res.push((index_of_line, ts));
     }
@@ -151,10 +151,10 @@ fn read_timestamp<'a>(
     mut chunks: impl Iterator<Item = &'a [u8]>,
     first_chunk: &'a [u8],
     next_chunk: &'a [u8],
-    line_size: usize,
+    payload_size: usize,
 ) -> Option<u64> {
     let mut result = 0u64.to_le_bytes();
-    match line_size {
+    match payload_size {
         0 => {
             result[0..2].copy_from_slice(&chunks.next()?);
             result[2..4].copy_from_slice(&chunks.next()?);

@@ -1,4 +1,3 @@
-use byteorder::{ByteOrder, LittleEndian};
 use std::io::{Read, Seek, SeekFrom};
 
 use crate::data::Timestamp;
@@ -30,11 +29,7 @@ pub struct TimeSeek {
 }
 
 impl TimeSeek {
-    pub fn new(
-        series: &mut ByteSeries,
-        start: Timestamp,
-        stop: Timestamp,
-    ) -> Result<Self, Error> {
+    pub fn new(series: &mut ByteSeries, start: Timestamp, stop: Timestamp) -> Result<Self, Error> {
         let (start, stop, first_full_ts) = series.get_bounds(start, stop)?;
 
         Ok(TimeSeek {
@@ -44,7 +39,7 @@ impl TimeSeek {
         })
     }
     pub fn lines(&self, series: &ByteSeries) -> u64 {
-        (self.stop - self.start) / (series.line_size() + 2) as u64
+        (self.stop - self.start) / (series.payload_size() + 2) as u64
     }
 }
 
@@ -56,21 +51,28 @@ impl ByteSeries {
         start: u64,
         stop: u64,
     ) -> Result<u64, SeekError> {
+        assert!(stop >= start + 2);
+
         //compare partial (16 bit) timestamps in between the bounds
         let mut buf = vec![0u8; (stop - start) as usize];
         self.data.file_handle.seek(SeekFrom::Start(start))?;
         self.data.file_handle.read_exact(&mut buf)?;
 
-        for line_start in (0..buf.len().saturating_sub(2)).step_by(self.line_size() + 2) {
-            if LittleEndian::read_u16(&buf[line_start..line_start + 2]) >= start_time as u16 {
-                tracing::debug!("setting start_byte from liniar search, pos: {}", line_start);
-                let start_byte = start + line_start as u64;
-                return Ok(start_byte);
-            }
+        if let Some(start_line) = buf
+            .chunks_exact(self.payload_size() + 2)
+            .map(|line| {
+                line[0..2]
+                    .try_into()
+                    .expect("start and stop at least 2 apart")
+            })
+            .map(u16::from_le_bytes)
+            .position(|line_ts| line_ts > start_time as u16)
+        {
+            let start_byte = start + start_line as u64 * (self.payload_size() + 2) as u64;
+            Ok(start_byte)
+        } else {
+            Ok(stop)
         }
-
-        //no data more recent then start time within bounds, return location of most recent data
-        Ok(stop)
     }
 
     /// returns start, stop and full timestamp for first line
@@ -128,20 +130,16 @@ impl ByteSeries {
         self.data.file_handle.seek(SeekFrom::Start(start))?;
         self.data.file_handle.read_exact(&mut buf)?;
 
-        for line_start in (0..buf.len() - self.line_size() + 2 + 1)
-            .rev()
-            .step_by(self.line_size() + 2)
+        if let Some(stop_line) = buf
+            .chunks_exact(self.payload_size() + 2)
+            .map(|line| line[..2].try_into().expect("chunks are at least 2 long"))
+            .map(u16::from_le_bytes)
+            .rposition(|ts_small| ts_small <= end_time as u16)
         {
-            let ts_small: [u8; 2] = buf[line_start..line_start + 2]
-                .try_into()
-                .expect("slice is 2 long");
-            let ts_small = u16::from_le_bytes(ts_small);
-            // TODO not how this works anymore, needs prev full timestamp
-            if ts_small <= end_time as u16 {
-                let stop_byte = start + line_start as u64;
-                return Ok(stop_byte + self.line_size() as u64);
-            }
+            let stop_byte = start + stop_line as u64 * (self.payload_size() + 2) as u64;
+            Ok(stop_byte)
+        } else {
+            Ok(stop)
         }
-        Ok(stop)
     }
 }

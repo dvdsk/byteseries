@@ -10,7 +10,7 @@ use shared::setup_tracing;
 struct TsDecoder;
 
 
-impl byteseries::Decoder2 for TsDecoder {
+impl byteseries::Decoder for TsDecoder {
     type Item = Timestamp;
 
     fn decode_line(&mut self, line: &[u8]) -> Self::Item {

@@ -7,28 +7,28 @@ use tracing::instrument;
 
 use crate::Error;
 
-use super::{Decoder2, Timestamp};
+use super::{Decoder, Timestamp};
 
 #[derive(Debug)]
 pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
     pub(crate) file_handle: F,
-    pub(crate) full_line_size: usize,
+    pub(crate) line_size: usize,
 }
 
-pub(crate) fn meta_lines_indices(buf: &[u8], full_line_size: usize) -> Vec<usize> {
-    buf.chunks_exact(full_line_size)
+pub(crate) fn meta_lines_indices(buf: &[u8], line_size: usize) -> Vec<usize> {
+    buf.chunks_exact(line_size)
         .enumerate()
         .tuple_windows::<(_, _)>()
         .filter(|((_, line_a), _)| line_a[0..2] == [0, 0])
         .filter(|(_, (_, line_b))| line_b[0..2] == [0, 0])
         .map(|((line_numb, _), (_, _))| line_numb)
-        .map(|line| line * full_line_size)
+        .map(|line| line * line_size)
         .collect()
 }
 
-pub(crate) fn lines_per_metainfo(line_size: usize) -> usize {
+pub(crate) fn lines_per_metainfo(payload_size: usize) -> usize {
     let base_lines = 2; // needed to recognise meta section
-    let extra_lines_needed = match line_size {
+    let extra_lines_needed = match payload_size {
         0 => 2,
         1 => 2,
         2 => 1,
@@ -38,9 +38,9 @@ pub(crate) fn lines_per_metainfo(line_size: usize) -> usize {
     base_lines + extra_lines_needed
 }
 
-fn shift_over_meta_lines(buf: &mut [u8], meta_lines: Vec<usize>, full_line_size: usize) -> usize {
-    let n_meta_lines = lines_per_metainfo(full_line_size - 2);
-    let n_meta_bytes = n_meta_lines * full_line_size;
+fn shift_over_meta_lines(buf: &mut [u8], meta_lines: Vec<usize>, line_size: usize) -> usize {
+    let n_meta_lines = lines_per_metainfo(line_size - 2);
+    let n_meta_bytes = n_meta_lines * line_size;
     let mut shifted = 0;
     let total_to_shift = meta_lines.len() * n_meta_bytes;
     for (start, end) in meta_lines
@@ -56,7 +56,7 @@ fn shift_over_meta_lines(buf: &mut [u8], meta_lines: Vec<usize>, full_line_size:
     shifted
 }
 
-fn decode<D: Decoder2>(decoder: &mut D, line: &[u8]) -> (Timestamp, D::Item) {
+fn decode<D: Decoder>(decoder: &mut D, line: &[u8]) -> (Timestamp, D::Item) {
     let small_ts: [u8; 2] = line[0..2].try_into().expect("line size is at least 2");
     let small_ts = u16::from_le_bytes(small_ts).into();
     let item = decoder.decode_line(&line[2..]);
@@ -68,7 +68,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         &mut self.file_handle
     }
 
-    pub(crate) fn read2<D: Decoder2>(
+    pub(crate) fn read2<D: Decoder>(
         &mut self,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
@@ -77,13 +77,13 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         stop_byte: u64,
         first_full_ts: Timestamp,
     ) -> Result<(), Error> {
-        let n_lines = (stop_byte - start_byte) / self.full_line_size as u64;
+        let n_lines = (stop_byte - start_byte) / self.line_size as u64;
         let mut buf = vec![0; n_lines as usize];
         self.file_handle.seek(SeekFrom::Start(start_byte))?;
         self.file_handle.read_exact(&mut buf)?;
 
         let mut full_ts = first_full_ts;
-        let mut lines = buf.chunks_exact(self.full_line_size);
+        let mut lines = buf.chunks_exact(self.line_size);
         loop {
             let Some(line) = lines.next() else {
                 return Ok(());
@@ -124,8 +124,8 @@ impl<F: Read + fmt::Debug> Read for FileWithInlineMeta<F> {
                 return Ok(0);
             }
 
-            let meta_lines = meta_lines_indices(read, self.full_line_size);
-            let shifted = shift_over_meta_lines(&mut read, meta_lines, self.full_line_size);
+            let meta_lines = meta_lines_indices(read, self.line_size);
+            let shifted = shift_over_meta_lines(&mut read, meta_lines, self.line_size);
 
             read_ignoring_meta = n_read - shifted;
         }
@@ -158,11 +158,11 @@ impl<F: Seek + fmt::Debug> Seek for FileWithInlineMeta<F> {
 pub(crate) fn write_meta(
     file_handle: &mut impl Write,
     meta: [u8; 8],
-    line_size: usize,
+    payload_size: usize,
 ) -> std::io::Result<u64> {
     tracing::info!("inserting full timestamp through meta lines");
     let t = meta;
-    let lines = match line_size {
+    let lines = match payload_size {
         0 => {
             file_handle.write_all(&[0, 0])?;
             file_handle.write_all(&[0, 0])?;
@@ -192,7 +192,7 @@ pub(crate) fn write_meta(
             3
         }
         4.. => {
-            let mut line = vec![0u8; line_size + 2];
+            let mut line = vec![0u8; payload_size + 2];
             line[2..6].copy_from_slice(&[t[0], t[1], t[2], t[3]]);
             file_handle.write_all(&line)?;
             line[2..6].copy_from_slice(&[t[4], t[5], t[6], t[7]]);
@@ -200,7 +200,7 @@ pub(crate) fn write_meta(
             2
         }
     };
-    Ok(lines * (line_size + 2) as u64)
+    Ok(lines * (payload_size + 2) as u64)
 }
 
 /// returns None if not enough data was left to decode a u64
@@ -249,8 +249,8 @@ mod test {
     use std::io::Read;
 
     use super::*;
-    const FULL_LINE_SIZE: usize = 6;
-    const TWO_ZERO_LINES: [u8; 2 * FULL_LINE_SIZE] = [0u8; 2 * FULL_LINE_SIZE];
+    const LINE_SIZE: usize = 6;
+    const TWO_ZERO_LINES: [u8; 2 * LINE_SIZE] = [0u8; 2 * LINE_SIZE];
 
     fn data_lines<const N: usize>(n: usize) -> Vec<u8> {
         assert!(N >= 2);
@@ -270,54 +270,54 @@ mod test {
     fn meta_section_at_start() {
         let n_data_lines = 5;
         let mut lines = TWO_ZERO_LINES.to_vec();
-        lines.extend_from_slice(&data_lines::<FULL_LINE_SIZE>(n_data_lines));
+        lines.extend_from_slice(&data_lines::<LINE_SIZE>(n_data_lines));
 
         let file = Cursor::new(lines);
         let mut file = FileWithInlineMeta {
             file_handle: file,
-            full_line_size: FULL_LINE_SIZE,
+            line_size: LINE_SIZE,
         };
 
         let mut buf = vec![0u8; 100];
         let n_read = file.read(&mut buf).unwrap();
         let read = &buf[0..n_read];
-        assert_eq!(read, &data_lines::<FULL_LINE_SIZE>(n_data_lines))
+        assert_eq!(read, &data_lines::<LINE_SIZE>(n_data_lines))
     }
 
     #[test]
     fn meta_section_at_end() {
         let n_data_lines = 5;
-        let mut lines = data_lines::<FULL_LINE_SIZE>(n_data_lines);
+        let mut lines = data_lines::<LINE_SIZE>(n_data_lines);
         lines.extend_from_slice(&TWO_ZERO_LINES);
 
         let file = Cursor::new(lines);
         let mut file = FileWithInlineMeta {
             file_handle: file,
-            full_line_size: FULL_LINE_SIZE,
+            line_size: LINE_SIZE,
         };
 
         let mut buf = vec![0u8; 100];
         let n_read = file.read(&mut buf).unwrap();
         let read = &buf[0..n_read];
-        assert_eq!(read, &data_lines::<FULL_LINE_SIZE>(n_data_lines))
+        assert_eq!(read, &data_lines::<LINE_SIZE>(n_data_lines))
     }
 
     #[test]
     fn meta_sections_around() {
         let n_data_lines = 2;
         let mut lines = TWO_ZERO_LINES.to_vec();
-        lines.extend_from_slice(&data_lines::<FULL_LINE_SIZE>(n_data_lines));
+        lines.extend_from_slice(&data_lines::<LINE_SIZE>(n_data_lines));
         lines.extend_from_slice(&TWO_ZERO_LINES);
 
         let file = Cursor::new(lines);
         let mut file = FileWithInlineMeta {
             file_handle: file,
-            full_line_size: FULL_LINE_SIZE,
+            line_size: LINE_SIZE,
         };
 
         let mut buf = vec![0u8; 100];
         let n_read = file.read(&mut buf).unwrap();
         let read = &buf[0..n_read];
-        assert_eq!(read, &data_lines::<FULL_LINE_SIZE>(n_data_lines))
+        assert_eq!(read, &data_lines::<LINE_SIZE>(n_data_lines))
     }
 }

@@ -10,9 +10,9 @@ type Timestamp = u64;
 
 #[test]
 fn beyond_range() {
-    const LINE_SIZE: usize = 8;
-    const STEP: u64 = 5;
-    const N_TO_INSERT: u32 = 100;
+    const PAYLOAD_SIZE: usize = 8;
+    const STEP: u64 = 5000;
+    const N_TO_INSERT: u32 = 1000;
     let start_read_inlines = N_TO_INSERT as u64 + 1;
     let read_length_inlines = 10;
 
@@ -23,9 +23,9 @@ fn beyond_range() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut data = ByteSeries::new(test_path, LINE_SIZE, ()).unwrap();
+    let mut data = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
 
-    insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, LINE_SIZE, time);
+    insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, PAYLOAD_SIZE, time);
 
     let t1 = timestamp + start_read_inlines * STEP;
     let t2 = timestamp + (start_read_inlines + read_length_inlines) * STEP;

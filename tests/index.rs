@@ -13,7 +13,7 @@ use crate::shared::setup_tracing;
 fn reconstructed_index_works() {
     setup_tracing();
 
-    const LINE_SIZE: usize = 4;
+    const PAYLOAD_SIZE: usize = 4;
     const STEP: u64 = 5;
     const N_TO_INSERT: u32 = 2;
 
@@ -21,14 +21,14 @@ fn reconstructed_index_works() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append");
-    let mut series: ByteSeries = ByteSeries::new(&test_path, LINE_SIZE, ()).unwrap();
-    insert_uniform_arrays(&mut series, N_TO_INSERT, STEP, LINE_SIZE, time);
+    let mut series: ByteSeries = ByteSeries::new(&test_path, PAYLOAD_SIZE, ()).unwrap();
+    insert_uniform_arrays(&mut series, N_TO_INSERT, STEP, PAYLOAD_SIZE, time);
 
     let index_path = test_path.with_extension("byteseries_index");
     let created_index = fs::read(&index_path).unwrap();
     fs::remove_file(&index_path).unwrap();
 
-    let _: (ByteSeries, ()) = ByteSeries::open_existing(&test_path, LINE_SIZE).unwrap();
+    let _: (ByteSeries, ()) = ByteSeries::open_existing(&test_path, PAYLOAD_SIZE).unwrap();
     let reconstructed_index = fs::read(&index_path).unwrap();
 
     assert_eq!(created_index, reconstructed_index);

@@ -20,14 +20,19 @@ pub struct Data {
     pub(crate) file_handle: FileWithInlineMeta<OffsetFile>,
     pub(crate) index: Index,
 
-    line_size: usize,
+    payload_size: usize,
     /// current length of the data file in bytes
     pub(crate) data_len: u64,
 }
 
+pub trait Decoder: core::fmt::Debug {
+    type Item: core::fmt::Debug + Clone;
+    fn decode_line(&mut self, line: &[u8]) -> Self::Item;
+}
+
 #[derive(Debug)]
 struct EmptyDecoder;
-impl Decoder2 for EmptyDecoder {
+impl Decoder for EmptyDecoder {
     type Item = ();
     fn decode_line(&mut self, _: &[u8]) -> Self::Item {
         ()
@@ -39,7 +44,7 @@ pub type Timestamp = u64;
 impl Data {
     pub fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
-        line_size: usize,
+        payload_size: usize,
         header: H,
     ) -> Result<Self, Error>
     where
@@ -51,12 +56,12 @@ impl Data {
         let data_len = file_handle.data_len()?;
         let file_handle = FileWithInlineMeta {
             file_handle,
-            full_line_size: line_size + 2,
+            line_size: payload_size + 2,
         };
         Ok(Self {
             file_handle,
             index,
-            line_size,
+            payload_size,
             data_len,
         })
     }
@@ -64,7 +69,7 @@ impl Data {
     #[instrument]
     pub fn open_existing<H>(
         name: impl AsRef<Path> + fmt::Debug,
-        line_size: usize,
+        payload_size: usize,
     ) -> Result<(Data, H), Error>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
@@ -74,13 +79,13 @@ impl Data {
         // may only exists with a full timestamp in front
         let file: FileWithHeader<H> = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries"),
-            line_size + 2,
+            payload_size + 2,
         )?;
         let (mut file_handle, header) = file.split_off_header();
         let index = match Index::open_existing(&name, &header) {
             Ok(index) => index,
             Err(_) => {
-                Index::restore_from_byteseries(&mut file_handle, line_size, name, header.clone())
+                Index::restore_from_byteseries(&mut file_handle, payload_size, name, header.clone())
                     .map_err(Error::RestoringIndex)?
             }
         };
@@ -88,12 +93,12 @@ impl Data {
         let data_len = file_handle.data_len()?;
         let file_handle = FileWithInlineMeta {
             file_handle,
-            full_line_size: line_size + 2,
+            line_size: payload_size + 2,
         };
         let data = Self {
             file_handle,
             index,
-            line_size,
+            payload_size,
             data_len,
         };
         Ok((data, header))
@@ -101,9 +106,9 @@ impl Data {
 
     pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
-        decoder: &mut impl Decoder2<Item = T>,
+        decoder: &mut impl Decoder<Item = T>,
     ) -> Result<(Timestamp, T), Error> {
-        let start = self.data_len - (self.line_size + 2) as u64;
+        let start = self.data_len - (self.payload_size + 2) as u64;
         let end = self.data_len;
 
         let mut timestamps = Vec::new();
@@ -141,15 +146,15 @@ impl Data {
             small_ts
         } else {
             let meta = ts.to_le_bytes();
-            let written = write_meta(&mut self.file_handle, meta, self.line_size)?;
+            let written = write_meta(&mut self.file_handle, meta, self.payload_size)?;
             self.data_len += written;
             self.index.update(ts, self.data_len)?;
             0
         };
 
         self.file_handle.write_all(&small_ts.to_le_bytes())?;
-        self.file_handle.write_all(&line[..self.line_size])?;
-        self.data_len += (self.line_size + 2) as u64;
+        self.file_handle.write_all(&line[..self.payload_size])?;
+        self.data_len += (self.payload_size + 2) as u64;
         Ok(())
     }
 
@@ -159,7 +164,7 @@ impl Data {
         self.index.file.sync_data().unwrap();
     }
 
-    pub fn read_to_data<D: Decoder2>(
+    pub fn read_to_data<D: Decoder>(
         &mut self,
         start_byte: u64,
         stop_byte: u64,
@@ -191,7 +196,7 @@ impl ByteSeries {
     #[instrument]
     pub fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
-        line_size: usize,
+        payload_size: usize,
         header: H,
     ) -> Result<ByteSeries, Error>
     where
@@ -200,7 +205,7 @@ impl ByteSeries {
         Ok(ByteSeries {
             first_time_in_data: None,
             last_time_in_data: None,
-            data: Data::new(name, line_size, header)?,
+            data: Data::new(name, payload_size, header)?,
         })
     }
 
@@ -208,12 +213,12 @@ impl ByteSeries {
     #[instrument]
     pub fn open_existing<H>(
         name: impl AsRef<Path> + fmt::Debug,
-        line_size: usize,
+        payload_size: usize,
     ) -> Result<(ByteSeries, H), Error>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
-        let (mut data, header) = Data::open_existing(name, line_size)?;
+        let (mut data, header) = Data::open_existing(name, payload_size)?;
 
         let bs = ByteSeries {
             first_time_in_data: data.first_time(),
@@ -224,8 +229,8 @@ impl ByteSeries {
         Ok((bs, header))
     }
 
-    pub(crate) fn line_size(&self) -> usize {
-        self.data.line_size
+    pub(crate) fn payload_size(&self) -> usize {
+        self.data.payload_size
     }
 
     pub fn push_line(&mut self, time: OffsetDateTime, line: impl AsRef<[u8]>) -> Result<(), Error> {
@@ -248,7 +253,7 @@ impl ByteSeries {
         self.data.flush_to_disk()
     }
 
-    pub fn read_to_data<D: Decoder2>(
+    pub fn read_to_data<D: Decoder>(
         &mut self,
         start_byte: u64,
         stop_byte: u64,
@@ -266,9 +271,4 @@ impl ByteSeries {
             data,
         )
     }
-}
-
-pub trait Decoder2: core::fmt::Debug {
-    type Item: core::fmt::Debug + Clone;
-    fn decode_line(&mut self, line: &[u8]) -> Self::Item;
 }

@@ -1,7 +1,9 @@
 #![allow(dead_code, unused_imports)]
-use byteorder::{ByteOrder, NativeEndian, WriteBytesExt};
+use std::io::Write;
+
 use byteseries::ByteSeries;
 use fxhash::hash64;
+use num_traits::ToBytes;
 use time::OffsetDateTime;
 
 pub type Timestamp = u64;
@@ -25,38 +27,17 @@ pub fn insert_uniform_arrays(
     data: &mut ByteSeries,
     n_to_insert: u32,
     _step: u64,
-    line_size: usize,
+    payload_size: usize,
     time: OffsetDateTime,
 ) {
     let mut timestamp = time.unix_timestamp();
     for i in 0..n_to_insert {
-        let buffer = vec![i as u8; line_size];
+        let buffer = vec![i as u8; payload_size];
 
         let dt = OffsetDateTime::from_unix_timestamp(timestamp)
             .expect("unix timestamps are always in range");
         data.push_line(dt, buffer).unwrap();
         timestamp += 5;
-    }
-}
-
-pub fn insert_timestamp_hashes(
-    data: &mut ByteSeries,
-    n_to_insert: u32,
-    step: i64,
-    time: OffsetDateTime,
-) {
-    let mut timestamp = time.unix_timestamp();
-
-    for _ in 0..n_to_insert {
-        let hash = hash64::<i64>(&timestamp);
-
-        let mut buffer = Vec::with_capacity(8);
-        buffer.write_u64::<NativeEndian>(hash).unwrap();
-
-        let dt = OffsetDateTime::from_unix_timestamp(timestamp)
-            .expect("unix timestamps are always in range");
-        data.push_line(dt, buffer).unwrap();
-        timestamp += step;
     }
 }
 
