@@ -26,7 +26,7 @@ pub struct EmptyDecoder;
 impl byteseries::Decoder for EmptyDecoder {
     type Item = ();
     fn decode_line(&mut self, _: &[u8]) -> Self::Item {
-        ()
+        
     }
 }
 

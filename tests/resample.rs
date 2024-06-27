@@ -6,8 +6,8 @@ fn insert_vector(ts: &mut ByteSeries, t_start: Timestamp, t_end: Timestamp, data
     let mut time = t_start;
 
     for x in data {
-        ts.push_line(time, &x.to_le_bytes()).unwrap();
-        time = time + dt;
+        ts.push_line(time, x.to_le_bytes()).unwrap();
+        time += dt;
     }
 }
 

@@ -99,7 +99,7 @@ impl Index {
 
     #[instrument(level = "trace", skip(self), ret)]
     pub fn update(&mut self, timestamp: u64, line_start: u64) -> Result<(), std::io::Error> {
-        let ts = timestamp as u64;
+        let ts = timestamp;
         self.file.write_all(&ts.to_le_bytes())?;
         self.file.write_all(&line_start.to_le_bytes())?;
 
@@ -205,7 +205,7 @@ mod tests {
     fn fill_index(h: &mut Index) {
         for i in 20..24 {
             let ts = i * 2u64.pow(16);
-            h.update(ts, i as u64).unwrap();
+            h.update(ts, i).unwrap();
         }
     }
 

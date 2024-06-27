@@ -161,21 +161,21 @@ pub(crate) fn read_meta<'a>(
     let mut result = [0u8; 8];
     match first_chunk.len() - 2 {
         0 => {
-            result[0..2].copy_from_slice(&chunks.next()?);
-            result[2..4].copy_from_slice(&chunks.next()?);
-            result[4..6].copy_from_slice(&chunks.next()?);
-            result[6..8].copy_from_slice(&chunks.next()?);
+            result[0..2].copy_from_slice(chunks.next()?);
+            result[2..4].copy_from_slice(chunks.next()?);
+            result[4..6].copy_from_slice(chunks.next()?);
+            result[6..8].copy_from_slice(chunks.next()?);
         }
         1 => {
             result[0] = first_chunk[2];
             result[1] = next_chunk[2];
-            result[2..5].copy_from_slice(&chunks.next()?);
-            result[5..8].copy_from_slice(&chunks.next()?);
+            result[2..5].copy_from_slice(chunks.next()?);
+            result[5..8].copy_from_slice(chunks.next()?);
         }
         2 => {
             result[0..2].copy_from_slice(&first_chunk[2..]);
             result[2..4].copy_from_slice(&next_chunk[2..]);
-            result[4..8].copy_from_slice(&chunks.next()?);
+            result[4..8].copy_from_slice(chunks.next()?);
         }
         3 => {
             result[0..3].copy_from_slice(&first_chunk[2..]);

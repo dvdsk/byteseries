@@ -30,7 +30,7 @@ struct EmptyDecoder;
 impl Decoder for EmptyDecoder {
     type Item = ();
     fn decode_line(&mut self, _: &[u8]) -> Self::Item {
-        ()
+        
     }
 }
 
@@ -140,8 +140,7 @@ impl Data {
             .last_timestamp()
             .map(|last_timestamp| ts - last_timestamp)
             .map(TryInto::<u16>::try_into)
-            .map(Result::ok)
-            .flatten();
+            .and_then(Result::ok);
 
         let small_ts = if let Some(small_ts) = small_ts {
             small_ts

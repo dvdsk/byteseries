@@ -73,11 +73,11 @@ where
         let len = LINE_ENDS.len() as u64
             + mem::size_of_val(&user_header_len) as u64
             + user_header_len as u64;
-        return Ok(FileWithHeader {
+        Ok(FileWithHeader {
             handle: file,
             user_header,
             data_offset: len,
-        });
+        })
     }
 
     #[instrument(fields(file_len, user_header_len, header_len))]
@@ -106,9 +106,9 @@ where
             user_header_len as usize + LINE_ENDS.len() + mem::size_of_val(&user_header_len);
 
         tracing::Span::current()
-            .record("file_len", &metadata.len())
-            .record("user_header_len", &user_header_len)
-            .record("header_len", &header_len);
+            .record("file_len", metadata.len())
+            .record("user_header_len", user_header_len)
+            .record("header_len", header_len);
 
         let len_without_header = metadata.len() - header_len as u64;
         let rest = len_without_header % (line_size as u64);
