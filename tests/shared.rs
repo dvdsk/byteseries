@@ -21,17 +21,26 @@ pub fn setup_tracing() {
         .try_init();
 }
 
+#[derive(Debug)]
+pub struct EmptyDecoder;
+impl byteseries::Decoder for EmptyDecoder {
+    type Item = ();
+    fn decode_line(&mut self, _: &[u8]) -> Self::Item {
+        ()
+    }
+}
+
 pub fn insert_uniform_arrays(
     data: &mut ByteSeries,
     n_to_insert: u32,
-    _step: u64,
+    step: u64,
     payload_size: usize,
     mut timestamp: Timestamp,
 ) {
     for i in 0..n_to_insert {
         let buffer = vec![i as u8; payload_size];
         data.push_line(timestamp, buffer).unwrap();
-        timestamp += 5;
+        timestamp += step;
     }
 }
 

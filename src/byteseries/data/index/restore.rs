@@ -43,8 +43,7 @@ impl Index {
         let mut index = Self {
             last_timestamp: entries
                 .last()
-                .map(|Entry { timestamp, .. }| *timestamp)
-                .unwrap_or(0),
+                .map(|Entry { timestamp, .. }| *timestamp),
             file: index_file.split_off_header().0,
             entries: Vec::new(),
         };

@@ -112,7 +112,7 @@ impl Data {
             &mut data,
             start,
             end,
-            self.index.last_timestamp(),
+            self.index.last_timestamp().ok_or(Error::NoData)?,
         )?;
 
         let ts = timestamps.pop().ok_or(Error::NoData)?;
@@ -134,8 +134,16 @@ impl Data {
         //we store the timestamp - the last recorded full timestamp as u16. If
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
-        let diff = ts - self.index.last_timestamp();
-        let small_ts = if let Ok(small_ts) = TryInto::<u16>::try_into(diff) {
+        //
+        let small_ts = self
+            .index
+            .last_timestamp()
+            .map(|last_timestamp| ts - last_timestamp)
+            .map(TryInto::<u16>::try_into)
+            .map(Result::ok)
+            .flatten();
+
+        let small_ts = if let Some(small_ts) = small_ts {
             small_ts
         } else {
             let meta = ts.to_le_bytes();

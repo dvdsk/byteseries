@@ -32,14 +32,3 @@ fn reconstructed_index_works() {
 
     assert_eq!(created_index, reconstructed_index);
 }
-
-// #[derive(Debug)]
-// struct FloatDecoder;
-// impl byteseries::Decoder<f32> for FloatDecoder {
-//     fn decode(&mut self, bytes: &[u8], out: &mut Vec<f32>) {
-//         let mut arr = [0u8; 4];
-//         arr.copy_from_slice(&bytes[0..4]);
-//         let v = f32::from_be_bytes(arr);
-//         out.push(v)
-//     }
-// }

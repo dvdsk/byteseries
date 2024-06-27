@@ -131,12 +131,12 @@ impl ByteSeries {
 
     pub fn read_n<D: Decoder>(
         &mut self,
-        n: usize,
-        seek: TimeSeek,
-        decoder: &mut D,
-        timestamps: &mut Vec<Timestamp>,
-        data: &mut Vec<D::Item>,
+        _n: usize,
+        _seek: TimeSeek,
+        _decoder: &mut D,
+        _timestamps: &mut Vec<Timestamp>,
+        _data: &mut Vec<D::Item>,
     ) -> Result<(), Error> {
-        self.data.read_all(seek, decoder, timestamps, data)
+        todo!();
     }
 }

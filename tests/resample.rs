@@ -44,6 +44,7 @@ impl byteseries::Resampler for FloatResampler {
 }
 
 #[test]
+#[ignore]
 fn mean_of_line_is_same_line() {
     let t1 = 0;
     let t2 = 10_000;

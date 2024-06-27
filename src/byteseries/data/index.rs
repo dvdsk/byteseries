@@ -8,6 +8,8 @@ use tracing::instrument;
 use crate::util::{FileWithHeader, OffsetFile};
 use crate::{Error, Timestamp};
 
+use super::inline_meta;
+
 pub(crate) mod restore;
 
 #[derive(Debug)]
@@ -21,12 +23,13 @@ pub(crate) struct Index {
     pub(crate) file: OffsetFile,
 
     entries: Vec<Entry>,
-    last_timestamp: Timestamp,
+    last_timestamp: Option<Timestamp>,
 }
 
 #[derive(Debug)]
 pub enum SearchBounds {
     Found(u64),
+    /// start lies before file
     Clipped,
     TillEnd(u64),
     Window(u64, u64),
@@ -47,7 +50,7 @@ impl Index {
             file: file.split_off_header().0,
 
             entries: Vec::new(),
-            last_timestamp: 0,
+            last_timestamp: None,
         })
     }
     #[instrument]
@@ -89,8 +92,7 @@ impl Index {
             last_timestamp: entries
                 .last()
                 .map(|Entry { timestamp, .. }| timestamp)
-                .copied()
-                .unwrap_or(0),
+                .copied(),
             entries,
         })
     }
@@ -105,21 +107,20 @@ impl Index {
             timestamp,
             line_start,
         });
-        self.last_timestamp = timestamp;
+        self.last_timestamp = Some(timestamp);
         Ok(())
     }
 
-    pub fn search_bounds(
+    pub fn start_search_bounds(
         &self,
         start: Timestamp,
-        stop: Timestamp,
-    ) -> (SearchBounds, SearchBounds, Timestamp) {
+        payload_size: usize,
+    ) -> (SearchBounds, Timestamp) {
         let idx = self.entries.binary_search_by_key(&start, |e| e.timestamp);
-        let (start_bound, full_time) = match idx {
+        match idx {
             Ok(i) => (SearchBounds::Found(self.entries[i].line_start), start),
             Err(end) => {
                 if end == 0 {
-                    //start lies before file
                     (SearchBounds::Clipped, self.entries[0].timestamp)
                 } else if end == self.entries.len() {
                     (
@@ -131,16 +132,26 @@ impl Index {
                     (
                         SearchBounds::Window(
                             self.entries[end - 1].line_start,
-                            self.entries[end].line_start,
+                            self.entries[end].line_start
+                                - inline_meta::bytes_per_metainfo(payload_size) as u64,
                         ),
                         self.entries[end - 1].timestamp,
                     )
                 }
             }
-        };
+        }
+    }
+    pub fn end_search_bounds(
+        &self,
+        stop: Timestamp,
+        payload_len: usize,
+    ) -> (SearchBounds, Timestamp) {
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
-        let stop_bound = match idx {
-            Ok(i) => SearchBounds::Found(self.entries[i].line_start),
+        match idx {
+            Ok(i) => (
+                SearchBounds::Found(self.entries[i].line_start),
+                self.entries[i].timestamp,
+            ),
             Err(end) => {
                 if end == 0 {
                     //stop lies before file
@@ -150,23 +161,30 @@ impl Index {
                         this"
                     )
                 } else if end == self.entries.len() {
-                    SearchBounds::TillEnd(self.entries.last().unwrap().line_start)
+                    let last = self
+                        .entries
+                        .last()
+                        .expect("Index always has one entry when the byteseries is not empty");
+                    (SearchBounds::TillEnd(last.line_start), last.timestamp)
                 } else {
                     //end is not 0 or 1 thus data[end] and data[end-1] exist
-                    SearchBounds::Window(
-                        self.entries[end - 1].line_start,
-                        self.entries[end].line_start,
+                    (
+                        SearchBounds::Window(
+                            self.entries[end - 1].line_start,
+                            self.entries[end].line_start
+                                - inline_meta::bytes_per_metainfo(payload_len) as u64,
+                        ),
+                        self.entries[end - 1].timestamp,
                     )
                 }
             }
-        };
-        (start_bound, stop_bound, full_time)
+        }
     }
     pub fn first_time_in_data(&self) -> Option<Timestamp> {
         self.entries.first().map(|e| e.timestamp)
     }
 
-    pub fn last_timestamp(&self) -> Timestamp {
+    pub fn last_timestamp(&self) -> Option<Timestamp> {
         self.last_timestamp
     }
 }
@@ -196,8 +214,7 @@ mod tests {
         let mut h = test_index();
         fill_index(&mut h);
         let start = 22 * 2u64.pow(16);
-        let stop = 23 * 2u64.pow(16);
-        let (start, _, ft) = h.search_bounds(start, stop);
+        let (start, ft) = h.start_search_bounds(start, 0);
         assert_eq!(
             std::mem::discriminant(&start),
             std::mem::discriminant(&SearchBounds::Found(0))
@@ -209,8 +226,7 @@ mod tests {
         let mut h = test_index();
         fill_index(&mut h);
         let start = 12342;
-        let stop = 23 * 2u64.pow(16);
-        let (start, _, _) = h.search_bounds(start, stop);
+        let (start, _) = h.start_search_bounds(start, 0);
 
         assert_eq!(
             std::mem::discriminant(&start),
@@ -222,8 +238,7 @@ mod tests {
         let mut h = test_index();
         fill_index(&mut h);
         let start = 22 * 2u64.pow(16) + 400;
-        let stop = 23 * 2u64.pow(16);
-        let (start, _, _) = h.search_bounds(start, stop);
+        let (start, _) = h.start_search_bounds(start, 0);
 
         assert_eq!(
             std::mem::discriminant(&start),
@@ -235,8 +250,7 @@ mod tests {
         let mut h = test_index();
         fill_index(&mut h);
         let start = 24 * 2u64.pow(16) + 400;
-        let stop = 25 * 2u64.pow(16);
-        let (start, _, _) = h.search_bounds(start, stop);
+        let (start, _) = h.start_search_bounds(start, 0);
 
         assert_eq!(
             std::mem::discriminant(&start),
