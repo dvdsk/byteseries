@@ -77,6 +77,8 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         stop_byte: u64,
         first_full_ts: Timestamp,
     ) -> Result<(), Error> {
+        // FIXME this does not read enough bytes to read all data
+        // add tests first!
         let n_lines = (stop_byte - start_byte) / self.line_size as u64;
         let mut buf = vec![0; n_lines as usize];
         self.file_handle.seek(SeekFrom::Start(start_byte))?;

@@ -38,10 +38,8 @@ fn compare_written_to_read() {
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
     series
-        .read_to_data(
-            seek.start,
-            seek.stop,
-            seek.first_full_ts,
+        .read_all(
+            seek,
             &mut TsDecoder,
             &mut timestamps,
             &mut data,

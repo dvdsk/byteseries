@@ -6,7 +6,7 @@ use std::path::Path;
 use tracing::instrument;
 
 use crate::util::{FileWithHeader, OffsetFile};
-use crate::{Decoder, Error, Timestamp};
+use crate::{Decoder, Error, TimeSeek, Timestamp};
 
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
@@ -157,11 +157,9 @@ impl Data {
         self.index.file.sync_data().unwrap();
     }
 
-    pub fn read_to_data<D: Decoder>(
+    pub fn read_all<D: Decoder>(
         &mut self,
-        start_byte: u64,
-        stop_byte: u64,
-        first_full_ts: Timestamp,
+        seek: TimeSeek,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
@@ -170,9 +168,9 @@ impl Data {
             decoder,
             timestamps,
             data,
-            start_byte,
-            stop_byte,
-            first_full_ts,
+            seek.start,
+            seek.stop,
+            seek.first_full_ts,
         )
     }
 
