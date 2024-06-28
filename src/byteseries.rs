@@ -1,6 +1,7 @@
 pub mod data;
 mod downsample;
 use core::fmt;
+use std::ops::{Bound, RangeBounds};
 use std::path::Path;
 
 use data::Data;
@@ -8,7 +9,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::{Decoder, Error, Resampler, TimeSeek, Timestamp};
+use crate::search::SeekError;
+use crate::{search, Decoder, Error, Resampler, Timestamp};
 
 use self::downsample::DownSampledData;
 
@@ -115,28 +117,83 @@ impl ByteSeries {
         Ok(())
     }
 
-    pub fn flush_to_disk(&mut self) {
-        self.data.flush_to_disk()
-    }
-
     pub fn read_all<D: Decoder>(
         &mut self,
-        seek: TimeSeek,
+        range: impl RangeBounds<Timestamp>,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), Error> {
+        self.check_range(range.start_bound().cloned(), range.start_bound().cloned())?;
+        let seek = search::RoughSeekPos::new(
+            &self.data,
+            range.start_bound().cloned(),
+            range.end_bound().cloned(),
+        )
+        .refine(&mut self.data)?;
         self.data.read_all(seek, decoder, timestamps, data)
     }
 
+    /// Will return between zero and two times `n` samples
     pub fn read_n<D: Decoder>(
         &mut self,
         _n: usize,
-        _seek: TimeSeek,
+        range: impl RangeBounds<Timestamp>,
         _decoder: &mut D,
         _timestamps: &mut Vec<Timestamp>,
         _data: &mut Vec<D::Item>,
     ) -> Result<(), Error> {
-        todo!();
+        self.check_range(range.start_bound().cloned(), range.start_bound().cloned())?;
+        let rough_seek = search::RoughSeekPos::new(
+            &self.data,
+            range.start_bound().cloned(),
+            range.end_bound().cloned(),
+        );
+        // let seek = search::SeekPos::in_series(series, start, end)
+
+        // check n points in self
+        // estimate required resampling
+        // check points in resampling
+        // if bad check lower/higher res
+        todo!()
+    }
+
+    fn check_range(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Result<(), SeekError> {
+        if self.data.data_len == 0 {
+            return Err(SeekError::EmptyFile);
+        }
+
+        match start {
+            Bound::Included(ts) => {
+                if ts >= self.last_time_in_data.expect("data_len > 0") {
+                    return Err(SeekError::StartAfterData);
+                }
+            }
+            Bound::Excluded(ts) => {
+                if ts - 1 >= self.last_time_in_data.expect("data_len > 0") {
+                    return Err(SeekError::StartAfterData);
+                }
+            }
+            Bound::Unbounded => (),
+        };
+
+        match end {
+            Bound::Included(ts) => {
+                if ts <= self.first_time_in_data.expect("data_len > 0") {
+                    return Err(SeekError::StopBeforeData);
+                }
+            }
+            Bound::Excluded(ts) => {
+                if ts - 1 <= self.first_time_in_data.expect("data_len > 0") {
+                    return Err(SeekError::StopBeforeData);
+                }
+            }
+            Bound::Unbounded => (),
+        };
+
+        Ok(())
+    }
+    pub fn flush_to_disk(&mut self) {
+        self.data.flush_to_disk()
     }
 }

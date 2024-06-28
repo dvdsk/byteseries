@@ -1,4 +1,4 @@
-use byteseries::{ByteSeries, TimeSeek, Timestamp};
+use byteseries::{ByteSeries, Timestamp};
 use temp_dir::TempDir;
 
 fn insert_vector(ts: &mut ByteSeries, t_start: Timestamp, t_end: Timestamp, data: &[f32]) {
@@ -59,8 +59,7 @@ fn mean_of_line_is_same_line() {
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    let seek = TimeSeek::new(&mut bs, t1, t2).unwrap();
-    bs.read_n(n, seek, &mut FloatResampler, &mut timestamps, &mut data)
+    bs.read_n(n, t1..t2, &mut FloatResampler, &mut timestamps, &mut data)
         .unwrap();
 
     let dt = (t2 - t1) / inserted_data.len() as u64;

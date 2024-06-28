@@ -5,7 +5,7 @@ mod util;
 
 pub use byteseries::ByteSeries;
 pub use error::Error;
-pub use search::TimeSeek;
+pub use search::SeekPos;
 
 pub type Timestamp = u64;
 

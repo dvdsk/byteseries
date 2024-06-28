@@ -27,7 +27,7 @@ pub(crate) struct Index {
 }
 
 #[derive(Debug)]
-pub enum SearchBounds {
+pub enum SearchArea {
     Found(u64),
     /// start lies before file
     Clipped,
@@ -115,22 +115,22 @@ impl Index {
         &self,
         start: Timestamp,
         payload_size: usize,
-    ) -> (SearchBounds, Timestamp) {
+    ) -> (SearchArea, Timestamp) {
         let idx = self.entries.binary_search_by_key(&start, |e| e.timestamp);
         match idx {
-            Ok(i) => (SearchBounds::Found(self.entries[i].line_start), start),
+            Ok(i) => (SearchArea::Found(self.entries[i].line_start), start),
             Err(end) => {
                 if end == 0 {
-                    (SearchBounds::Clipped, self.entries[0].timestamp)
+                    (SearchArea::Clipped, self.entries[0].timestamp)
                 } else if end == self.entries.len() {
                     (
-                        SearchBounds::TillEnd(self.entries.last().unwrap().line_start),
+                        SearchArea::TillEnd(self.entries.last().unwrap().line_start),
                         self.entries.last().unwrap().timestamp,
                     )
                 } else {
                     //end is not 0 or 1 thus data[end] and data[end-1] exist
                     (
-                        SearchBounds::Window(
+                        SearchArea::Window(
                             self.entries[end - 1].line_start,
                             self.entries[end].line_start
                                 - inline_meta::bytes_per_metainfo(payload_size) as u64,
@@ -145,11 +145,11 @@ impl Index {
         &self,
         stop: Timestamp,
         payload_len: usize,
-    ) -> (SearchBounds, Timestamp) {
+    ) -> (SearchArea, Timestamp) {
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
         match idx {
             Ok(i) => (
-                SearchBounds::Found(self.entries[i].line_start),
+                SearchArea::Found(self.entries[i].line_start),
                 self.entries[i].timestamp,
             ),
             Err(end) => {
@@ -165,11 +165,11 @@ impl Index {
                         .entries
                         .last()
                         .expect("Index always has one entry when the byteseries is not empty");
-                    (SearchBounds::TillEnd(last.line_start), last.timestamp)
+                    (SearchArea::TillEnd(last.line_start), last.timestamp)
                 } else {
                     //end is not 0 or 1 thus data[end] and data[end-1] exist
                     (
-                        SearchBounds::Window(
+                        SearchArea::Window(
                             self.entries[end - 1].line_start,
                             self.entries[end].line_start
                                 - inline_meta::bytes_per_metainfo(payload_len) as u64,
@@ -217,7 +217,7 @@ mod tests {
         let (start, ft) = h.start_search_bounds(start, 0);
         assert_eq!(
             std::mem::discriminant(&start),
-            std::mem::discriminant(&SearchBounds::Found(0))
+            std::mem::discriminant(&SearchArea::Found(0))
         );
         assert_eq!(ft, 22 * 2u64.pow(16))
     }
@@ -230,7 +230,7 @@ mod tests {
 
         assert_eq!(
             std::mem::discriminant(&start),
-            std::mem::discriminant(&SearchBounds::Clipped)
+            std::mem::discriminant(&SearchArea::Clipped)
         );
     }
     #[test]
@@ -242,7 +242,7 @@ mod tests {
 
         assert_eq!(
             std::mem::discriminant(&start),
-            std::mem::discriminant(&SearchBounds::Window(0, 0))
+            std::mem::discriminant(&SearchArea::Window(0, 0))
         );
     }
     #[test]
@@ -254,7 +254,7 @@ mod tests {
 
         assert_eq!(
             std::mem::discriminant(&start),
-            std::mem::discriminant(&SearchBounds::TillEnd(0))
+            std::mem::discriminant(&SearchArea::TillEnd(0))
         );
     }
 }

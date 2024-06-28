@@ -9,16 +9,14 @@ use crate::{Error, ResampleState, Resampler, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    sample_every: Timestamp,
-    max_interval: Timestamp,
-    bin_size: usize,
+    /// reject buckets that have a gap in time larger then this
+    max_gap: Option<Timestamp>,
+    /// number of items to average over
+    bucket_size: usize,
 }
 impl Config {
     fn file_name_suffix(&self) -> String {
-        format!(
-            "{}_{}_{}",
-            self.sample_every, self.max_interval, self.bin_size
-        )
+        format!("{:?}_{}", self.max_gap, self.bucket_size)
     }
     fn header(&self, name: &OsStr) -> String {
         let name = name.to_string_lossy();
@@ -29,9 +27,8 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            sample_every: todo!(),
-            max_interval: todo!(),
-            bin_size: todo!(),
+            max_gap: None,
+            bucket_size: 10,
         }
     }
 }
@@ -79,10 +76,10 @@ impl<R: Resampler> DownSampled for DownSampledData<R> {
         self.ts_sum += ts;
 
         self.samples_in_bin += 1;
-        if self.samples_in_bin >= self.config.bin_size {
-            let resampled_item = self.resample_state.finish(self.config.bin_size);
+        if self.samples_in_bin >= self.config.bucket_size {
+            let resampled_item = self.resample_state.finish(self.config.bucket_size);
             let resampled_line = self.resampler.encode_item(&resampled_item);
-            let resampled_time = self.ts_sum / self.config.bin_size as u64;
+            let resampled_time = self.ts_sum / self.config.bucket_size as u64;
             self.data.push_data(resampled_time, &resampled_line)?;
         }
 

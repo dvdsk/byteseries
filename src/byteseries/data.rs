@@ -6,7 +6,7 @@ use std::path::Path;
 use tracing::instrument;
 
 use crate::util::{FileWithHeader, OffsetFile};
-use crate::{Decoder, Error, TimeSeek, Timestamp};
+use crate::{Decoder, Error, SeekPos, Timestamp};
 
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
@@ -29,9 +29,7 @@ pub struct Data {
 struct EmptyDecoder;
 impl Decoder for EmptyDecoder {
     type Item = ();
-    fn decode_line(&mut self, _: &[u8]) -> Self::Item {
-        
-    }
+    fn decode_line(&mut self, _: &[u8]) -> Self::Item {}
 }
 
 impl Data {
@@ -166,7 +164,7 @@ impl Data {
 
     pub fn read_all<D: Decoder>(
         &mut self,
-        seek: TimeSeek,
+        seek: SeekPos,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
@@ -176,12 +174,16 @@ impl Data {
             timestamps,
             data,
             seek.start,
-            seek.stop,
+            seek.end,
             seek.first_full_ts,
         )
     }
 
-    pub(super) fn payload_size(&self) -> usize {
+    pub(crate) fn payload_size(&self) -> usize {
         self.payload_size
+    }
+
+    pub(crate) fn last_line_start(&self) -> u64 {
+        self.data_len - (self.payload_size as u64 + 2)
     }
 }

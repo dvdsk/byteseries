@@ -1,13 +1,12 @@
-use byteseries::{ByteSeries, TimeSeek};
+use byteseries::ByteSeries;
 use temp_dir::TempDir;
 
 mod shared;
-use shared::{insert_timestamps, Timestamp};
 use shared::setup_tracing;
+use shared::{insert_timestamps, Timestamp};
 
 #[derive(Debug)]
 struct TsDecoder;
-
 
 impl byteseries::Decoder for TsDecoder {
     type Item = Timestamp;
@@ -33,17 +32,10 @@ fn compare_written_to_read() {
     let t1 = timestamp;
     let t2 = timestamp + NUMBER_TO_INSERT * PERIOD;
 
-    let seek = TimeSeek::new(&mut series, t1, t2).unwrap();
-
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
     series
-        .read_all(
-            seek,
-            &mut TsDecoder,
-            &mut timestamps,
-            &mut data,
-        )
+        .read_all(t1..t2, &mut TsDecoder, &mut timestamps, &mut data)
         .unwrap();
 
     for (timestamp, data) in timestamps.into_iter().zip(data) {

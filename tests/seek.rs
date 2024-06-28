@@ -1,5 +1,5 @@
 use byteseries::error::{Error, SeekError};
-use byteseries::{ByteSeries, TimeSeek};
+use byteseries::ByteSeries;
 use temp_dir::TempDir;
 
 mod shared;
@@ -20,15 +20,15 @@ fn beyond_range() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut data = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
+    let mut series = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
 
-    insert_uniform_arrays(&mut data, N_TO_INSERT, STEP, PAYLOAD_SIZE, timestamp);
+    insert_uniform_arrays(&mut series, N_TO_INSERT, STEP, PAYLOAD_SIZE, timestamp);
 
     let t1 = timestamp + start_read_inlines * STEP;
     let t2 = timestamp + (start_read_inlines + read_length_inlines) * STEP;
-    let seek_res = TimeSeek::new(&mut data, t1, t2);
+    let read_res = series.read_all(t1..t2, &mut EmptyDecoder, &mut Vec::new(), &mut Vec::new());
 
-    match seek_res {
+    match read_res {
         Err(e) => match e {
             Error::Seek(e) => assert!(
                 std::mem::discriminant(&e) == std::mem::discriminant(&SeekError::StartAfterData)
@@ -68,11 +68,10 @@ fn within_range() {
     let stop_read = 122 * STEP;
     let t1 = timestamp + start_read;
     let t2 = timestamp + stop_read;
-    let seek = TimeSeek::new(&mut bs, t1, t2).unwrap();
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_all(seek, &mut EmptyDecoder, &mut timestamps, &mut data)
+    bs.read_all(t1..=t2, &mut EmptyDecoder, &mut timestamps, &mut data)
         .unwrap();
 
     let first = timestamps.first().unwrap();
