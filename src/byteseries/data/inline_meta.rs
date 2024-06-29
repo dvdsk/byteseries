@@ -2,7 +2,7 @@ use core::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use tracing::instrument;
 
-use crate::Error;
+use crate::{Error, Resampler};
 
 use super::{Decoder, Timestamp};
 
@@ -81,6 +81,93 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
                 return Ok(());
             };
             full_ts = u64::from_le_bytes(meta);
+        }
+    }
+
+    pub(crate) fn read2_resampling<R: crate::Resampler>(
+        &mut self,
+        resampler: &mut R,
+        bucket_size: usize,
+        timestamps: &mut Vec<u64>,
+        data: &mut Vec<<R as Decoder>::Item>,
+        start_byte: u64,
+        stop_byte: u64,
+        first_full_ts: u64,
+    ) -> Result<(), Error> {
+        let to_read = stop_byte - start_byte;
+        let mut buf = vec![0; to_read as usize];
+        self.file_handle.seek(SeekFrom::Start(start_byte))?;
+        self.file_handle.read_exact(&mut buf)?;
+
+        let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
+
+        let mut full_ts = first_full_ts;
+        let mut lines = buf.chunks_exact(self.line_size);
+        loop {
+            let Some(line) = lines.next() else {
+                return Ok(());
+            };
+            if line[..2] != [0, 0] {
+                sampler.process(line, full_ts);
+                continue;
+            }
+
+            let Some(next_line) = lines.next() else {
+                return Ok(());
+            };
+            if next_line[..2] != [0, 0] {
+                sampler.process(line, full_ts);
+                continue;
+            }
+
+            let Some(meta) = read_meta(lines.by_ref(), line, next_line) else {
+                return Ok(());
+            };
+            full_ts = u64::from_le_bytes(meta);
+        }
+    }
+}
+
+use crate::ResampleState;
+
+struct Sampler<'a, R: Resampler> {
+    resampler: &'a mut R,
+    resample_state: <R as Resampler>::State,
+    timestamp_sum: u64,
+    sampled: usize,
+
+    bucket_size: usize,
+    timestamps: &'a mut Vec<u64>,
+    data: &'a mut Vec<<R as Decoder>::Item>,
+}
+
+impl<'a, R: Resampler> Sampler<'a, R> {
+    fn new(
+        resampler: &'a mut R,
+        bucket_size: usize,
+        timestamps: &'a mut Vec<u64>,
+        data: &'a mut Vec<<R as Decoder>::Item>,
+    ) -> Self {
+        Self {
+            resample_state: resampler.state(),
+            resampler,
+            timestamp_sum: 0,
+            sampled: 0,
+            bucket_size,
+            timestamps,
+            data,
+        }
+    }
+
+    fn process(&mut self, line: &[u8], full_ts: u64) {
+        let (small_ts, item) = decode(self.resampler, line);
+        self.timestamp_sum += full_ts + small_ts;
+        self.resample_state.add(item);
+        self.sampled += 1;
+        if self.sampled >= self.bucket_size {
+            self.timestamps
+                .push(self.timestamp_sum / self.bucket_size as u64);
+            self.data.push(self.resample_state.finish(self.bucket_size));
         }
     }
 }

@@ -9,13 +9,16 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::search::SeekError;
+use crate::search::{Estimate, SeekError};
 use crate::{search, Decoder, Error, Resampler, Timestamp};
 
 use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug {
     fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), Error>;
+    fn estimate_lines(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Estimate;
+    fn data_mut(&mut self) -> &mut Data;
+    fn data(&self) -> &Data;
 }
 
 #[derive(Debug)]
@@ -94,10 +97,6 @@ impl ByteSeries {
         Ok((bs, header))
     }
 
-    pub(crate) fn payload_size(&self) -> usize {
-        self.data.payload_size()
-    }
-
     pub fn push_line(&mut self, ts: Timestamp, line: impl AsRef<[u8]>) -> Result<(), Error> {
         //write 16 bit timestamp and then the line to file
         //for now no support for sign bit since data will always be after 0 (1970)
@@ -135,27 +134,40 @@ impl ByteSeries {
     }
 
     /// Will return between zero and two times `n` samples
-    pub fn read_n<D: Decoder>(
+    ///
+    /// This might read more but will resample down using averages.
+    /// No interpolation is performed.
+    pub fn read_n<R: Resampler>(
         &mut self,
-        _n: usize,
+        n: usize,
         range: impl RangeBounds<Timestamp>,
-        _decoder: &mut D,
-        _timestamps: &mut Vec<Timestamp>,
-        _data: &mut Vec<D::Item>,
+        resampler: &mut R,
+        timestamps: &mut Vec<Timestamp>,
+        data: &mut Vec<<R as Decoder>::Item>,
     ) -> Result<(), Error> {
-        self.check_range(range.start_bound().cloned(), range.start_bound().cloned())?;
-        let rough_seek = search::RoughSeekPos::new(
-            &self.data,
-            range.start_bound().cloned(),
-            range.end_bound().cloned(),
-        );
-        // let seek = search::SeekPos::in_series(series, start, end)
+        let start = range.start_bound().cloned();
+        let end = range.end_bound().cloned();
+        self.check_range(start, end)?;
 
-        // check n points in self
-        // estimate required resampling
-        // check points in resampling
-        // if bad check lower/higher res
-        todo!()
+        assert!(self.downsampled.windows(2).all(|w| w[0].data().data_len >= w[1].data().data_len), "for this algorithm to work downsampled must be sorted in descending resolution/numb lines");
+
+        let mut optimal_data = &mut self.data;
+        for downsampled in &mut self.downsampled {
+            let estimate = downsampled.estimate_lines(start, end);
+            if estimate.max < n as u64 {
+                break;
+            }
+            if estimate.min < n as u64 {
+                break;
+            }
+            optimal_data = downsampled.data_mut();
+        }
+
+        let seek = search::RoughSeekPos::new(optimal_data, start, end).refine(optimal_data)?;
+        let lines = seek.lines(optimal_data);
+        let bucket_size = (lines / n as u64) as usize;
+
+        optimal_data.read_resampling(seek, resampler, bucket_size, timestamps, data)
     }
 
     fn check_range(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Result<(), SeekError> {
@@ -165,12 +177,12 @@ impl ByteSeries {
 
         match start {
             Bound::Included(ts) => {
-                if ts >= self.last_time_in_data.expect("data_len > 0") {
+                if ts > self.last_time_in_data.expect("data_len > 0") {
                     return Err(SeekError::StartAfterData);
                 }
             }
             Bound::Excluded(ts) => {
-                if ts - 1 >= self.last_time_in_data.expect("data_len > 0") {
+                if ts >= self.last_time_in_data.expect("data_len > 0") {
                     return Err(SeekError::StartAfterData);
                 }
             }
@@ -179,12 +191,12 @@ impl ByteSeries {
 
         match end {
             Bound::Included(ts) => {
-                if ts <= self.first_time_in_data.expect("data_len > 0") {
+                if ts < self.first_time_in_data.expect("data_len > 0") {
                     return Err(SeekError::StopBeforeData);
                 }
             }
             Bound::Excluded(ts) => {
-                if ts - 1 <= self.first_time_in_data.expect("data_len > 0") {
+                if ts <= self.first_time_in_data.expect("data_len > 0") {
                     return Err(SeekError::StopBeforeData);
                 }
             }

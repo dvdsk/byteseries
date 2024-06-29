@@ -1,10 +1,12 @@
 pub(crate) mod resample;
 
 use std::ffi::OsStr;
+use std::ops::Bound;
 use std::path::Path;
 
 use super::data::Data;
 use super::DownSampled;
+use crate::search::RoughSeekPos;
 use crate::{Error, ResampleState, Resampler, Timestamp};
 
 #[derive(Debug, Clone)]
@@ -84,5 +86,21 @@ impl<R: Resampler> DownSampled for DownSampledData<R> {
         }
 
         Ok(())
+    }
+
+    fn estimate_lines(
+        &self,
+        start: Bound<Timestamp>,
+        end: Bound<Timestamp>,
+    ) -> crate::search::Estimate {
+        RoughSeekPos::new(&self.data, start, end)
+            .estimate_lines(self.data.payload_size() + 2, self.data.data_len)
+    }
+
+    fn data_mut(&mut self) -> &mut Data {
+        &mut self.data
+    }
+    fn data(&self) -> &Data {
+        &self.data
     }
 }

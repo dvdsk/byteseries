@@ -179,6 +179,25 @@ impl Data {
         )
     }
 
+    pub(crate) fn read_resampling<R: crate::Resampler>(
+        &mut self,
+        seek: SeekPos,
+        resampler: &mut R,
+        bucket_size: usize,
+        timestamps: &mut Vec<u64>,
+        data: &mut Vec<<R as Decoder>::Item>,
+    ) -> Result<(), Error> {
+        self.file_handle.read2_resampling(
+            resampler,
+            bucket_size,
+            timestamps,
+            data,
+            seek.start,
+            seek.end,
+            seek.first_full_ts,
+        )
+    }
+
     pub(crate) fn payload_size(&self) -> usize {
         self.payload_size
     }

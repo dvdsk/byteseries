@@ -1,9 +1,8 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Bound;
 
-use crate::byteseries::data::index::SearchArea;
+use crate::byteseries::data::index::{EndArea, StartArea};
 use crate::byteseries::data::Data;
-use crate::ByteSeries;
 use crate::Timestamp;
 
 #[derive(thiserror::Error, Debug)]
@@ -24,10 +23,10 @@ pub enum SeekError {
 pub struct RoughSeekPos {
     start_ts: Timestamp,
     /// area where to search for the start time
-    start_search_area: SearchArea,
+    start_search_area: StartArea,
     end_ts: Timestamp,
     /// area where to search for the end time
-    end_search_area: SearchArea,
+    end_search_area: EndArea,
     /// 64 bit timestamp that should be added to the small time
     /// for the search for the start timestamp.
     start_section_full_ts: Timestamp,
@@ -48,7 +47,7 @@ impl RoughSeekPos {
             Bound::Included(ts) => data.index.start_search_bounds(ts, data.payload_size()),
             Bound::Excluded(ts) => data.index.start_search_bounds(ts - 1, data.payload_size()),
             Bound::Unbounded => (
-                SearchArea::Found(0),
+                StartArea::Found(0),
                 data.index.first_time_in_data().expect("data_len > 0"),
             ),
         };
@@ -63,7 +62,7 @@ impl RoughSeekPos {
             Bound::Included(ts) => data.index.end_search_bounds(ts, data.payload_size()),
             Bound::Excluded(ts) => data.index.end_search_bounds(ts - 1, data.payload_size()),
             Bound::Unbounded => (
-                SearchArea::Found(data.last_line_start()),
+                EndArea::Found(data.last_line_start()),
                 data.index.last_timestamp().expect("data_len > 0"),
             ),
         };
@@ -89,13 +88,13 @@ impl RoughSeekPos {
             .try_into()
             .expect("search range should be smaller then u16::MAX");
         let start_byte = match self.start_search_area {
-            SearchArea::Found(pos) => pos,
-            SearchArea::Clipped => 0,
-            SearchArea::TillEnd(start) => {
+            StartArea::Found(pos) => pos,
+            StartArea::Clipped => 0,
+            StartArea::TillEnd(start) => {
                 let end = data.data_len;
                 find_read_start(data, start_time, start, end)?
             }
-            SearchArea::Window(start, stop) => find_read_start(data, start_time, start, stop)?,
+            StartArea::Window(start, stop) => find_read_start(data, start_time, start, stop)?,
         };
 
         let end_time: u16 = self
@@ -108,13 +107,12 @@ impl RoughSeekPos {
             .try_into()
             .expect("search range should be smaller then u16::MAX");
         let end_byte = match self.end_search_area {
-            SearchArea::Found(pos) => pos,
-            SearchArea::TillEnd(pos) => {
+            EndArea::Found(pos) => pos,
+            EndArea::TillEnd(pos) => {
                 let end = data.data_len;
                 find_read_end(data, end_time, pos, end)?
             }
-            SearchArea::Window(start, end) => find_read_end(data, end_time, start, end)?,
-            SearchArea::Clipped => panic!("should never occur"),
+            EndArea::Window(start, end) => find_read_end(data, end_time, start, end)?,
         };
 
         Ok(SeekPos {
@@ -123,6 +121,68 @@ impl RoughSeekPos {
             first_full_ts: self.start_section_full_ts,
         })
     }
+
+    pub(crate) fn estimate_lines(&self, line_size: usize, data_len: u64) -> Estimate {
+        let total_lines = data_len / line_size as u64;
+
+        match (
+            self.start_search_area.map(|pos| pos / line_size as u64),
+            self.end_search_area.map(|pos| pos / line_size as u64),
+        ) {
+            (StartArea::Found(start), EndArea::Found(end)) => Estimate {
+                max: end - start,
+                min: end - start,
+            },
+            (StartArea::Found(start), EndArea::TillEnd(end)) => Estimate {
+                max: total_lines - start,
+                min: end - start,
+            },
+            (StartArea::Found(start), EndArea::Window(end_min, end_max)) => Estimate {
+                max: end_max - start,
+                min: end_min - start,
+            },
+            (StartArea::Clipped, EndArea::Found(end)) => Estimate { max: end, min: end },
+            (StartArea::Clipped, EndArea::TillEnd(end)) => Estimate {
+                max: total_lines,
+                min: end,
+            },
+            (StartArea::Clipped, EndArea::Window(end_min, end_max)) => Estimate {
+                max: end_max,
+                min: end_min,
+            },
+            (StartArea::TillEnd(start), EndArea::Found(end)) => Estimate {
+                max: end - start,
+                min: 1,
+            },
+            (StartArea::TillEnd(start), EndArea::TillEnd(_)) => Estimate {
+                max: total_lines - start,
+                min: 1,
+            },
+            (StartArea::TillEnd(_), EndArea::Window(_, _)) => unreachable!(
+                "The start has to lie before the end, if the end is a search area from \
+                min..max then start can not be an area from start..end_of_file"
+            ),
+            (StartArea::Window(start_min, start_max), EndArea::Found(end)) => Estimate {
+                max: end - start_min,
+                min: end - start_max,
+            },
+            (StartArea::Window(start_min, start_max), EndArea::TillEnd(end)) => Estimate {
+                max: total_lines - start_min,
+                min: end - start_max,
+            },
+            (StartArea::Window(start_min, start_max), EndArea::Window(end_min, end_max)) => {
+                Estimate {
+                    max: end_max - start_min,
+                    min: end_min - start_max,
+                }
+            }
+        }
+    }
+}
+
+pub(crate) struct Estimate {
+    pub(crate) max: u64,
+    pub(crate) min: u64,
 }
 
 #[derive(Debug)]
@@ -136,9 +196,8 @@ pub struct SeekPos {
     pub first_full_ts: Timestamp,
 }
 
-
 impl SeekPos {
-    pub fn lines(&self, series: &ByteSeries) -> u64 {
+    pub fn lines(&self, series: &Data) -> u64 {
         (self.end - self.start) / (series.payload_size() + 2) as u64
     }
 }
