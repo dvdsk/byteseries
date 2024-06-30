@@ -138,10 +138,9 @@ fn with_cache_same_as_without() {
     let mut timestamps_with_cache = Vec::new();
     let mut data_with_cache = Vec::new();
     {
-        let mut bs = ByteSeries::open_existing_with_resampler(
+        let (mut bs, _): (_, ()) = ByteSeries::open_existing_with_resampler(
             test_path,
             4,
-            (),
             FloatResampler,
             vec![downsample::Config {
                 max_gap: None,

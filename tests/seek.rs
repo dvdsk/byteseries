@@ -1,4 +1,4 @@
-use byteseries::error::{Error, SeekError};
+use byteseries::search::SeekError;
 use byteseries::ByteSeries;
 use temp_dir::TempDir;
 
@@ -30,7 +30,7 @@ fn beyond_range() {
 
     match read_res {
         Err(e) => match e {
-            Error::Seek(e) => assert!(
+            byteseries::byteseries::Error::InvalidRange(e) => assert!(
                 std::mem::discriminant(&e) == std::mem::discriminant(&SeekError::StartAfterData)
             ),
             _ => panic!("sampler should be error StartAfterData"),

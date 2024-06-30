@@ -1,5 +1,5 @@
 pub mod byteseries;
-mod search;
+pub mod search;
 mod util;
 
 pub use byteseries::ByteSeries;
