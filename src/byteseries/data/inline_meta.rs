@@ -2,7 +2,7 @@ use core::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use tracing::instrument;
 
-use crate::{Error, Resampler};
+use crate::Resampler;
 
 use super::{Decoder, Timestamp};
 
@@ -48,7 +48,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         start_byte: u64,
         stop_byte: u64,
         first_full_ts: Timestamp,
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::io::Error> {
         let to_read = stop_byte - start_byte;
         let mut buf = vec![0; to_read as usize];
         self.file_handle.seek(SeekFrom::Start(start_byte))?;
@@ -93,7 +93,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         start_byte: u64,
         stop_byte: u64,
         first_full_ts: u64,
-    ) -> Result<(), Error> {
+    ) -> Result<(), std::io::Error> {
         let to_read = stop_byte - start_byte;
         let mut buf = vec![0; to_read as usize];
         self.file_handle.seek(SeekFrom::Start(start_byte))?;
@@ -148,6 +148,7 @@ impl<'a, R: Resampler> Sampler<'a, R> {
         timestamps: &'a mut Vec<u64>,
         data: &'a mut Vec<<R as Decoder>::Item>,
     ) -> Self {
+        assert!(bucket_size > 0, "bucket_size should be > zero");
         Self {
             resample_state: resampler.state(),
             resampler,
@@ -168,6 +169,7 @@ impl<'a, R: Resampler> Sampler<'a, R> {
             self.timestamps
                 .push(self.timestamp_sum / self.bucket_size as u64);
             self.data.push(self.resample_state.finish(self.bucket_size));
+            self.sampled = 0;
         }
     }
 }

@@ -24,6 +24,8 @@ impl ResampleState for f32 {
         *self += item;
     }
     fn finish(&mut self, collected: usize) -> Self::Item {
-        *self / collected as f32
+        let res = *self / collected as f32;
+        *self = 0.0;
+        res
     }
 }

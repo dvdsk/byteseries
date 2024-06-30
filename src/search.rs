@@ -37,20 +37,19 @@ pub struct RoughSeekPos {
 
 impl RoughSeekPos {
     pub(crate) fn new(data: &Data, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Self {
+        let first_time_in_data = data.index.first_time_in_data().expect("data_len > 0");
         let start_ts = match start {
             Bound::Included(ts) => ts,
             Bound::Excluded(ts) => ts - 1,
-            Bound::Unbounded => data.index.first_time_in_data().expect("data_len > 0"),
+            Bound::Unbounded => first_time_in_data,
         };
 
         let (start_search_area, start_section_full_ts) = match start {
             Bound::Included(ts) => data.index.start_search_bounds(ts, data.payload_size()),
             Bound::Excluded(ts) => data.index.start_search_bounds(ts - 1, data.payload_size()),
-            Bound::Unbounded => (
-                StartArea::Found(0),
-                data.index.first_time_in_data().expect("data_len > 0"),
-            ),
+            Bound::Unbounded => (StartArea::Found(0), first_time_in_data),
         };
+        let start_ts = start_ts.max(first_time_in_data);
 
         let end_ts = match end {
             Bound::Included(ts) => ts,
@@ -78,6 +77,7 @@ impl RoughSeekPos {
     }
 
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
+        dbg!(self.start_ts, self.start_section_full_ts);
         let start_time: u16 = self
             .start_ts
             .checked_sub(self.start_section_full_ts)
@@ -180,6 +180,7 @@ impl RoughSeekPos {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Estimate {
     pub(crate) max: u64,
     pub(crate) min: u64,

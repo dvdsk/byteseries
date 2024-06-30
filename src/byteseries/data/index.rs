@@ -5,8 +5,8 @@ use std::io::{Read, Seek, Write};
 use std::path::Path;
 use tracing::instrument;
 
-use crate::util::{FileWithHeader, OffsetFile};
-use crate::{Error, Timestamp};
+use crate::util::{self, FileWithHeader, OffsetFile};
+use crate::Timestamp;
 
 use super::inline_meta;
 
@@ -31,6 +31,7 @@ pub enum StartArea {
     Found(u64),
     /// start lies before first timestamp or end lies after last timestamp
     Clipped,
+    /// start timestamp lies in section from this position till the end of the data
     TillEnd(u64),
     Window(u64, u64),
 }
@@ -65,9 +66,22 @@ impl EndArea {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    #[error("")]
+    File(util::OpenError),
+    #[error("The header in the index and byteseries are different")]
+    IndexAndDataHeaderDifferent,
+    #[error("reading in")]
+    Reading(std::io::Error),
+}
+
 impl Index {
     #[instrument]
-    pub fn new<H>(name: impl AsRef<Path> + fmt::Debug, user_header: H) -> Result<Index, Error>
+    pub fn new<H>(
+        name: impl AsRef<Path> + fmt::Debug,
+        user_header: H,
+    ) -> Result<Index, util::OpenError>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
@@ -87,21 +101,25 @@ impl Index {
     pub fn open_existing<H>(
         name: impl AsRef<Path> + fmt::Debug,
         user_header: &H,
-    ) -> Result<Index, Error>
+    ) -> Result<Index, OpenError>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
     {
         let mut file: FileWithHeader<H> =
-            FileWithHeader::open_existing(name.as_ref().with_extension("byteseries_index"), 16)?;
+            FileWithHeader::open_existing(name.as_ref().with_extension("byteseries_index"), 16)
+                .map_err(OpenError::File)?;
 
         if *user_header != file.user_header {
-            return Err(Error::IndexAndDataHeaderDifferent);
+            return Err(OpenError::IndexAndDataHeaderDifferent);
         }
 
         let mut bytes = Vec::new();
         file.handle
-            .seek(std::io::SeekFrom::Start(file.data_offset))?;
-        file.handle.read_to_end(&mut bytes)?;
+            .seek(std::io::SeekFrom::Start(file.data_offset))
+            .map_err(OpenError::Reading)?;
+        file.handle
+            .read_to_end(&mut bytes)
+            .map_err(OpenError::Reading)?;
 
         let entries: Vec<_> = bytes
             .chunks_exact(16)
@@ -172,6 +190,7 @@ impl Index {
         }
     }
     pub fn end_search_bounds(&self, stop: Timestamp, payload_len: usize) -> (EndArea, Timestamp) {
+        dbg!(&self.entries);
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
         match idx {
             Ok(i) => (
