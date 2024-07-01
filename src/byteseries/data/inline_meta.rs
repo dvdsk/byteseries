@@ -64,10 +64,10 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
                 return Ok(());
             };
             if next_line[..2] != [0, 0] {
-                let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                let small_ts: [u8; 2] = line[0..2].try_into().expect("len is 2");
                 let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                 processor(small_ts + full_ts, &line[2..]);
-                let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                let small_ts: [u8; 2] = next_line[0..2].try_into().expect("len is 2");
                 let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                 processor(small_ts + full_ts, &next_line[2..]);
                 continue;
