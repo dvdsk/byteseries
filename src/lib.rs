@@ -9,7 +9,7 @@ pub type Timestamp = u64;
 
 pub trait Decoder: core::fmt::Debug {
     type Item: core::fmt::Debug;
-    fn decode_line(&mut self, line: &[u8]) -> Self::Item;
+    fn decode_payload(&mut self, payload: &[u8]) -> Self::Item;
 }
 
 pub trait Encoder: core::fmt::Debug {

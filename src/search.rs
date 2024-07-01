@@ -77,7 +77,6 @@ impl RoughSeekPos {
     }
 
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
-        dbg!(self.start_ts, self.start_section_full_ts);
         let start_time: u16 = self
             .start_ts
             .checked_sub(self.start_section_full_ts)

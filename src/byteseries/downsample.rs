@@ -97,6 +97,8 @@ impl<R: Resampler> DownSampledData<R> {
 
         let (data, _): (_, String) =
             Data::open_existing(path, payload_size).map_err(Error::OpenData)?;
+        // HARD to implement
+        // TODO!("check if number last sample checks out with the data"); 
 
         Ok(Self {
             data,
@@ -107,11 +109,27 @@ impl<R: Resampler> DownSampledData<R> {
             samples_in_bin: 0,
         })
     }
+
+    pub(crate) fn create(
+        _resampler: R,
+        _config: Config,
+        _source_path: &Path,
+        _payload_size: usize,
+        _source: &Data
+    ) -> Result<Self, Error> {
+        // let mut empty = Self::new(resampler, config, source_path, payload_size)?;
+        // for res in source.iter_lines() {
+        //     let (ts, line) = res?;
+        //     empty.process(ts, line)?;
+        // }
+        // Ok(empty)
+        todo!()
+    }
 }
 
 impl<R: Resampler> DownSampled for DownSampledData<R> {
     fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), Error> {
-        let data = self.resampler.decode_line(line);
+        let data = self.resampler.decode_payload(line);
         self.resample_state.add(data);
         self.ts_sum += ts;
 

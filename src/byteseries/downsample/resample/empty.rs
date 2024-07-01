@@ -6,7 +6,7 @@ pub(crate) struct EmptyResampler;
 impl Decoder for EmptyResampler {
     type Item = EmptySample;
 
-    fn decode_line(&mut self, _: &[u8]) -> Self::Item {
+    fn decode_payload(&mut self, _: &[u8]) -> Self::Item {
         EmptySample
     }
 }

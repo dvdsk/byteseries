@@ -30,7 +30,7 @@ pub struct Data {
 struct EmptyDecoder;
 impl Decoder for EmptyDecoder {
     type Item = ();
-    fn decode_line(&mut self, _: &[u8]) -> Self::Item {}
+    fn decode_payload(&mut self, _: &[u8]) -> Self::Item {}
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -148,7 +148,7 @@ impl Data {
         let mut timestamps = Vec::new();
         let mut data = Vec::new();
         self.file_handle
-            .read2(
+            .read(
                 decoder,
                 &mut timestamps,
                 &mut data,
@@ -222,7 +222,7 @@ impl Data {
         data: &mut Vec<D::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read2(
+            .read(
                 decoder,
                 timestamps,
                 data,
@@ -242,7 +242,7 @@ impl Data {
         data: &mut Vec<<R as Decoder>::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read2_resampling(
+            .read_resampling(
                 resampler,
                 bucket_size,
                 timestamps,

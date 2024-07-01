@@ -142,11 +142,12 @@ impl ByteSeries {
                 downsampled: resample_configs
                     .into_iter()
                     .map(|config| {
-                        DownSampledData::open(
+                        DownSampledData::create(
                             resampler.clone(),
                             config,
                             name.as_ref(),
                             payload_size,
+                            &data,
                         )
                     })
                     .map_ok(Box::new)
@@ -243,9 +244,7 @@ impl ByteSeries {
             .refine(optimal_data)
             .map_err(Error::Seeking)?;
         let lines = seek.lines(optimal_data);
-        dbg!(lines);
         let bucket_size = 1.max(lines / n as u64) as usize;
-        dbg!(bucket_size);
 
         optimal_data
             .read_resampling(seek, resampler, bucket_size, timestamps, data)

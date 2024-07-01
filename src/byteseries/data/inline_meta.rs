@@ -2,6 +2,8 @@ use core::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use tracing::instrument;
 
+mod iter_lines;
+
 use crate::Resampler;
 
 use super::{Decoder, Timestamp};
@@ -28,23 +30,14 @@ pub(crate) fn bytes_per_metainfo(payload_size: usize) -> usize {
     lines_per_metainfo(payload_size) * (payload_size + 2)
 }
 
-fn decode<D: Decoder>(decoder: &mut D, line: &[u8]) -> (Timestamp, D::Item) {
-    let small_ts: [u8; 2] = line[0..2].try_into().expect("line size is at least 2");
-    let small_ts = u16::from_le_bytes(small_ts).into();
-    let item = decoder.decode_line(&line[2..]);
-    (small_ts, item)
-}
-
 impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
     pub(crate) fn inner_mut(&mut self) -> &mut F {
         &mut self.file_handle
     }
 
-    pub(crate) fn read2<D: Decoder>(
+    fn read_with_processor(
         &mut self,
-        decoder: &mut D,
-        timestamps: &mut Vec<Timestamp>,
-        data: &mut Vec<D::Item>,
+        mut processor: impl FnMut(Timestamp, &[u8]),
         start_byte: u64,
         stop_byte: u64,
         first_full_ts: Timestamp,
@@ -61,9 +54,9 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
                 return Ok(());
             };
             if line[..2] != [0, 0] {
-                let (small_ts, item) = decode(decoder, line);
-                timestamps.push(small_ts + full_ts);
-                data.push(item);
+                let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                let small_ts: u64 = u16::from_le_bytes(small_ts).into();
+                processor(small_ts + full_ts, &line[2..]);
                 continue;
             }
 
@@ -71,9 +64,12 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
                 return Ok(());
             };
             if next_line[..2] != [0, 0] {
-                let (small_ts, item) = decode(decoder, next_line);
-                timestamps.push(small_ts + full_ts);
-                data.push(item);
+                let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                let small_ts: u64 = u16::from_le_bytes(small_ts).into();
+                processor(small_ts + full_ts, &line[2..]);
+                let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                let small_ts: u64 = u16::from_le_bytes(small_ts).into();
+                processor(small_ts + full_ts, &next_line[2..]);
                 continue;
             }
 
@@ -84,7 +80,28 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         }
     }
 
-    pub(crate) fn read2_resampling<R: crate::Resampler>(
+    pub(crate) fn read<D: Decoder>(
+        &mut self,
+        decoder: &mut D,
+        timestamps: &mut Vec<Timestamp>,
+        data: &mut Vec<D::Item>,
+        start_byte: u64,
+        stop_byte: u64,
+        first_full_ts: Timestamp,
+    ) -> Result<(), std::io::Error> {
+        self.read_with_processor(
+            |ts, payload| {
+                let item = decoder.decode_payload(payload);
+                data.push(item);
+                timestamps.push(ts);
+            },
+            start_byte,
+            stop_byte,
+            first_full_ts,
+        )
+    }
+
+    pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
         resampler: &mut R,
         bucket_size: usize,
@@ -101,30 +118,14 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
 
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
 
-        let mut full_ts = first_full_ts;
-        let mut lines = buf.chunks_exact(self.line_size);
-        loop {
-            let Some(line) = lines.next() else {
-                return Ok(());
-            };
-            if line[..2] != [0, 0] {
-                sampler.process(line, full_ts);
-                continue;
-            }
-
-            let Some(next_line) = lines.next() else {
-                return Ok(());
-            };
-            if next_line[..2] != [0, 0] {
-                sampler.process(line, full_ts);
-                continue;
-            }
-
-            let Some(meta) = read_meta(lines.by_ref(), line, next_line) else {
-                return Ok(());
-            };
-            full_ts = u64::from_le_bytes(meta);
-        }
+        self.read_with_processor(
+            |ts, payload| {
+                sampler.process(ts, payload);
+            },
+            start_byte,
+            stop_byte,
+            first_full_ts,
+        )
     }
 }
 
@@ -160,15 +161,16 @@ impl<'a, R: Resampler> Sampler<'a, R> {
         }
     }
 
-    fn process(&mut self, line: &[u8], full_ts: u64) {
-        let (small_ts, item) = decode(self.resampler, line);
-        self.timestamp_sum += full_ts + small_ts;
+    fn process(&mut self, ts: Timestamp, payload: &[u8]) {
+        let item = self.resampler.decode_payload(payload);
+        self.timestamp_sum += ts;
         self.resample_state.add(item);
         self.sampled += 1;
         if self.sampled >= self.bucket_size {
             self.timestamps
                 .push(self.timestamp_sum / self.bucket_size as u64);
             self.data.push(self.resample_state.finish(self.bucket_size));
+            self.timestamp_sum = 0;
             self.sampled = 0;
         }
     }
@@ -279,82 +281,3 @@ pub(crate) fn read_meta<'a>(
 
     Some(result)
 }
-
-// #[cfg(test)]
-// mod test {
-//     use std::io::Cursor;
-//     use std::io::Read;
-//
-//     use super::*;
-//     const LINE_SIZE: usize = 6;
-//     const TWO_ZERO_LINES: [u8; 2 * LINE_SIZE] = [0u8; 2 * LINE_SIZE];
-//
-//     fn data_lines<const N: usize>(n: usize) -> Vec<u8> {
-//         assert!(N >= 2);
-//         (1..(n + 1))
-//             .into_iter()
-//             .map(|i| {
-//                 let mut line = [0u8; N];
-//                 line[0] = (i % u8::MAX as usize) as u8;
-//                 line[1] = (i / u8::MAX as usize) as u8;
-//                 line
-//             })
-//             .flatten()
-//             .collect()
-//     }
-//
-//     // #[test]
-//     // fn meta_section_at_start() {
-//     //     let n_data_lines = 5;
-//     //     let mut lines = TWO_ZERO_LINES.to_vec();
-//     //     lines.extend_from_slice(&data_lines::<LINE_SIZE>(n_data_lines));
-//     //
-//     //     let file = Cursor::new(lines);
-//     //     let mut file = FileWithInlineMeta {
-//     //         file_handle: file,
-//     //         line_size: LINE_SIZE,
-//     //     };
-//     //
-//     //     let mut buf = vec![0u8; 100];
-//     //     let n_read = file.read(&mut buf).unwrap();
-//     //     let read = &buf[0..n_read];
-//     //     assert_eq!(read, &data_lines::<LINE_SIZE>(n_data_lines))
-//     // }
-//     //
-//     // #[test]
-//     // fn meta_section_at_end() {
-//     //     let n_data_lines = 5;
-//     //     let mut lines = data_lines::<LINE_SIZE>(n_data_lines);
-//     //     lines.extend_from_slice(&TWO_ZERO_LINES);
-//     //
-//     //     let file = Cursor::new(lines);
-//     //     let mut file = FileWithInlineMeta {
-//     //         file_handle: file,
-//     //         line_size: LINE_SIZE,
-//     //     };
-//     //
-//     //     let mut buf = vec![0u8; 100];
-//     //     let n_read = file.read(&mut buf).unwrap();
-//     //     let read = &buf[0..n_read];
-//     //     assert_eq!(read, &data_lines::<LINE_SIZE>(n_data_lines))
-//     // }
-//
-//     // #[test]
-//     // fn meta_sections_around() {
-//     //     let n_data_lines = 2;
-//     //     let mut lines = TWO_ZERO_LINES.to_vec();
-//     //     lines.extend_from_slice(&data_lines::<LINE_SIZE>(n_data_lines));
-//     //     lines.extend_from_slice(&TWO_ZERO_LINES);
-//     //
-//     //     let file = Cursor::new(lines);
-//     //     let mut file = FileWithInlineMeta {
-//     //         file_handle: file,
-//     //         line_size: LINE_SIZE,
-//     //     };
-//     //
-//     //     let mut buf = vec![0u8; 100];
-//     //     let n_read = file.read(&mut buf).unwrap();
-//     //     let read = &buf[0..n_read];
-//     //     assert_eq!(read, &data_lines::<LINE_SIZE>(n_data_lines))
-//     // }
-// }

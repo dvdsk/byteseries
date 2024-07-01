@@ -11,7 +11,7 @@ struct TsDecoder;
 impl byteseries::Decoder for TsDecoder {
     type Item = Timestamp;
 
-    fn decode_line(&mut self, line: &[u8]) -> Self::Item {
+    fn decode_payload(&mut self, line: &[u8]) -> Self::Item {
         u64::from_ne_bytes(line.try_into().expect("is 8 long")) as Timestamp
     }
 }
