@@ -25,5 +25,6 @@ pub trait Resampler: Decoder + Encoder<Item = <Self as Decoder>::Item> + core::f
 pub trait ResampleState: core::fmt::Debug {
     type Item: core::fmt::Debug;
     fn add(&mut self, item: Self::Item);
+    /// This must also reset self as if it was just created
     fn finish(&mut self, collected: usize) -> Self::Item;
 }

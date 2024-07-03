@@ -13,7 +13,11 @@ impl<const N: usize> ResampleState for [f32; N] {
     }
 
     fn finish(&mut self, collected: usize) -> Self::Item {
-        self.map(|s| s / (collected as f32))
+        let res = self.map(|s| s / (collected as f32));
+        for i in self {
+            *i = 0.0;
+        }
+        res
     }
 }
 

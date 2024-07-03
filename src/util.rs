@@ -54,9 +54,6 @@ where
             .open(path)
         {
             Ok(file) => file,
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                return Err(OpenError::AlreadyExists)
-            }
             Err(err) => return Err(err)?,
         };
         let config = PrettyConfig::new();
@@ -81,10 +78,7 @@ where
     }
 
     #[instrument(fields(file_len, user_header_len, header_len))]
-    pub fn open_existing(
-        path: PathBuf,
-        line_size: usize,
-    ) -> Result<FileWithHeader<H>, OpenError>
+    pub fn open_existing(path: PathBuf, line_size: usize) -> Result<FileWithHeader<H>, OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
@@ -157,9 +151,7 @@ impl OffsetFile {
     /// You can use this as input for read_exact though you might
     /// want to spread the read.
     pub fn data_len(&self) -> std::io::Result<u64> {
-        self.handle
-            .metadata()
-            .map(|m| m.len() - self.offset)
+        self.handle.metadata().map(|m| m.len() - self.offset)
     }
 }
 

@@ -4,6 +4,8 @@ use itertools::Itertools;
 use pretty_assertions::assert_eq;
 use temp_dir::TempDir;
 
+mod shared;
+
 const T1: Timestamp = 0;
 const T2: Timestamp = 10_000;
 
@@ -100,8 +102,9 @@ fn ideal_downsampled_cache() {
 }
 
 #[test]
-#[ignore]
 fn with_cache_same_as_without() {
+    shared::setup_tracing(); 
+
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("with_cache_same_as_without");
     let mut timestamps_without_cache = Vec::new();

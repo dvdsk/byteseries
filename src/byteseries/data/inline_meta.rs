@@ -88,7 +88,6 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         stop_byte: u64,
         first_full_ts: Timestamp,
     ) -> Result<(), std::io::Error> {
-
         let mut to_read = stop_byte - start_byte;
         let chunk_size = 16384usize.next_multiple_of(self.line_size);
         let mut buf = vec![0; chunk_size];
@@ -209,7 +208,7 @@ pub(crate) fn write_meta(
     meta: [u8; 8],
     payload_size: usize,
 ) -> std::io::Result<u64> {
-    tracing::info!("inserting full timestamp through meta lines");
+    tracing::debug!("inserting full timestamp through meta lines");
     let t = meta;
     let lines = match payload_size {
         0 => {

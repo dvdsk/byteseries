@@ -1,6 +1,7 @@
 pub(crate) mod resample;
 
 use std::ffi::OsStr;
+use std::io;
 use std::ops::Bound;
 use std::path::Path;
 
@@ -172,7 +173,11 @@ impl<R: Resampler + Clone> DownSampledData<R> {
     ) -> Result<Self, OpenOrCreateError> {
         match Self::open(resampler.clone(), config.clone(), source_path, payload_size) {
             Ok(downsampled) => return Ok(downsampled),
-            Err(OpenError::Data(data::OpenError::File(util::OpenError::AlreadyExists))) => (),
+            Err(OpenError::Data(data::OpenError::File(util::OpenError::Io(io_error))))
+                if io_error.kind() == io::ErrorKind::NotFound =>
+            {
+                tracing::info!("No downsampled data cache, creating one now")
+            }
             Err(e) => return Err(OpenOrCreateError::Open(e)),
         }
 
