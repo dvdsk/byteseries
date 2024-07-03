@@ -7,7 +7,7 @@ use std::path::Path;
 use super::data::{self, Data};
 use super::DownSampled;
 use crate::search::RoughSeekPos;
-use crate::{ResampleState, Resampler, Timestamp};
+use crate::{util, ResampleState, Resampler, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -49,22 +49,45 @@ pub(crate) struct DownSampledData<R: Resampler> {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Could not create new data file: {0}")]
-    CreatingData(data::CreateError),
-    #[error("Could not open existing data file: {0}")]
-    OpenData(data::OpenError),
-    #[error("Could not push downsampled item to data file: {0}")]
-    PushData(data::PushError),
+pub enum CreateError {
+    #[error("{0}")]
+    CreateData(data::CreateError),
+    #[error("Could not read existing data to downsample: {0}")]
+    ReadSource(std::io::Error),
+    #[error("Could not write out downsampled pre existing data: {0}")]
+    WriteOut(data::PushError),
 }
 
-impl<R: Resampler> DownSampledData<R> {
-    pub(crate) fn new(
+#[derive(Debug, thiserror::Error)]
+pub enum OpenError {
+    #[error("Failed to open data file")]
+    Data(data::OpenError),
+    // TODO: recover/restore error
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum OpenOrCreateError {
+    #[error("Could not open existing file")]
+    Open(OpenError),
+    #[error("Could not create new file")]
+    Create(CreateError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Could not create new data file: {0}")]
+    Creating(CreateError),
+    #[error("create or open: {0}")]
+    OpenOrCreate(OpenOrCreateError),
+}
+
+impl<R: Resampler + Clone> DownSampledData<R> {
+    fn new(
         resampler: R,
         config: Config,
         source_path: &Path,
         payload_size: usize,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, data::CreateError> {
         let source_name = source_path.file_name().unwrap_or_default();
         let mut resampled_name = source_name.to_owned();
         resampled_name.push("_");
@@ -72,8 +95,7 @@ impl<R: Resampler> DownSampledData<R> {
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
         Ok(Self {
-            data: Data::new(path, payload_size, config.header(source_name))
-                .map_err(Error::CreatingData)?,
+            data: Data::new(path, payload_size, config.header(source_name))?,
             resample_state: resampler.state(),
             resampler,
             config,
@@ -87,7 +109,7 @@ impl<R: Resampler> DownSampledData<R> {
         config: Config,
         source_path: &Path,
         payload_size: usize,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, OpenError> {
         let source_name = source_path.file_name().unwrap_or_default();
         let mut resampled_name = source_name.to_owned();
         resampled_name.push("_");
@@ -96,9 +118,9 @@ impl<R: Resampler> DownSampledData<R> {
         path.set_file_name(resampled_name);
 
         let (data, _): (_, String) =
-            Data::open_existing(path, payload_size).map_err(Error::OpenData)?;
+            Data::open_existing(path, payload_size).map_err(OpenError::Data)?;
         // HARD to implement
-        // TODO!("check if number last sample checks out with the data"); 
+        // TODO!("check if number last sample checks out with the data");
 
         Ok(Self {
             data,
@@ -111,24 +133,56 @@ impl<R: Resampler> DownSampledData<R> {
     }
 
     pub(crate) fn create(
-        _resampler: R,
-        _config: Config,
-        _source_path: &Path,
-        _payload_size: usize,
-        _source: &Data
-    ) -> Result<Self, Error> {
-        // let mut empty = Self::new(resampler, config, source_path, payload_size)?;
-        // for res in source.iter_lines() {
-        //     let (ts, line) = res?;
-        //     empty.process(ts, line)?;
-        // }
-        // Ok(empty)
-        todo!()
+        resampler: R,
+        config: Config,
+        source_path: &Path,
+        payload_size: usize,
+        source: &mut Data,
+    ) -> Result<Self, CreateError> {
+        let mut empty = Self::new(resampler, config, source_path, payload_size)
+            .map_err(CreateError::CreateData)?;
+        let Some(first_time) = source.first_time() else {
+            return Ok(empty);
+        };
+
+        let mut process_res = Ok(());
+        source
+            .file_handle
+            .read_with_processor(
+                |ts, line| {
+                    if let Err(e) = empty.process(ts, line) {
+                        process_res = Err(e);
+                    }
+                },
+                0,
+                source.data_len,
+                first_time,
+            )
+            .map_err(CreateError::ReadSource)?;
+        process_res.map_err(CreateError::WriteOut)?;
+        Ok(empty)
+    }
+
+    pub(crate) fn open_or_create(
+        resampler: R,
+        config: Config,
+        source_path: &Path,
+        payload_size: usize,
+        source: &mut Data,
+    ) -> Result<Self, OpenOrCreateError> {
+        match Self::open(resampler.clone(), config.clone(), source_path, payload_size) {
+            Ok(downsampled) => return Ok(downsampled),
+            Err(OpenError::Data(data::OpenError::File(util::OpenError::AlreadyExists))) => (),
+            Err(e) => return Err(OpenOrCreateError::Open(e)),
+        }
+
+        Self::create(resampler, config, source_path, payload_size, source)
+            .map_err(OpenOrCreateError::Create)
     }
 }
 
 impl<R: Resampler> DownSampled for DownSampledData<R> {
-    fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), Error> {
+    fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), data::PushError> {
         let data = self.resampler.decode_payload(line);
         self.resample_state.add(data);
         self.ts_sum += ts;
@@ -138,9 +192,7 @@ impl<R: Resampler> DownSampled for DownSampledData<R> {
             let resampled_item = self.resample_state.finish(self.config.bucket_size);
             let resampled_line = self.resampler.encode_item(&resampled_item);
             let resampled_time = self.ts_sum / self.config.bucket_size as u64;
-            self.data
-                .push_data(resampled_time, &resampled_line)
-                .map_err(Error::PushData)?;
+            self.data.push_data(resampled_time, &resampled_line)?;
             self.samples_in_bin = 0;
             self.ts_sum = 0;
         }

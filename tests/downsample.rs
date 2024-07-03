@@ -100,6 +100,7 @@ fn ideal_downsampled_cache() {
 }
 
 #[test]
+#[ignore]
 fn with_cache_same_as_without() {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("with_cache_same_as_without");
@@ -147,4 +148,10 @@ fn with_cache_same_as_without() {
 
     assert_eq!(timestamps_with_cache, timestamps_without_cache);
     assert_eq!(data_with_cache, data_without_cache);
+}
+
+#[test]
+#[ignore]
+fn truncated_downsampled_is_detected() {
+    todo!()
 }

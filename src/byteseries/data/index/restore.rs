@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::byteseries::data::inline_meta::read_meta;
+use crate::byteseries::data::inline_meta::{read_meta, MetaResult};
 use crate::util::{FileWithHeader, OffsetFile, OpenError};
 
 use super::{Entry, Index};
@@ -41,9 +41,7 @@ impl Index {
         let entries = extract_entries(byteseries, payload_size)?;
 
         let mut index = Self {
-            last_timestamp: entries
-                .last()
-                .map(|Entry { timestamp, .. }| *timestamp),
+            last_timestamp: entries.last().map(|Entry { timestamp, .. }| *timestamp),
             file: index_file.split_off_header().0,
             entries: Vec::new(),
         };
@@ -79,7 +77,7 @@ pub(crate) fn extract_entries(
     let mut entries = Vec::new();
 
     let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
-    let chunk_size = 16384usize.next_multiple_of(payload_size);
+    let chunk_size = 16384usize.next_multiple_of(payload_size + 2);
 
     // max size of the metadata section.
     let overlap = 5 * (payload_size + 2);
@@ -134,7 +132,7 @@ pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usiz
         }
 
         let chunks = chunks.by_ref().map(|(_, chunk)| chunk);
-        let Some(meta) = read_meta(chunks, chunk, next_chunk) else {
+        let MetaResult::Meta(meta) = read_meta(chunks, chunk, next_chunk) else {
             return res;
         };
         let index_of_meta = idx * (2 + payload_size) - overlap;

@@ -16,7 +16,7 @@ use crate::{search, Decoder, Resampler, Timestamp};
 use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug {
-    fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), downsample::Error>;
+    fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), data::PushError>;
     fn estimate_lines(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Estimate;
     fn data_mut(&mut self) -> &mut Data;
     fn data(&self) -> &Data;
@@ -43,8 +43,8 @@ pub enum Error {
     NewLineBeforePrevious { new: u64, prev: u64 },
     #[error("Could not push to data file: {0}")]
     Pushing(data::PushError),
-    #[error("Could not updated downsampled data file: {0}")]
-    Downampling(downsample::Error),
+    #[error("Could not updated downsampled data file's metadata: {0}")]
+    Downampling(data::PushError),
     #[error("Timestamps do not exist in Data: {0}")]
     InvalidRange(SeekError),
     #[error("Error while finding start and end point in data: {0}")]
@@ -84,19 +84,27 @@ impl ByteSeries {
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
         R: Resampler + Clone + 'static,
     {
+        let mut data = Data::new(name.as_ref(), payload_size, header).map_err(Error::Create)?;
         Ok(ByteSeries {
             first_time_in_data: None,
             last_time_in_data: None,
             downsampled: resample_configs
                 .into_iter()
                 .map(|config| {
-                    DownSampledData::new(resampler.clone(), config, name.as_ref(), payload_size)
+                    DownSampledData::create(
+                        resampler.clone(),
+                        config,
+                        name.as_ref(),
+                        payload_size,
+                        &mut data,
+                    )
+                    .map_err(downsample::Error::Creating)
                 })
                 .map_ok(Box::new)
                 .map_ok(|boxed| boxed as Box<dyn DownSampled>)
                 .collect::<Result<Vec<_>, downsample::Error>>()
                 .map_err(Error::Downsampled)?,
-            data: Data::new(name, payload_size, header).map_err(Error::Create)?,
+            data,
         })
     }
 
@@ -133,7 +141,7 @@ impl ByteSeries {
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
         R: Resampler + Clone + 'static,
     {
-        let (data, header) = Data::open_existing(&name, payload_size).map_err(Error::Open)?;
+        let (mut data, header) = Data::open_existing(&name, payload_size).map_err(Error::Open)?;
 
         Ok((
             ByteSeries {
@@ -142,13 +150,14 @@ impl ByteSeries {
                 downsampled: resample_configs
                     .into_iter()
                     .map(|config| {
-                        DownSampledData::create(
+                        DownSampledData::open_or_create(
                             resampler.clone(),
                             config,
                             name.as_ref(),
                             payload_size,
-                            &data,
+                            &mut data,
                         )
+                        .map_err(downsample::Error::OpenOrCreate)
                     })
                     .map_ok(Box::new)
                     .map_ok(|boxed| boxed as Box<dyn DownSampled>)
