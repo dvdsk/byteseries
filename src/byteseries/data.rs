@@ -138,7 +138,7 @@ impl Data {
         Ok((data, header))
     }
 
-    pub fn last_line<'a, T: std::fmt::Debug + std::clone::Clone>(
+    pub fn last_line<T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
     ) -> Result<(Timestamp, T), ReadError> {

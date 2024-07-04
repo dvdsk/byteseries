@@ -16,7 +16,7 @@ pub enum Error {
     #[error("ran into io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("could not create a new index file: {0}")]
-    OpenError(#[from] OpenError),
+    Open(#[from] OpenError),
     #[error("could not extract timestamps from byteseries data: {0}")]
     ExtractingTimestamps(#[from] ExtractingTsError),
     #[error("appending of a index element failed")]
