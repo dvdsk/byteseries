@@ -1,4 +1,5 @@
 use byteseries::ByteSeries;
+use pretty_assertions::assert_eq;
 use temp_dir::TempDir;
 
 mod shared;
@@ -44,4 +45,30 @@ fn compare_written_to_read() {
             "the data (left) should be equal to the timestamp (right)"
         );
     }
+}
+
+#[test]
+fn append_refused_if_time_old() {
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("append_refused_if_time_old");
+    let mut bs = ByteSeries::new(&test_path, 0, ()).unwrap();
+    bs.push_line(0, &[]).unwrap();
+    bs.push_line(1, &[]).unwrap();
+    bs.push_line(2, &[]).unwrap();
+    // duplicate
+    let error = bs.push_line(2, &[]).unwrap_err();
+    assert!(matches!(
+        error,
+        byteseries::byteseries::Error::NewLineBeforePrevious { new: 2, prev: 2 }
+    ));
+
+    drop(bs);
+
+    let (mut bs, _): (_, ()) = ByteSeries::open_existing(test_path, 0).unwrap();
+    assert_eq!(bs.range(), Some(0..=2));
+    let error = bs.push_line(2, &[]).unwrap_err();
+    assert!(matches!(
+        error,
+        byteseries::byteseries::Error::NewLineBeforePrevious { new: 2, prev: 2 }
+    ));
 }

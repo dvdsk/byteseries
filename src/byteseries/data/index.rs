@@ -232,6 +232,18 @@ impl Index {
     pub fn last_timestamp(&self) -> Option<Timestamp> {
         self.last_timestamp
     }
+
+    pub(crate) fn full_ts_for(&self, start: u64) -> u64 {
+        match self
+            .entries
+            .binary_search_by_key(&start, |entry| entry.timestamp)
+        {
+            Ok(idx) => self.entries[idx].timestamp,
+            // inserting at idx would keep the list sorted, so the full timestamp
+            // before start lies at idx - 1
+            Err(idx) => self.entries[idx - 1].timestamp,
+        }
+    }
 }
 
 // https://rust-algo.club/doc/src/rust_algorithm_club/searching/interpolation_search/mod.rs.html#16-69

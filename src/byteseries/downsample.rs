@@ -5,10 +5,14 @@ use std::io;
 use std::ops::Bound;
 use std::path::Path;
 
+use tracing::instrument;
+
+use self::resample::EmptyResampler;
+
 use super::data::{self, Data};
 use super::DownSampled;
 use crate::search::RoughSeekPos;
-use crate::{util, ResampleState, Resampler, Timestamp};
+use crate::{util, ResampleState, Resampler, SeekPos, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -61,16 +65,25 @@ pub enum CreateError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
-    #[error("Failed to open data file")]
+    #[error("Failed to open data file: {0}")]
     Data(data::OpenError),
-    // TODO: recover/restore error
+    #[error(
+        "The last timestamp in the opened file {found_in_file:?}, is not what \
+        it should: {expected_last_time:?}"
+    )]
+    OutOfSync {
+        expected_last_time: Option<Timestamp>,
+        found_in_file: Option<Timestamp>,
+    },
+    #[error("Can not check last downsampled item by comparing to source, read error: {0}")]
+    CanNotCompareToSource(data::ReadError),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenOrCreateError {
-    #[error("Could not open existing file")]
+    #[error("Could not open existing file: {0}")]
     Open(OpenError),
-    #[error("Could not create new file")]
+    #[error("Could not create new file: {0}")]
     Create(CreateError),
 }
 
@@ -105,10 +118,12 @@ impl<R: Resampler + Clone> DownSampledData<R> {
         })
     }
 
+    #[instrument(level = "debug", skip(resampler))]
     pub(crate) fn open(
         resampler: R,
         config: Config,
         source_path: &Path,
+        source: &mut Data,
         payload_size: usize,
     ) -> Result<Self, OpenError> {
         let source_name = source_path.file_name().unwrap_or_default();
@@ -118,10 +133,9 @@ impl<R: Resampler + Clone> DownSampledData<R> {
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
 
-        let (data, _): (_, String) =
+        let (mut data, _): (_, String) =
             Data::open_existing(path, payload_size).map_err(OpenError::Data)?;
-        // HARD to implement
-        // TODO!("check if number last sample checks out with the data");
+        verify_last_downsampled_ts(&mut data, source, &config, payload_size + 2)?;
 
         Ok(Self {
             data,
@@ -133,6 +147,7 @@ impl<R: Resampler + Clone> DownSampledData<R> {
         })
     }
 
+    #[instrument(level = "debug", skip(source))]
     pub(crate) fn create(
         resampler: R,
         config: Config,
@@ -146,24 +161,28 @@ impl<R: Resampler + Clone> DownSampledData<R> {
             return Ok(empty);
         };
 
+        let seek = SeekPos {
+            start: 0,
+            end: source.data_len,
+            first_full_ts: first_time,
+        };
         let mut process_res = Ok(());
         source
             .file_handle
             .read_with_processor(
+                seek,
                 |ts, line| {
                     if let Err(e) = empty.process(ts, line) {
                         process_res = Err(e);
                     }
                 },
-                0,
-                source.data_len,
-                first_time,
             )
             .map_err(CreateError::ReadSource)?;
         process_res.map_err(CreateError::WriteOut)?;
         Ok(empty)
     }
 
+    #[instrument(level = "debug", skip(source))]
     pub(crate) fn open_or_create(
         resampler: R,
         config: Config,
@@ -171,7 +190,13 @@ impl<R: Resampler + Clone> DownSampledData<R> {
         payload_size: usize,
         source: &mut Data,
     ) -> Result<Self, OpenOrCreateError> {
-        match Self::open(resampler.clone(), config.clone(), source_path, payload_size) {
+        match Self::open(
+            resampler.clone(),
+            config.clone(),
+            source_path,
+            source,
+            payload_size,
+        ) {
             Ok(downsampled) => return Ok(downsampled),
             Err(OpenError::Data(data::OpenError::File(util::OpenError::Io(io_error))))
                 if io_error.kind() == io::ErrorKind::NotFound =>
@@ -186,7 +211,44 @@ impl<R: Resampler + Clone> DownSampledData<R> {
     }
 }
 
+#[instrument(err)]
+fn verify_last_downsampled_ts(
+    data: &mut Data,
+    source: &mut Data,
+    config: &Config,
+    line_size: usize,
+) -> Result<(), OpenError> {
+    let bucket_len = config.bucket_size as u64 * line_size as u64;
+    let start = source.last_line_start() - bucket_len;
+    let seek = crate::SeekPos {
+        start,
+        end: source.last_line_start() + line_size as u64,
+        first_full_ts: source.index.full_ts_for(start),
+    };
+    let mut placeholder = Vec::new();
+    let mut timestamps = Vec::new();
+    source
+        .read_resampling(
+            seek,
+            &mut EmptyResampler,
+            config.bucket_size,
+            &mut timestamps,
+            &mut placeholder,
+        )
+        .map_err(OpenError::CanNotCompareToSource)?;
+
+    if data.last_time() == timestamps.last().copied() {
+        Ok(())
+    } else {
+        Err(OpenError::OutOfSync {
+            expected_last_time: timestamps.last().copied(),
+            found_in_file: data.last_time(),
+        })
+    }
+}
+
 impl<R: Resampler> DownSampled for DownSampledData<R> {
+    #[instrument(level = "trace", skip(self, line))]
     fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), data::PushError> {
         let data = self.resampler.decode_payload(line);
         self.resample_state.add(data);

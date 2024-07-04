@@ -147,15 +147,13 @@ impl Data {
 
         let mut timestamps = Vec::new();
         let mut data = Vec::new();
+        let seek = SeekPos {
+            start,
+            end,
+            first_full_ts: self.index.last_timestamp().ok_or(ReadError::NoData)?,
+        };
         self.file_handle
-            .read(
-                decoder,
-                &mut timestamps,
-                &mut data,
-                start,
-                end,
-                self.index.last_timestamp().ok_or(ReadError::NoData)?,
-            )
+            .read(decoder, &mut timestamps, &mut data, seek)
             .map_err(ReadError::Reading)?;
 
         let ts = timestamps.pop().ok_or(ReadError::NoData)?;
@@ -173,21 +171,33 @@ impl Data {
     }
 
     /// Append data to disk but do not flush, a crash can still lead to the data being lost
+    #[instrument(skip(self, line), level = "trace")]
     pub fn push_data(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), PushError> {
         //we store the timestamp - the last recorded full timestamp as u16. If
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
-        //
+
+        tracing::info!("{}, {:?}", ts, self.index.last_timestamp());
         let small_ts = self
             .index
             .last_timestamp()
-            .map(|last_timestamp| ts - last_timestamp)
+            .map(|last_timestamp| {
+                ts.checked_sub(last_timestamp).expect(
+                    "impossible for last_timestamp to be later (bigger) then new, \
+                    since new timestamp is verified to be later then the last \
+                    in Byteseries::push_line",
+                )
+            })
             .map(TryInto::<u16>::try_into)
             .and_then(Result::ok);
 
         let small_ts = if let Some(small_ts) = small_ts {
             small_ts
         } else {
+            tracing::debug!(
+                "inserting full timestamp via and updating index\
+                , timestamp: {ts}"
+            );
             let meta = ts.to_le_bytes();
             let written = write_meta(&mut self.file_handle, meta, self.payload_size)
                 .map_err(PushError::Meta)?;
@@ -222,14 +232,7 @@ impl Data {
         data: &mut Vec<D::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read(
-                decoder,
-                timestamps,
-                data,
-                seek.start,
-                seek.end,
-                seek.first_full_ts,
-            )
+            .read(decoder, timestamps, data, seek)
             .map_err(ReadError::Reading)
     }
 
@@ -242,15 +245,7 @@ impl Data {
         data: &mut Vec<<R as Decoder>::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read_resampling(
-                resampler,
-                bucket_size,
-                timestamps,
-                data,
-                seek.start,
-                seek.end,
-                seek.first_full_ts,
-            )
+            .read_resampling(resampler, bucket_size, timestamps, data, seek)
             .map_err(ReadError::Reading)
     }
 

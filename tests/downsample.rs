@@ -1,3 +1,5 @@
+use std::fs::OpenOptions;
+
 use byteseries::byteseries::downsample;
 use byteseries::{ByteSeries, Timestamp};
 use itertools::Itertools;
@@ -7,20 +9,21 @@ use temp_dir::TempDir;
 mod shared;
 
 const T1: Timestamp = 0;
-const T2: Timestamp = 10_000;
+const T2: Timestamp = 100_000;
 
-fn insert_line(ts: &mut ByteSeries) {
+fn insert_lines(bs: &mut ByteSeries) {
     let t_start = T1;
     let t_end = T2;
     let slope = 0.1;
     let n_points = 1000;
 
     let dt = (t_end - t_start) / n_points as u64;
+    assert_ne!(dt, 0);
     let mut time = t_start;
 
     for _ in 0..n_points {
         let val = time as f32 * slope;
-        ts.push_line(time, val.to_le_bytes()).unwrap();
+        bs.push_line(time, val.to_le_bytes()).unwrap();
         time += dt;
     }
 }
@@ -68,7 +71,7 @@ fn no_downsampled_cache() {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_no_downsample_cache");
     let mut bs = ByteSeries::new(test_path, 4, ()).unwrap();
-    insert_line(&mut bs);
+    insert_lines(&mut bs);
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
@@ -92,7 +95,7 @@ fn ideal_downsampled_cache() {
         }],
     )
     .unwrap();
-    insert_line(&mut bs);
+    insert_lines(&mut bs);
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
@@ -103,7 +106,7 @@ fn ideal_downsampled_cache() {
 
 #[test]
 fn with_cache_same_as_without() {
-    shared::setup_tracing(); 
+    shared::setup_tracing();
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("with_cache_same_as_without");
@@ -112,7 +115,7 @@ fn with_cache_same_as_without() {
     {
         let mut bs =
             ByteSeries::new_with_resamplers(&test_path, 4, (), FloatResampler, Vec::new()).unwrap();
-        insert_line(&mut bs);
+        insert_lines(&mut bs);
 
         bs.read_n(
             10,
@@ -137,7 +140,7 @@ fn with_cache_same_as_without() {
             }],
         )
         .unwrap();
-        insert_line(&mut bs);
+        bs.range().unwrap();
 
         bs.read_n(
             10,
@@ -149,12 +152,80 @@ fn with_cache_same_as_without() {
         .unwrap();
     }
 
-    assert_eq!(timestamps_with_cache, timestamps_without_cache);
+    assert_eq!(
+        timestamps_with_cache, timestamps_without_cache,
+        "timestamps from the \
+        cache (left) are different then does created by the resampler on \
+        the fly (right)"
+    );
     assert_eq!(data_with_cache, data_without_cache);
 }
 
 #[test]
-#[ignore]
 fn truncated_downsampled_is_detected() {
-    todo!()
+    shared::setup_tracing();
+
+    const MAX_GAP: usize = 10;
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("with_cache_same_as_without");
+    {
+        let mut bs = ByteSeries::new_with_resamplers(
+            &test_path,
+            0,
+            (),
+            FloatResampler,
+            vec![downsample::Config {
+                max_gap: Some(10),
+                bucket_size: 10,
+            }],
+        )
+        .unwrap();
+        let mut timestamps = (0..).into_iter();
+        for ts in timestamps.by_ref().take(50) {
+            bs.push_line(ts, &[0, 0, 0, 0]).unwrap();
+        }
+        for ts in timestamps.by_ref().take(5) {
+            bs.push_line(ts, &[0, 0, 0, 0]).unwrap();
+        }
+
+        let mut timestamps = timestamps.map(|ts| ts + MAX_GAP as Timestamp + 1);
+        for ts in timestamps.by_ref().take(5) {
+            bs.push_line(ts, &[0, 0, 0, 0]).unwrap();
+        }
+    }
+    {
+        // corrupt the downsample cache
+        let mut name = test_path.file_name().unwrap_or_default().to_owned();
+        name.push("_Some(10)_10.byteseries");
+        let mut path = test_path.to_path_buf();
+        path.set_file_name(name);
+        let downsampled_cache = OpenOptions::new()
+            .write(true)
+            .create_new(false)
+            .create(false)
+            .open(path)
+            .unwrap();
+        let len = downsampled_cache.metadata().unwrap().len();
+        downsampled_cache.set_len(len - 1).unwrap();
+    }
+
+    let error = ByteSeries::open_existing_with_resampler::<(), _>(
+        test_path,
+        4,
+        FloatResampler,
+        vec![downsample::Config {
+            max_gap: Some(10),
+            bucket_size: 10,
+        }],
+    )
+    .unwrap_err();
+
+    use byteseries::byteseries;
+    use byteseries::downsample;
+    assert!(matches!(
+        error,
+        byteseries::Error::Downsampled(downsample::Error::OpenOrCreate(
+            downsample::OpenOrCreateError::Open(downsample::OpenError::OutOfSync { .. })
+        ))
+    ))
 }

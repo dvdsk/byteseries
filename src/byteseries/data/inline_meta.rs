@@ -2,7 +2,7 @@ use core::fmt;
 use std::io::{Read, Seek, SeekFrom, Write};
 use tracing::instrument;
 
-use crate::Resampler;
+use crate::{Resampler, SeekPos};
 
 use super::{Decoder, Timestamp};
 
@@ -38,20 +38,13 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
-        start_byte: u64,
-        stop_byte: u64,
-        first_full_ts: Timestamp,
+        seek: SeekPos,
     ) -> Result<(), std::io::Error> {
-        self.read_with_processor(
-            |ts, payload| {
-                let item = decoder.decode_payload(payload);
-                data.push(item);
-                timestamps.push(ts);
-            },
-            start_byte,
-            stop_byte,
-            first_full_ts,
-        )
+        self.read_with_processor(seek, |ts, payload| {
+            let item = decoder.decode_payload(payload);
+            data.push(item);
+            timestamps.push(ts);
+        })
     }
 
     pub(crate) fn read_resampling<R: crate::Resampler>(
@@ -60,42 +53,34 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         bucket_size: usize,
         timestamps: &mut Vec<u64>,
         data: &mut Vec<<R as Decoder>::Item>,
-        start_byte: u64,
-        stop_byte: u64,
-        first_full_ts: u64,
+        seek: SeekPos,
     ) -> Result<(), std::io::Error> {
-        let to_read = stop_byte - start_byte;
+        let to_read = seek.end - seek.start;
         let mut buf = vec![0; to_read as usize];
-        self.file_handle.seek(SeekFrom::Start(start_byte))?;
+        self.file_handle.seek(SeekFrom::Start(seek.start))?;
         self.file_handle.read_exact(&mut buf)?;
 
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
 
-        self.read_with_processor(
-            |ts, payload| {
-                sampler.process(ts, payload);
-            },
-            start_byte,
-            stop_byte,
-            first_full_ts,
-        )
+        self.read_with_processor(seek, |ts, payload| {
+            sampler.process(ts, payload);
+        })
     }
 
+    #[instrument(level = "debug", skip(self, processor))]
     pub(crate) fn read_with_processor(
         &mut self,
+        seek: SeekPos,
         mut processor: impl FnMut(Timestamp, &[u8]),
-        start_byte: u64,
-        stop_byte: u64,
-        first_full_ts: Timestamp,
     ) -> Result<(), std::io::Error> {
-        let mut to_read = stop_byte - start_byte;
+        let mut to_read = seek.end - seek.start;
         let chunk_size = 16384usize.next_multiple_of(self.line_size);
         let mut buf = vec![0; chunk_size];
 
-        self.file_handle.seek(SeekFrom::Start(start_byte))?;
+        self.file_handle.seek(SeekFrom::Start(seek.start))?;
 
         let mut needed_overlap = 0;
-        let mut full_ts = first_full_ts;
+        let mut full_ts = seek.first_full_ts;
         while to_read > 0 {
             let read_size = chunk_size.min(to_read as usize);
             self.file_handle
@@ -208,7 +193,6 @@ pub(crate) fn write_meta(
     meta: [u8; 8],
     payload_size: usize,
 ) -> std::io::Result<u64> {
-    tracing::debug!("inserting full timestamp through meta lines");
     let t = meta;
     let lines = match payload_size {
         0 => {

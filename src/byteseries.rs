@@ -145,8 +145,8 @@ impl ByteSeries {
 
         Ok((
             ByteSeries {
-                first_time_in_data: None,
-                last_time_in_data: None,
+                first_time_in_data: data.first_time(),
+                last_time_in_data: data.last_time(),
                 downsampled: resample_configs
                     .into_iter()
                     .map(|config| {
@@ -169,6 +169,7 @@ impl ByteSeries {
         ))
     }
 
+    #[instrument(skip(self, line), level = "trace")]
     pub fn push_line(&mut self, ts: Timestamp, line: impl AsRef<[u8]>) -> Result<(), Error> {
         //write 16 bit timestamp and then the line to file
         //for now no support for sign bit since data will always be after 0 (1970)
@@ -240,12 +241,20 @@ impl ByteSeries {
             let estimate = downsampled.estimate_lines(start, end);
             dbg!(&estimate);
             if estimate.max < n as u64 {
+                tracing::debug!(
+                    "not enough datapoints, not using next\
+                    downsamled cache, estimate was: {estimate:?}"
+                );
                 break;
             }
             if estimate.min < n as u64 {
+                tracing::debug!(
+                    "possibly not enough datapoints, not using \
+                    next level downsamled cache, estimate was: {estimate:?}"
+                );
                 break;
             }
-            dbg!("using downsampled data");
+            tracing::debug!("using downsampled data: {downsampled:?}");
             optimal_data = downsampled.data_mut();
         }
 
@@ -297,5 +306,14 @@ impl ByteSeries {
     }
     pub fn flush_to_disk(&mut self) {
         self.data.flush_to_disk()
+    }
+
+    pub fn range(&self) -> Option<core::ops::RangeInclusive<Timestamp>> {
+        self.first_time_in_data.map(|first| {
+            first
+                ..=self
+                    .last_time_in_data
+                    .expect("set at the same time as first_time_in_data")
+        })
     }
 }

@@ -26,7 +26,7 @@ impl Resampler for EmptyResampler {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct EmptySample;
 
 #[derive(Debug)]
