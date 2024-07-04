@@ -15,7 +15,7 @@ use crate::{search, Decoder, Resampler, Timestamp};
 
 use self::downsample::DownSampledData;
 
-trait DownSampled: fmt::Debug {
+trait DownSampled: fmt::Debug + Send + 'static {
     fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), data::PushError>;
     fn estimate_lines(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Estimate;
     fn data_mut(&mut self) -> &mut Data;
@@ -84,7 +84,8 @@ impl ByteSeries {
     ) -> Result<ByteSeries, Error>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
-        R: Resampler + Clone + 'static,
+        R: Resampler + Clone + Send + 'static,
+        R::State: Send + 'static,
     {
         let mut data = Data::new(name.as_ref(), payload_size, header).map_err(Error::Create)?;
         Ok(ByteSeries {
@@ -141,7 +142,8 @@ impl ByteSeries {
     ) -> Result<(ByteSeries, H), Error>
     where
         H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
-        R: Resampler + Clone + 'static,
+        R: Resampler + Clone + Send + 'static,
+        R::State: Send + 'static,
     {
         let (mut data, header) = Data::open_existing(&name, payload_size).map_err(Error::Open)?;
 

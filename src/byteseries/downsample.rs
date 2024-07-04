@@ -95,7 +95,11 @@ pub enum Error {
     OpenOrCreate(OpenOrCreateError),
 }
 
-impl<R: Resampler + Clone> DownSampledData<R> {
+impl<R> DownSampledData<R>
+where
+    R: Resampler + Clone + Send + 'static,
+    R::State: Send + 'static,
+{
     fn new(
         resampler: R,
         config: Config,
@@ -169,14 +173,11 @@ impl<R: Resampler + Clone> DownSampledData<R> {
         let mut process_res = Ok(());
         source
             .file_handle
-            .read_with_processor(
-                seek,
-                |ts, line| {
-                    if let Err(e) = empty.process(ts, line) {
-                        process_res = Err(e);
-                    }
-                },
-            )
+            .read_with_processor(seek, |ts, line| {
+                if let Err(e) = empty.process(ts, line) {
+                    process_res = Err(e);
+                }
+            })
             .map_err(CreateError::ReadSource)?;
         process_res.map_err(CreateError::WriteOut)?;
         Ok(empty)
@@ -247,7 +248,11 @@ fn verify_last_downsampled_ts(
     }
 }
 
-impl<R: Resampler> DownSampled for DownSampledData<R> {
+impl<R> DownSampled for DownSampledData<R>
+where
+    R: Resampler + Clone + Send + 'static,
+    R::State: Send + 'static,
+{
     #[instrument(level = "trace", skip(self, line))]
     fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), data::PushError> {
         let data = self.resampler.decode_payload(line);
