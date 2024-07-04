@@ -51,6 +51,8 @@ pub enum Error {
     Seeking(SeekError),
     #[error("Could not read data: {0}")]
     Reading(data::ReadError),
+    #[error("Would need to collect more then usize::MAX samples to resample.")]
+    TooMuchToResample,
 }
 
 impl ByteSeries {
@@ -189,7 +191,7 @@ impl ByteSeries {
         self.last_time_in_data = Some(ts);
         self.first_time_in_data.get_or_insert(ts);
 
-        for downsampled in self.downsampled.iter_mut() {
+        for downsampled in &mut self.downsampled {
             downsampled
                 .process(ts, line.as_ref())
                 .map_err(Error::Downampling)?;
@@ -197,6 +199,9 @@ impl ByteSeries {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
     pub fn read_all<D: Decoder>(
         &mut self,
         range: impl RangeBounds<Timestamp>,
@@ -222,6 +227,12 @@ impl ByteSeries {
     ///
     /// This might read more but will resample down using averages.
     /// No interpolation is performed.
+    ///
+    /// # Errors
+    ///
+    /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
+    /// Its mostly IO-issues.
+    #[allow(clippy::missing_panics_doc)] // is bug if panic
     pub fn read_n<R: Resampler>(
         &mut self,
         n: usize,
@@ -234,12 +245,16 @@ impl ByteSeries {
         let end = range.end_bound().cloned();
         self.check_range(start, end).map_err(Error::InvalidRange)?;
 
-        assert!(self.downsampled.windows(2).all(|w| w[0].data().data_len >= w[1].data().data_len), "for this algorithm to work downsampled must be sorted in descending resolution/numb lines");
+        assert!(
+            self.downsampled
+                .windows(2)
+                .all(|w| w[0].data().data_len >= w[1].data().data_len),
+            "downsampled must be sorted in descending resolution/numb lines"
+        );
 
         let mut optimal_data = &mut self.data;
         for downsampled in &mut self.downsampled {
             let estimate = downsampled.estimate_lines(start, end);
-            dbg!(&estimate);
             if estimate.max < n as u64 {
                 tracing::debug!(
                     "not enough datapoints, not using next\
@@ -262,7 +277,8 @@ impl ByteSeries {
             .refine(optimal_data)
             .map_err(Error::Seeking)?;
         let lines = seek.lines(optimal_data);
-        let bucket_size = 1.max(lines / n as u64) as usize;
+        let bucket_size = 1.max(lines / n as u64);
+        let bucket_size = usize::try_from(bucket_size).map_err(|_| Error::TooMuchToResample)?;
 
         optimal_data
             .read_resampling(seek, resampler, bucket_size, timestamps, data)
@@ -305,9 +321,11 @@ impl ByteSeries {
         Ok(())
     }
     pub fn flush_to_disk(&mut self) {
-        self.data.flush_to_disk()
+        self.data.flush_to_disk();
     }
 
+    #[must_use]
+    #[allow(clippy::missing_panics_doc)] // is bug if panic
     pub fn range(&self) -> Option<core::ops::RangeInclusive<Timestamp>> {
         self.first_time_in_data.map(|first| {
             first

@@ -98,6 +98,8 @@ pub(crate) fn extract_entries(
         );
     }
 
+    // mod chunk_size (was usize) is within usize
+    #[allow(clippy::cast_possible_truncation)] 
     let left = (data_len % (chunk_size as u64)) as usize;
     file.read_exact(&mut buffer[overlap..overlap + left])
         .map_err(ExtractingTsError::ReadFinalChunk)?;

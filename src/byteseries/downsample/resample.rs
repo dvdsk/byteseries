@@ -13,6 +13,7 @@ impl<const N: usize> ResampleState for [f32; N] {
     }
 
     fn finish(&mut self, collected: usize) -> Self::Item {
+        #[allow(clippy::cast_precision_loss)]
         let res = self.map(|s| s / (collected as f32));
         for i in self {
             *i = 0.0;
@@ -28,6 +29,7 @@ impl ResampleState for f32 {
         *self += item;
     }
     fn finish(&mut self, collected: usize) -> Self::Item {
+        #[allow(clippy::cast_precision_loss)]
         let res = *self / collected as f32;
         *self = 0.0;
         res

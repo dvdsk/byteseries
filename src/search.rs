@@ -197,6 +197,7 @@ pub struct SeekPos {
 }
 
 impl SeekPos {
+    #[must_use]
     pub fn lines(&self, series: &Data) -> u64 {
         (self.end - self.start) / (series.payload_size() + 2) as u64
     }
@@ -211,7 +212,8 @@ fn find_read_start(
 ) -> Result<u64, SeekError> {
     assert!(stop >= start + 2);
 
-    let mut buf = vec![0u8; (stop - start) as usize];
+    let buf_len = usize::try_from(stop - start).expect("search area is smaller the u16::MAX");
+    let mut buf = vec![0u8; buf_len];
     data.file_handle.seek(SeekFrom::Start(start))?;
     data.file_handle.file_handle.read_exact(&mut buf)?;
 
@@ -235,7 +237,8 @@ fn find_read_start(
 /// returns the offset from the start of the file where last line **stops**
 fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Result<u64, SeekError> {
     //compare partial (16 bit) timestamps in between these bounds
-    let mut buf = vec![0u8; (stop - start) as usize];
+    let buf_len = usize::try_from(stop - start).expect("search area is smaller the u16::MAX");
+    let mut buf = vec![0u8; buf_len];
     data.file_handle.seek(SeekFrom::Start(start))?;
     data.file_handle.file_handle.read_exact(&mut buf)?;
 

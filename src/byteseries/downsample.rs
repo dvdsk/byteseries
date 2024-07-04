@@ -201,7 +201,7 @@ impl<R: Resampler + Clone> DownSampledData<R> {
             Err(OpenError::Data(data::OpenError::File(util::OpenError::Io(io_error))))
                 if io_error.kind() == io::ErrorKind::NotFound =>
             {
-                tracing::info!("No downsampled data cache, creating one now")
+                tracing::info!("No downsampled data cache, creating one now");
             }
             Err(e) => return Err(OpenOrCreateError::Open(e)),
         }

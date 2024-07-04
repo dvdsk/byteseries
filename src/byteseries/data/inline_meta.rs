@@ -15,10 +15,8 @@ pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
 pub(crate) fn lines_per_metainfo(payload_size: usize) -> usize {
     let base_lines = 2; // needed to recognise meta section
     let extra_lines_needed = match payload_size {
-        0 => 2,
-        1 => 2,
-        2 => 1,
-        3 => 1,
+        0 | 1 => 2,
+        2 | 3 => 1,
         4.. => 0,
     };
     base_lines + extra_lines_needed
@@ -55,13 +53,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         data: &mut Vec<<R as Decoder>::Item>,
         seek: SeekPos,
     ) -> Result<(), std::io::Error> {
-        let to_read = seek.end - seek.start;
-        let mut buf = vec![0; to_read as usize];
-        self.file_handle.seek(SeekFrom::Start(seek.start))?;
-        self.file_handle.read_exact(&mut buf)?;
-
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
-
         self.read_with_processor(seek, |ts, payload| {
             sampler.process(ts, payload);
         })
@@ -82,7 +74,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         let mut needed_overlap = 0;
         let mut full_ts = seek.first_full_ts;
         while to_read > 0 {
-            let read_size = chunk_size.min(to_read as usize);
+            let read_size = chunk_size.min(usize::try_from(to_read).unwrap_or(usize::MAX));
             self.file_handle
                 .read_exact(&mut buf[needed_overlap..needed_overlap + read_size])?;
             to_read -= read_size as u64;
@@ -291,8 +283,8 @@ pub(crate) fn read_meta<'a>(
             result[0..3].copy_from_slice(&first_chunk[2..]);
             result[3..6].copy_from_slice(&next_chunk[2..]);
             let chunk = match chunks.next() {
-                Some(chunk) => chunk,
                 None => return MetaResult::OutOfLines { consumed: 0 },
+                Some(chunk) => chunk,
             };
             result[6..8].copy_from_slice(&chunk[0..2]);
         }

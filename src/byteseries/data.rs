@@ -74,6 +74,9 @@ pub enum ReadError {
 }
 
 impl Data {
+    /// # Errors
+    ///
+    /// See the [`CreateError`] docs for an exhaustive list of everything that can go wrong.
     pub fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
@@ -138,6 +141,9 @@ impl Data {
         Ok((data, header))
     }
 
+    /// # Errors
+    ///
+    /// See the [`ReadError`] docs for an exhaustive list of everything that can go wrong.
     pub fn last_line<T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
@@ -167,7 +173,7 @@ impl Data {
     }
 
     pub(crate) fn last_time(&mut self) -> Option<Timestamp> {
-        self.last_line(&mut EmptyDecoder).map(|(ts, _)| ts).ok()
+        self.last_line(&mut EmptyDecoder).map(|(ts, ())| ts).ok()
     }
 
     /// Append data to disk but do not flush, a crash can still lead to the data being lost
@@ -224,6 +230,9 @@ impl Data {
         self.index.file.sync_data().unwrap();
     }
 
+    /// # Errors
+    ///
+    /// See the [`ReadError`] docs for an exhaustive list of everything that can go wrong.
     pub fn read_all<D: Decoder>(
         &mut self,
         seek: SeekPos,

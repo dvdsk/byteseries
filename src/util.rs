@@ -69,7 +69,7 @@ where
 
         let len = LINE_ENDS.len() as u64
             + mem::size_of_val(&user_header_len) as u64
-            + user_header_len as u64;
+            + u64::from(user_header_len);
         Ok(FileWithHeader {
             handle: file,
             user_header,
@@ -117,7 +117,7 @@ where
             handle: file,
             data_offset: LINE_ENDS.len() as u64
                 + mem::size_of_val(&user_header_len) as u64
-                + user_header_len as u64,
+                + u64::from(user_header_len),
             user_header,
         })
     }
@@ -148,7 +148,7 @@ impl OffsetFile {
     }
 
     /// length needed to read the entire file without the header.
-    /// You can use this as input for read_exact though you might
+    /// You can use this as input for `read_exact` though you might
     /// want to spread the read.
     pub fn data_len(&self) -> std::io::Result<u64> {
         self.handle.metadata().map(|m| m.len() - self.offset)
