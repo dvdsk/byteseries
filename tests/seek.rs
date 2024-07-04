@@ -30,7 +30,7 @@ fn beyond_range() {
 
     match read_res {
         Err(e) => match e {
-            byteseries::byteseries::Error::InvalidRange(e) => assert!(
+            byteseries::series::Error::InvalidRange(e) => assert!(
                 std::mem::discriminant(&e) == std::mem::discriminant(&SeekError::StartAfterData)
             ),
             _ => panic!("sampler should be error StartAfterData"),

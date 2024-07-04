@@ -1,8 +1,8 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Bound;
 
-use crate::byteseries::data::index::{EndArea, StartArea};
-use crate::byteseries::data::Data;
+use crate::series::data::index::{EndArea, StartArea};
+use crate::series::data::Data;
 use crate::Timestamp;
 
 #[derive(thiserror::Error, Debug)]

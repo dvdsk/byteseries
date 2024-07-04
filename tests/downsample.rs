@@ -1,6 +1,6 @@
 use std::fs::OpenOptions;
 
-use byteseries::byteseries::downsample;
+use byteseries::series::downsample;
 use byteseries::{ByteSeries, Timestamp};
 use itertools::Itertools;
 use pretty_assertions::assert_eq;
@@ -220,11 +220,11 @@ fn truncated_downsampled_is_detected() {
     )
     .unwrap_err();
 
-    use byteseries::byteseries;
-    use byteseries::downsample;
+    use byteseries::series;
+    use series::downsample;
     assert!(matches!(
         error,
-        byteseries::Error::Downsampled(downsample::Error::OpenOrCreate(
+        series::Error::Downsampled(downsample::Error::OpenOrCreate(
             downsample::OpenOrCreateError::Open(downsample::OpenError::OutOfSync { .. })
         ))
     ))

@@ -59,7 +59,7 @@ fn append_refused_if_time_old() {
     let error = bs.push_line(2, &[]).unwrap_err();
     assert!(matches!(
         error,
-        byteseries::byteseries::Error::NewLineBeforePrevious { new: 2, prev: 2 }
+        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 2 }
     ));
 
     drop(bs);
@@ -69,6 +69,6 @@ fn append_refused_if_time_old() {
     let error = bs.push_line(2, &[]).unwrap_err();
     assert!(matches!(
         error,
-        byteseries::byteseries::Error::NewLineBeforePrevious { new: 2, prev: 2 }
+        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 2 }
     ));
 }

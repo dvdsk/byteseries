@@ -1,8 +1,8 @@
-pub mod byteseries;
+pub mod series;
 pub mod search;
 mod util;
 
-pub use byteseries::ByteSeries;
+pub use series::ByteSeries;
 pub use search::SeekPos;
 
 pub type Timestamp = u64;
