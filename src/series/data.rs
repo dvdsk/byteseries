@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 use tracing::instrument;
 
-use crate::util::{self, FileWithHeader, OffsetFile};
+use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::{Decoder, SeekPos, Timestamp};
 
 pub(crate) mod inline_meta;
@@ -36,9 +36,9 @@ impl Decoder for EmptyDecoder {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
     #[error("{0}")]
-    File(util::OpenError),
+    File(file::OpenError),
     #[error("{0}")]
-    Index(util::OpenError),
+    Index(file::OpenError),
     #[error("{0}")]
     GetLength(std::io::Error),
 }
@@ -46,7 +46,7 @@ pub enum CreateError {
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("{0}")]
-    File(util::OpenError),
+    File(file::OpenError),
     #[error("{0}")]
     Index(restore::Error),
     #[error("{0}")]
@@ -56,7 +56,7 @@ pub enum OpenError {
 #[derive(Debug, thiserror::Error)]
 pub enum PushError {
     #[error("{0}")]
-    File(util::OpenError),
+    File(file::OpenError),
     #[error("Could not insert meta section {0}")]
     Meta(std::io::Error),
     #[error("Failed to update index {0}")]

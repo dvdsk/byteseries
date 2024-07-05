@@ -12,7 +12,7 @@ use self::resample::EmptyResampler;
 use super::data::{self, Data};
 use super::DownSampled;
 use crate::search::RoughSeekPos;
-use crate::{util, ResampleState, Resampler, SeekPos, Timestamp};
+use crate::{file, ResampleState, Resampler, SeekPos, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -199,7 +199,7 @@ where
             payload_size,
         ) {
             Ok(downsampled) => return Ok(downsampled),
-            Err(OpenError::Data(data::OpenError::File(util::OpenError::Io(io_error))))
+            Err(OpenError::Data(data::OpenError::File(file::OpenError::Io(io_error))))
                 if io_error.kind() == io::ErrorKind::NotFound =>
             {
                 tracing::info!("No downsampled data cache, creating one now");

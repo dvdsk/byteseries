@@ -7,7 +7,7 @@ use serde::Serialize;
 use tracing::instrument;
 
 use crate::series::data::inline_meta::{read_meta, MetaResult};
-use crate::util::{FileWithHeader, OffsetFile, OpenError};
+use crate::file::{FileWithHeader, OffsetFile, OpenError};
 
 use super::{Entry, Index};
 

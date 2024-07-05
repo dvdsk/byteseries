@@ -1,6 +1,6 @@
 pub mod search;
 pub mod series;
-mod util;
+pub mod file;
 
 pub use search::SeekPos;
 pub use series::{downsample, ByteSeries};

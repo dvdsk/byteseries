@@ -5,7 +5,7 @@ use std::io::{Read, Seek, Write};
 use std::path::Path;
 use tracing::instrument;
 
-use crate::util::{self, FileWithHeader, OffsetFile};
+use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::Timestamp;
 
 use super::inline_meta;
@@ -69,7 +69,7 @@ impl EndArea {
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("")]
-    File(util::OpenError),
+    File(file::OpenError),
     #[error("The header in the index and byteseries are different")]
     IndexAndDataHeaderDifferent,
     #[error("reading in")]
@@ -81,7 +81,7 @@ impl Index {
     pub fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
         user_header: H,
-    ) -> Result<Index, util::OpenError>
+    ) -> Result<Index, file::OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {

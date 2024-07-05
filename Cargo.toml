@@ -3,6 +3,11 @@ name = "byteseries"
 version = "0.4.0"
 authors = ["David Kleingeld <dskleingeld@gmail.com>"]
 edition = "2021"
+resolver = "2"
+
+[features]
+smallvec = ["dep:smallvec"]
+default = ["smallvec"]
 
 [dependencies]
 thiserror = "1.0"
@@ -12,6 +17,7 @@ tracing = "0.1.40"
 ron = "0.8.1"
 serde = { version = "1.0.203", features = ["derive"] }
 itertools = "0.13.0"
+smallvec = { version = "2.0.0-alpha.6", optional = true }
 
 [dev-dependencies]
 temp-dir = "0.1.13"
