@@ -25,9 +25,7 @@ pub fn setup_tracing() {
 pub struct EmptyDecoder;
 impl byteseries::Decoder for EmptyDecoder {
     type Item = ();
-    fn decode_payload(&mut self, _: &[u8]) -> Self::Item {
-        
-    }
+    fn decode_payload(&mut self, _: &[u8]) -> Self::Item {}
 }
 
 pub fn insert_uniform_arrays(

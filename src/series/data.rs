@@ -83,7 +83,7 @@ impl Data {
         header: H,
     ) -> Result<Self, CreateError>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
         let file = FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())
             .map_err(CreateError::File)?;
@@ -108,7 +108,7 @@ impl Data {
         payload_size: usize,
     ) -> Result<(Data, H), OpenError>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
         // TODO, check for zero pattern at the end
         // a single u16 time of zeros

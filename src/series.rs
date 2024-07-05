@@ -63,7 +63,7 @@ impl ByteSeries {
         header: H,
     ) -> Result<ByteSeries, Error>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
         Self::new_with_resamplers(
             name,
@@ -83,7 +83,7 @@ impl ByteSeries {
         resample_configs: Vec<downsample::Config>,
     ) -> Result<ByteSeries, Error>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
@@ -118,7 +118,7 @@ impl ByteSeries {
         payload_size: usize,
     ) -> Result<(ByteSeries, H), Error>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
         let (mut data, header) = Data::open_existing(name, payload_size).map_err(Error::Open)?;
 
@@ -141,7 +141,7 @@ impl ByteSeries {
         resample_configs: Vec<downsample::Config>,
     ) -> Result<(ByteSeries, H), Error>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {

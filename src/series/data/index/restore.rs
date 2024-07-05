@@ -34,7 +34,7 @@ impl Index {
         header: H,
     ) -> Result<Self, Error>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
         let temp_path = name.as_ref().with_extension("byteseries_index.part");
         let index_file: FileWithHeader<H> = FileWithHeader::new(&temp_path, header)?;
@@ -99,7 +99,7 @@ pub(crate) fn extract_entries(
     }
 
     // mod chunk_size (was usize) is within usize
-    #[allow(clippy::cast_possible_truncation)] 
+    #[allow(clippy::cast_possible_truncation)]
     let left = (data_len % (chunk_size as u64)) as usize;
     file.read_exact(&mut buffer[overlap..overlap + left])
         .map_err(ExtractingTsError::ReadFinalChunk)?;

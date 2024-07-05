@@ -83,7 +83,7 @@ impl Index {
         user_header: H,
     ) -> Result<Index, util::OpenError>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
         let file: FileWithHeader<H> = FileWithHeader::new(
             name.as_ref().with_extension("byteseries_index"),
@@ -103,7 +103,7 @@ impl Index {
         user_header: &H,
     ) -> Result<Index, OpenError>
     where
-        H: DeserializeOwned + Serialize + Eq + fmt::Debug + 'static + Clone,
+        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
         let mut file: FileWithHeader<H> =
             FileWithHeader::open_existing(name.as_ref().with_extension("byteseries_index"), 16)

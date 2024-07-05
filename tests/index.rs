@@ -5,8 +5,8 @@ use temp_dir::TempDir;
 mod shared;
 use shared::insert_uniform_arrays;
 
-use pretty_assertions::assert_eq;
 use crate::shared::setup_tracing;
+use pretty_assertions::assert_eq;
 
 #[test]
 fn reconstructed_index_works() {
