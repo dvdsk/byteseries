@@ -6,6 +6,8 @@ mod shared;
 use shared::setup_tracing;
 use shared::{insert_timestamps, Timestamp};
 
+use crate::shared::EmptyDecoder;
+
 #[derive(Debug)]
 struct TsDecoder;
 
@@ -71,4 +73,22 @@ fn append_refused_if_time_old() {
         error,
         byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 2 }
     ));
+}
+
+#[test]
+fn append_after_reopen_empty_works() {
+    setup_tracing();
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("append_after_reopen_empty");
+    {
+        let mut bs = ByteSeries::new(&test_path, 0, ()).unwrap();
+        assert!(matches!(
+            bs.last_line(&mut EmptyDecoder),
+            Err(byteseries::series::data::ReadError::NoData)
+        ));
+    }
+
+    let (mut bs, _) = ByteSeries::open_existing::<()>(&test_path, 0).unwrap();
+    bs.push_line(1700000000, &[]).unwrap();
 }

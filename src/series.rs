@@ -17,7 +17,7 @@ use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug + Send + 'static {
     fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), data::PushError>;
-    fn estimate_lines(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Estimate;
+    fn estimate_lines(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Option<Estimate>;
     fn data_mut(&mut self) -> &mut Data;
     fn data(&self) -> &Data;
 }
@@ -218,6 +218,7 @@ impl ByteSeries {
             range.start_bound().cloned(),
             range.end_bound().cloned(),
         )
+        .expect("no data should be caught be check range")
         .refine(&mut self.data)
         .map_err(Error::Seeking)?;
         self.data
@@ -256,7 +257,9 @@ impl ByteSeries {
 
         let mut optimal_data = &mut self.data;
         for downsampled in &mut self.downsampled {
-            let estimate = downsampled.estimate_lines(start, end);
+            let Some(estimate) = downsampled.estimate_lines(start, end) else {
+                break; // more downsampled files are empty
+            };
             if estimate.max < n as u64 {
                 tracing::debug!(
                     "not enough datapoints, not using next\
@@ -276,6 +279,10 @@ impl ByteSeries {
         }
 
         let seek = search::RoughSeekPos::new(optimal_data, start, end)
+            .expect(
+                "check range catches the undownsampled file missing data \
+                and downsampled are not selected if their `estimate_lines` is None ",
+            )
             .refine(optimal_data)
             .map_err(Error::Seeking)?;
         let lines = seek.lines(optimal_data);
@@ -322,6 +329,18 @@ impl ByteSeries {
 
         Ok(())
     }
+
+    pub fn last_line<D>(
+        &mut self,
+        decoder: &mut D,
+    ) -> Result<(u64, <D as Decoder>::Item), data::ReadError>
+    where
+        D: Decoder + Clone,
+        <D as Decoder>::Item: Clone,
+    {
+        self.data.last_line(decoder)
+    }
+
     pub fn flush_to_disk(&mut self) {
         self.data.flush_to_disk();
     }

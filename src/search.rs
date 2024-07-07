@@ -36,8 +36,9 @@ pub struct RoughSeekPos {
 }
 
 impl RoughSeekPos {
-    pub(crate) fn new(data: &Data, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Self {
-        let first_time_in_data = data.index.first_time_in_data().expect("data_len > 0");
+    /// # returns `None` if the data file is empty
+    pub(crate) fn new(data: &Data, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Option<Self> {
+        let first_time_in_data = data.index.first_time_in_data()?;
         let start_ts = match start {
             Bound::Included(ts) => ts,
             Bound::Excluded(ts) => ts - 1,
@@ -54,7 +55,10 @@ impl RoughSeekPos {
         let end_ts = match end {
             Bound::Included(ts) => ts,
             Bound::Excluded(ts) => ts - 1,
-            Bound::Unbounded => data.index.last_timestamp().expect("data_len > 0"),
+            Bound::Unbounded => data
+                .index
+                .last_timestamp()
+                .expect("first time is set so last should be too"),
         };
 
         let (end_search_area, end_section_full_ts) = match end {
@@ -62,18 +66,20 @@ impl RoughSeekPos {
             Bound::Excluded(ts) => data.index.end_search_bounds(ts - 1, data.payload_size()),
             Bound::Unbounded => (
                 EndArea::Found(data.last_line_start()),
-                data.index.last_timestamp().expect("data_len > 0"),
+                data.index
+                    .last_timestamp()
+                    .expect("first time is set so last should be too"),
             ),
         };
 
-        Self {
+        Some(Self {
             start_ts,
             start_search_area,
             end_ts,
             end_search_area,
             start_section_full_ts,
             end_section_full_ts,
-        }
+        })
     }
 
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {

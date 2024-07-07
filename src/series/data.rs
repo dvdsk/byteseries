@@ -148,15 +148,12 @@ impl Data {
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
     ) -> Result<(Timestamp, T), ReadError> {
-        let start = self.data_len - (self.payload_size + 2) as u64;
-        let end = self.data_len;
-
         let mut timestamps = Vec::new();
         let mut data = Vec::new();
         let seek = SeekPos {
-            start,
-            end,
             first_full_ts: self.index.last_timestamp().ok_or(ReadError::NoData)?,
+            start: self.data_len - (self.payload_size + 2) as u64,
+            end: self.data_len,
         };
         self.file_handle
             .read(decoder, &mut timestamps, &mut data, seek)
@@ -183,7 +180,7 @@ impl Data {
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
 
-        tracing::info!("{}, {:?}", ts, self.index.last_timestamp());
+        tracing::trace!("{}, {:?}", ts, self.index.last_timestamp());
         let small_ts = self
             .index
             .last_timestamp()

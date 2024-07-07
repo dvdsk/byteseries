@@ -220,7 +220,13 @@ fn verify_last_downsampled_ts(
     line_size: usize,
 ) -> Result<(), OpenError> {
     let bucket_len = config.bucket_size as u64 * line_size as u64;
-    let start = source.last_line_start() - bucket_len;
+    let Some(start) = source.last_line_start().checked_sub(bucket_len) else {
+        tracing::debug!(
+            "Not enough samples in source to create downsampled \
+            timestamp for downsampled dataset verification"
+        );
+        return Ok(());
+    };
     let seek = crate::SeekPos {
         start,
         end: source.last_line_start() + line_size as u64,
@@ -276,9 +282,9 @@ where
         &self,
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
-    ) -> crate::search::Estimate {
-        dbg!(RoughSeekPos::new(&self.data, start, end))
-            .estimate_lines(self.data.payload_size() + 2, self.data.data_len)
+    ) -> Option<crate::search::Estimate> {
+        RoughSeekPos::new(&self.data, start, end)
+            .map(|seek| seek.estimate_lines(self.data.payload_size() + 2, self.data.data_len))
     }
 
     fn data_mut(&mut self) -> &mut Data {

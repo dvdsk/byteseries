@@ -12,8 +12,10 @@ pub fn setup_tracing() {
     use tracing_subscriber::prelude::*;
 
     let filter = filter::EnvFilter::builder().from_env().unwrap();
-
-    let fmt = fmt::layer().pretty().with_line_number(true);
+    let fmt = fmt::layer()
+        .pretty()
+        .with_line_number(true)
+        .with_test_writer();
 
     let _ignore_err = tracing_subscriber::registry()
         .with(filter)
@@ -21,7 +23,7 @@ pub fn setup_tracing() {
         .try_init();
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EmptyDecoder;
 impl byteseries::Decoder for EmptyDecoder {
     type Item = ();
