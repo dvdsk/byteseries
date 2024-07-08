@@ -27,6 +27,10 @@ pub(crate) fn bytes_per_metainfo(payload_size: usize) -> usize {
 }
 
 impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
+    pub(crate) fn new(file: F, line_size: usize) -> Self {
+        todo!("fix any meta corruptions at the end")
+    }
+
     pub(crate) fn inner_mut(&mut self) -> &mut F {
         &mut self.file_handle
     }
@@ -59,13 +63,14 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         })
     }
 
-    #[instrument(level = "debug", skip(self, processor))]
+    #[instrument(level = "debug", skip(processor))]
     pub(crate) fn read_with_processor(
         &mut self,
         seek: SeekPos,
         mut processor: impl FnMut(Timestamp, &[u8]),
     ) -> Result<(), std::io::Error> {
         let mut to_read = seek.end - seek.start;
+        dbg!(to_read);
         let chunk_size = 16384usize.next_multiple_of(self.line_size);
         let mut buf = vec![0; chunk_size];
 
@@ -92,6 +97,11 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
                 }
 
                 let Some(next_line) = lines.next() else {
+                    if to_read == 0 { // take care of the last item
+                        let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                        let small_ts: u64 = u16::from_le_bytes(small_ts).into();
+                        processor(small_ts + full_ts, &line[2..]);
+                    }
                     break 1;
                 };
                 if next_line[..2] != [0, 0] {
@@ -110,6 +120,8 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
                     MetaResult::OutOfLines { consumed } => break 2 + consumed,
                 };
             };
+
+            if to_read == 0 {}
         }
         Ok(())
     }

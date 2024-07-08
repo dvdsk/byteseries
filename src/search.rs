@@ -61,6 +61,7 @@ impl RoughSeekPos {
                 .expect("first time is set so last should be too"),
         };
 
+        dbg!(&end);
         let (end_search_area, end_section_full_ts) = match end {
             Bound::Included(ts) => data.index.end_search_bounds(ts, data.payload_size()),
             Bound::Excluded(ts) => data.index.end_search_bounds(ts - 1, data.payload_size()),
@@ -83,6 +84,7 @@ impl RoughSeekPos {
     }
 
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
+        dbg!(&self);
         let start_time: u16 = self
             .start_ts
             .checked_sub(self.start_section_full_ts)
@@ -247,14 +249,16 @@ fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Resul
     let mut buf = vec![0u8; buf_len];
     data.file_handle.seek(SeekFrom::Start(start))?;
     data.file_handle.file_handle.read_exact(&mut buf)?;
+    dbg!(start, stop, buf_len);
 
     if let Some(stop_line) = buf
         .chunks_exact(data.payload_size() + 2)
         .map(|line| line[..2].try_into().expect("chunks are at least 2 long"))
         .map(u16::from_le_bytes)
-        .rposition(|line_ts| line_ts <= end_time)
+        .rposition(|line_ts| dbg!(line_ts) <= dbg!(end_time))
     {
-        let stop_byte = start + stop_line as u64 * (data.payload_size() + 2) as u64;
+        dbg!(stop_line);
+        let stop_byte = start + (stop_line+1) as u64 * (data.payload_size() + 2) as u64;
         Ok(stop_byte)
     } else {
         Ok(stop)

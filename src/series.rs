@@ -13,6 +13,7 @@ use tracing::instrument;
 use crate::search::{Estimate, SeekError};
 use crate::{search, Decoder, Resampler, Timestamp};
 
+use self::data::inline_meta::bytes_per_metainfo;
 use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug + Send + 'static {
@@ -236,6 +237,8 @@ impl ByteSeries {
     /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
     /// Its mostly IO-issues.
     #[allow(clippy::missing_panics_doc)] // is bug if panic
+    #[instrument(skip(self, resampler, timestamps, data), 
+        fields(range = format!("{:?}..{:?}", range.start_bound(), range.end_bound())))]
     pub fn read_n<R: Resampler>(
         &mut self,
         n: usize,
@@ -295,7 +298,8 @@ impl ByteSeries {
     }
 
     fn check_range(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Result<(), SeekError> {
-        if self.data.data_len == 0 {
+        let inline_meta_size = bytes_per_metainfo(self.data.payload_size());
+        if self.data.data_len as usize <= inline_meta_size {
             return Err(SeekError::EmptyFile);
         }
 

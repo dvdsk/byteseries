@@ -242,6 +242,7 @@ impl Data {
             .map_err(ReadError::Reading)
     }
 
+    #[instrument(skip(self, resampler, timestamps, data), err)]
     pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
         seek: SeekPos,

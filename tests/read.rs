@@ -1,4 +1,4 @@
-use byteseries::ByteSeries;
+use byteseries::{ByteSeries, ResampleState};
 use pretty_assertions::assert_eq;
 use temp_dir::TempDir;
 
@@ -33,4 +33,70 @@ fn last_line_is_correct() {
     let (last_ts, last_item) = series.last_line(&mut TsDecoder).unwrap();
     assert_eq!(last_ts, last_item);
     assert_eq!(last_ts, timestamp + (NUMBER_TO_INSERT - 1) * PERIOD);
+}
+
+#[derive(Debug, Clone)]
+struct RawLineDecoder;
+
+impl byteseries::Decoder for RawLineDecoder {
+    type Item = [u8; 5];
+
+    fn decode_payload(&mut self, line: &[u8]) -> Self::Item {
+        line.try_into().unwrap()
+    }
+}
+
+impl byteseries::Encoder for RawLineDecoder {
+    type Item = [u8; 5];
+
+    fn encode_item(&mut self, _: &Self::Item) -> Vec<u8> {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+struct RawLineState([u8; 5]);
+
+impl ResampleState for RawLineState {
+    type Item = [u8; 5];
+
+    fn add(&mut self, line: Self::Item) {
+        self.0 = line
+    }
+
+    fn finish(&mut self, _: usize) -> Self::Item {
+        self.0
+    }
+}
+
+impl byteseries::Resampler for RawLineDecoder {
+    type State = RawLineState;
+
+    fn state(&self) -> Self::State {
+        RawLineState([0u8; 5])
+    }
+}
+
+#[test]
+fn read_a_single_item() {
+    setup_tracing();
+
+    let timestamp = 1700000000;
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_append_hashes_then_verify");
+    let mut series = ByteSeries::new(test_path, 5, ()).unwrap();
+    series.push_line(timestamp, &[1u8; 5]).unwrap();
+
+    let mut timestamps = Vec::new();
+    let mut data = Vec::new();
+    series
+        .read_n(
+            5,
+            timestamp - 10..timestamp + 10,
+            &mut RawLineDecoder,
+            &mut timestamps,
+            &mut data,
+        )
+        .unwrap();
+    assert_eq!(timestamps.pop(), Some(timestamp));
 }
