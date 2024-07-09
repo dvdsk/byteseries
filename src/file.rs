@@ -10,6 +10,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
+use crate::series::data::inline_meta::SetLen;
+
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("Could not open file on disk io error: {0}")]
@@ -152,6 +154,16 @@ impl OffsetFile {
     /// want to spread the read.
     pub fn data_len(&self) -> std::io::Result<u64> {
         self.handle.metadata().map(|m| m.len() - self.offset)
+    }
+}
+
+impl SetLen for OffsetFile {
+    fn len(&self) -> Result<u64, std::io::Error> {
+        self.data_len()
+    }
+
+    fn set_len(&mut self, len: u64) -> Result<(), std::io::Error> {
+        self.handle.set_len(len + self.offset)
     }
 }
 

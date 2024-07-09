@@ -13,7 +13,7 @@ use inline_meta::FileWithInlineMeta;
 pub mod index;
 use index::Index;
 
-use self::index::restore;
+use self::index::create;
 use self::inline_meta::write_meta;
 
 #[derive(Debug)]
@@ -37,6 +37,8 @@ impl Decoder for EmptyDecoder {
 pub enum CreateError {
     #[error("{0}")]
     File(file::OpenError),
+    #[error("Could not check file for integrity or repair it: {0}")]
+    CheckOrRepair(std::io::Error),
     #[error("{0}")]
     Index(file::OpenError),
     #[error("{0}")]
@@ -47,8 +49,10 @@ pub enum CreateError {
 pub enum OpenError {
     #[error("{0}")]
     File(file::OpenError),
+    #[error("Could not check file for integrity or repair it: {0}")]
+    CheckOrRepair(std::io::Error),
     #[error("{0}")]
-    Index(restore::Error),
+    Index(create::Error),
     #[error("{0}")]
     GetLength(std::io::Error),
 }
@@ -87,13 +91,11 @@ impl Data {
     {
         let file = FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())
             .map_err(CreateError::File)?;
-        let index = Index::new(name, header).map_err(CreateError::Index)?;
         let (file_handle, _) = file.split_off_header();
         let data_len = file_handle.data_len().map_err(CreateError::GetLength)?;
-        let file_handle = FileWithInlineMeta {
-            file_handle,
-            line_size: payload_size + 2,
-        };
+        let file_handle = FileWithInlineMeta::new(file_handle, payload_size)
+            .map_err(CreateError::CheckOrRepair)?;
+        let index = Index::new(name, header).map_err(CreateError::Index)?;
         Ok(Self {
             file_handle,
             index,
@@ -118,20 +120,23 @@ impl Data {
             payload_size + 2,
         )
         .map_err(OpenError::File)?;
-        let (mut file_handle, header) = file.split_off_header();
-        let index = match Index::open_existing(&name, &header) {
-            Ok(index) => index,
-            Err(_) => {
-                Index::restore_from_byteseries(&mut file_handle, payload_size, name, header.clone())
-                    .map_err(OpenError::Index)?
-            }
-        };
+        let (file_handle, header) = file.split_off_header();
 
         let data_len = file_handle.data_len().map_err(OpenError::GetLength)?;
-        let file_handle = FileWithInlineMeta {
-            file_handle,
-            line_size: payload_size + 2,
+        let mut file_handle =
+            FileWithInlineMeta::new(file_handle, payload_size).map_err(OpenError::CheckOrRepair)?;
+        let last_line_starts = data_len.checked_sub((payload_size + 2) as u64);
+        let index = match Index::open_existing(&name, &header, last_line_starts) {
+            Ok(index) => index,
+            Err(_) => Index::create_from_byteseries(
+                file_handle.inner_mut(),
+                payload_size,
+                name,
+                header.clone(),
+            )
+            .map_err(OpenError::Index)?,
         };
+
         let data = Self {
             file_handle,
             index,
@@ -165,10 +170,12 @@ impl Data {
         Ok((ts, item))
     }
 
+    #[instrument]
     pub(crate) fn first_time(&mut self) -> Option<Timestamp> {
         self.index.first_time_in_data()
     }
 
+    #[instrument]
     pub(crate) fn last_time(&mut self) -> Option<Timestamp> {
         self.last_line(&mut EmptyDecoder).map(|(ts, ())| ts).ok()
     }

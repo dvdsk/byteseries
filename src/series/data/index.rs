@@ -8,9 +8,9 @@ use tracing::instrument;
 use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::Timestamp;
 
-use super::inline_meta;
+use super::inline_meta::{self, SetLen};
 
-pub(crate) mod restore;
+pub(crate) mod create;
 
 #[derive(Debug)]
 pub(crate) struct Entry {
@@ -72,8 +72,10 @@ pub enum OpenError {
     File(file::OpenError),
     #[error("The header in the index and byteseries are different")]
     IndexAndDataHeaderDifferent,
-    #[error("reading in")]
+    #[error("reading in index: {0}")]
     Reading(std::io::Error),
+    #[error("Could not check or repair the index, {0}")]
+    CheckOrRepair(std::io::Error),
 }
 
 impl Index {
@@ -101,25 +103,25 @@ impl Index {
     pub fn open_existing<H>(
         name: impl AsRef<Path> + fmt::Debug,
         user_header: &H,
+        last_line_in_data_start: Option<u64>,
     ) -> Result<Index, OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
-        let mut file: FileWithHeader<H> =
+        let file: FileWithHeader<H> =
             FileWithHeader::open_existing(name.as_ref().with_extension("byteseries_index"), 16)
                 .map_err(OpenError::File)?;
 
-        if *user_header != file.user_header {
+        let (mut file, header) = file.split_off_header();
+        if *user_header != header {
             return Err(OpenError::IndexAndDataHeaderDifferent);
         }
 
+        check_and_repair(&mut file, last_line_in_data_start).map_err(OpenError::CheckOrRepair)?;
         let mut bytes = Vec::new();
-        file.handle
-            .seek(std::io::SeekFrom::Start(file.data_offset))
+        file.seek(std::io::SeekFrom::Start(0))
             .map_err(OpenError::Reading)?;
-        file.handle
-            .read_to_end(&mut bytes)
-            .map_err(OpenError::Reading)?;
+        file.read_to_end(&mut bytes).map_err(OpenError::Reading)?;
 
         let entries: Vec<_> = bytes
             .chunks_exact(16)
@@ -136,7 +138,7 @@ impl Index {
             .collect();
 
         Ok(Index {
-            file: file.split_off_header().0,
+            file,
             last_timestamp: entries
                 .last()
                 .map(|Entry { timestamp, .. }| timestamp)
@@ -190,7 +192,6 @@ impl Index {
         }
     }
     pub fn end_search_bounds(&self, stop: Timestamp, payload_len: usize) -> (EndArea, Timestamp) {
-        dbg!(&self.entries);
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
         match idx {
             Ok(i) => (
@@ -244,6 +245,31 @@ impl Index {
             Err(idx) => self.entries[idx - 1].timestamp,
         }
     }
+}
+
+fn check_and_repair(
+    file: &mut OffsetFile,
+    last_line_in_data_start: Option<u64>,
+) -> Result<(), std::io::Error> {
+    let Some(last_line_in_data_start) = last_line_in_data_start else {
+        file.set_len(0)?;
+        return Ok(());
+    };
+    let rest = file.len()? % 16;
+    let uncorrupted_len = file.len()? - rest;
+    file.set_len(uncorrupted_len)?;
+
+    file.seek(std::io::SeekFrom::End(-16))?;
+    let mut last_entry = vec![0u8;16];
+    file.read_exact(&mut last_entry)?;
+    let last_line_start: [u8; 8] = last_entry[8..].try_into().expect("just read 16 bytes");
+    let last_line_start = u64::from_le_bytes(last_line_start); 
+
+    if last_line_start > last_line_in_data_start {
+        file.set_len(file.len()? - 16)?;
+    }
+
+    Ok(())
 }
 
 // https://rust-algo.club/doc/src/rust_algorithm_club/searching/interpolation_search/mod.rs.html#16-69

@@ -1,5 +1,5 @@
 use core::fmt;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 use serde::de::DeserializeOwned;
@@ -27,7 +27,7 @@ pub enum Error {
 
 impl Index {
     #[instrument]
-    pub fn restore_from_byteseries<H>(
+    pub fn create_from_byteseries<H>(
         byteseries: &mut OffsetFile,
         payload_size: usize,
         name: impl AsRef<Path> + fmt::Debug,
@@ -68,6 +68,8 @@ pub enum ExtractingTsError {
     ReadChunk(std::io::Error),
     #[error("Could not read last part of data")]
     ReadFinalChunk(std::io::Error),
+    #[error("Could not seek to start of byteseries data")]
+    Seek(std::io::Error),
 }
 
 pub(crate) fn extract_entries(
@@ -85,6 +87,7 @@ pub(crate) fn extract_entries(
     // do not init with zero or the initially empty overlap
     // will be seen as a full timestamp
     let mut buffer = vec![1u8; chunk_size + overlap];
+    file.seek(std::io::SeekFrom::Start(0)).map_err(ExtractingTsError::Seek)?;
     for i in 0..(data_len / chunk_size as u64) {
         file.read_exact(&mut buffer[overlap..])
             .map_err(ExtractingTsError::ReadChunk)?;

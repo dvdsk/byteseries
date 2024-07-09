@@ -1,6 +1,7 @@
 use core::fmt;
-use std::io::{Read, Seek, SeekFrom, Write};
-use tracing::instrument;
+use itertools::Itertools;
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use tracing::{instrument, trace};
 
 use crate::{Resampler, SeekPos};
 
@@ -26,15 +27,38 @@ pub(crate) fn bytes_per_metainfo(payload_size: usize) -> usize {
     lines_per_metainfo(payload_size) * (payload_size + 2)
 }
 
-impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
-    pub(crate) fn new(file: F, line_size: usize) -> Self {
-        todo!("fix any meta corruptions at the end")
+pub(crate) trait SetLen {
+    fn len(&self) -> Result<u64, std::io::Error>;
+    fn set_len(&mut self, len: u64) -> Result<(), std::io::Error>;
+}
+
+impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
+    pub(crate) fn new(mut file: F, payload_size: usize) -> Result<Self, std::io::Error> {
+        'check_and_repair: {
+            if repaired_is_only_meta(&mut file, payload_size)? {
+                break 'check_and_repair;
+            }
+
+            if removed_partial_meta_at_end(&mut file, payload_size)? {
+                break 'check_and_repair;
+            }
+
+            if removed_start_of_meta_at_end(&mut file, payload_size)? {
+                break 'check_and_repair;
+            }
+        }
+
+        Ok(FileWithInlineMeta {
+            file_handle: file,
+            line_size: payload_size + 2,
+        })
     }
 
     pub(crate) fn inner_mut(&mut self) -> &mut F {
         &mut self.file_handle
     }
 
+    #[instrument(level = "debug", skip(self, decoder, timestamps, data))]
     pub(crate) fn read<D: Decoder>(
         &mut self,
         decoder: &mut D,
@@ -42,6 +66,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         data: &mut Vec<D::Item>,
         seek: SeekPos,
     ) -> Result<(), std::io::Error> {
+        trace!("reading data: {seek:?}");
         self.read_with_processor(seek, |ts, payload| {
             let item = decoder.decode_payload(payload);
             data.push(item);
@@ -49,6 +74,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         })
     }
 
+    #[instrument(level = "debug", skip(self, resampler, timestamps, data))]
     pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
         resampler: &mut R,
@@ -57,6 +83,7 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         data: &mut Vec<<R as Decoder>::Item>,
         seek: SeekPos,
     ) -> Result<(), std::io::Error> {
+        trace!("reading data while resampling: {seek:?}");
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
         self.read_with_processor(seek, |ts, payload| {
             sampler.process(ts, payload);
@@ -70,7 +97,6 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         mut processor: impl FnMut(Timestamp, &[u8]),
     ) -> Result<(), std::io::Error> {
         let mut to_read = seek.end - seek.start;
-        dbg!(to_read);
         let chunk_size = 16384usize.next_multiple_of(self.line_size);
         let mut buf = vec![0; chunk_size];
 
@@ -97,7 +123,8 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
                 }
 
                 let Some(next_line) = lines.next() else {
-                    if to_read == 0 { // take care of the last item
+                    if to_read == 0 {
+                        // take care of the last item
                         let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
                         let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                         processor(small_ts + full_ts, &line[2..]);
@@ -125,6 +152,65 @@ impl<F: fmt::Debug + Read + Seek> FileWithInlineMeta<F> {
         }
         Ok(())
     }
+}
+
+fn removed_start_of_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
+    file: &mut F,
+    payload_size: usize,
+) -> Result<bool, io::Error> {
+    file.seek(SeekFrom::Start(
+        file.len()? - bytes_per_metainfo(payload_size) as u64 - (payload_size + 2) as u64,
+    ))?;
+    let mut to_check = vec![0u8; 2 * (payload_size + 2)];
+    file.read_exact(&mut to_check)?;
+    let mut lines = to_check.chunks_exact(payload_size + 2);
+    let last_line = lines.by_ref().last().expect("read multiple lines");
+    let meta_start_before_last_line = lines.by_ref().take(2).all(|line| line[0..2] == [0, 0]);
+    // unless there is a meta section directly before it time zero lines
+    // are not allowed.
+    if last_line[0..2] == [0, 0] && !meta_start_before_last_line {
+        file.set_len(file.len()? - (payload_size + 2) as u64)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
+    file: &mut F,
+    payload_size: usize,
+) -> Result<bool, io::Error> {
+    file.seek(SeekFrom::Start(
+        file.len()? - bytes_per_metainfo(payload_size) as u64,
+    ))?;
+    let mut to_check = vec![0u8; bytes_per_metainfo(payload_size)];
+    file.read_exact(&mut to_check)?;
+    let lines = to_check.chunks_exact(payload_size + 2);
+    let meta_section_start = lines
+        .tuple_windows()
+        .position(|(a, b)| (a[0..2] == [0; 0] || b[0..2] == [0; 0]));
+
+    if let Some(pos) = meta_section_start {
+        file.set_len(
+            file.len()? - bytes_per_metainfo(payload_size) as u64
+                + pos as u64 * (payload_size + 2) as u64,
+        )?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+fn repaired_is_only_meta<F: fmt::Debug + Read + Seek + SetLen>(
+    file: &mut F,
+    payload_size: usize,
+) -> Result<bool, io::Error> {
+    Ok(if file.len()? <= bytes_per_metainfo(payload_size) as u64 {
+        file.set_len(0)?;
+        true
+    } else {
+        false
+    })
 }
 
 use crate::ResampleState;
