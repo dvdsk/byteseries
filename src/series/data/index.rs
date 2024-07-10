@@ -23,7 +23,8 @@ pub(crate) struct Index {
     pub(crate) file: OffsetFile,
 
     entries: Vec<Entry>,
-    last_timestamp: Option<Timestamp>,
+    /// time for next point is 1 larger the this
+    last_full_timestamp: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,7 +97,7 @@ impl Index {
             file: file.split_off_header().0,
 
             entries: Vec::new(),
-            last_timestamp: None,
+            last_full_timestamp: None,
         })
     }
     #[instrument]
@@ -139,7 +140,7 @@ impl Index {
 
         Ok(Index {
             file,
-            last_timestamp: entries
+            last_full_timestamp: entries
                 .last()
                 .map(|Entry { timestamp, .. }| timestamp)
                 .copied(),
@@ -157,7 +158,7 @@ impl Index {
             timestamp,
             line_start,
         });
-        self.last_timestamp = Some(timestamp);
+        self.last_full_timestamp = Some(timestamp);
         Ok(())
     }
 
@@ -226,12 +227,12 @@ impl Index {
             }
         }
     }
-    pub fn first_time_in_data(&self) -> Option<Timestamp> {
+    pub fn first_full_timestamp(&self) -> Option<Timestamp> {
         self.entries.first().map(|e| e.timestamp)
     }
 
     pub fn last_timestamp(&self) -> Option<Timestamp> {
-        self.last_timestamp
+        self.last_full_timestamp
     }
 
     pub(crate) fn full_ts_for(&self, start: u64) -> u64 {
