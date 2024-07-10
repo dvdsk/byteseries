@@ -186,6 +186,10 @@ impl Data {
         //we store the timestamp - the last recorded full timestamp as u16. If
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
+        assert!(
+            ts > 0,
+            "timestamp may not be zero. If you need zero correct in your application"
+        );
 
         tracing::trace!("{}, {:?}", ts, self.index.last_timestamp());
         let small_ts = self
@@ -208,14 +212,14 @@ impl Data {
                 "inserting full timestamp via and updating index\
                 , timestamp: {ts}"
             );
-            let meta = ts.to_le_bytes();
+            let meta = (ts - 1).to_le_bytes();
             let written = write_meta(&mut self.file_handle, meta, self.payload_size)
                 .map_err(PushError::Meta)?;
             self.data_len += written;
             self.index
                 .update(ts, self.data_len)
                 .map_err(PushError::Index)?;
-            0
+            1 // makes it easy to disern
         };
 
         self.file_handle
