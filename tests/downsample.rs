@@ -4,6 +4,8 @@ use byteseries::series::downsample;
 use byteseries::{ByteSeries, Timestamp};
 use itertools::Itertools;
 use pretty_assertions::assert_eq;
+use rstest::rstest;
+use rstest_reuse::apply;
 use temp_dir::TempDir;
 
 mod shared;
@@ -11,11 +13,10 @@ mod shared;
 const T1: Timestamp = 0;
 const T2: Timestamp = 100_000;
 
-fn insert_lines(bs: &mut ByteSeries) {
+fn insert_lines(bs: &mut ByteSeries, n_points: u64) {
     let t_start = T1;
     let t_end = T2;
     let slope = 0.1;
-    let n_points = 1000;
 
     let dt = (t_end - t_start) / n_points as u64;
     assert_ne!(dt, 0);
@@ -61,22 +62,30 @@ fn assert_slope_ok(timestamps: &[Timestamp], data: &[f32]) {
         .zip(data)
         .tuple_windows::<(_, _)>()
         .map(|((t1, d1), (t2, d2))| ((d2 - d1) as f64) / ((t2 - t1) as f64))
-        // .inspect(|s| println!("slope: {s}"))
         .all(|s| (s - 0.1).abs() < 0.001);
     assert!(slope_ok)
 }
 
-#[test]
-fn no_downsampled_cache() {
+#[rstest]
+fn no_downsampled_cache(
+    #[values(10, 100, 1000)] n_to_read: usize,
+    #[values(10, 100, 1000, 10_000, 100_000)] n_lines: u64,
+) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_no_downsample_cache");
     let mut bs = ByteSeries::new(test_path, 4, ()).unwrap();
-    insert_lines(&mut bs);
+    insert_lines(&mut bs, n_lines);
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_n(10, T1..T2, &mut FloatResampler, &mut timestamps, &mut data)
-        .unwrap();
+    bs.read_n(
+        n_to_read,
+        T1..T2,
+        &mut FloatResampler,
+        &mut timestamps,
+        &mut data,
+    )
+    .unwrap();
     assert_slope_ok(&timestamps, &data)
 }
 
@@ -95,7 +104,7 @@ fn ideal_downsampled_cache() {
         }],
     )
     .unwrap();
-    insert_lines(&mut bs);
+    insert_lines(&mut bs, 1000);
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
@@ -115,7 +124,7 @@ fn with_cache_same_as_without() {
     {
         let mut bs =
             ByteSeries::new_with_resamplers(&test_path, 4, (), FloatResampler, Vec::new()).unwrap();
-        insert_lines(&mut bs);
+        insert_lines(&mut bs, 1000);
 
         bs.read_n(
             10,
@@ -209,7 +218,6 @@ fn truncated_downsampled_is_detected() {
         let len = downsampled_cache.metadata().unwrap().len();
         downsampled_cache.set_len(len - 1).unwrap();
     }
-
 
     let error = ByteSeries::open_existing_with_resampler::<(), _>(
         test_path,
