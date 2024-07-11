@@ -212,8 +212,9 @@ impl ByteSeries {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), Error> {
-        self.check_range(range.start_bound().cloned(), range.start_bound().cloned())
-            .map_err(Error::InvalidRange)?;
+        let start = range.start_bound().cloned();
+        let end = range.end_bound().cloned();
+        self.check_range(start, end).map_err(Error::InvalidRange)?;
         let seek = search::RoughSeekPos::new(
             &self.data,
             range.start_bound().cloned(),
@@ -237,7 +238,7 @@ impl ByteSeries {
     /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
     /// Its mostly IO-issues.
     #[allow(clippy::missing_panics_doc)] // is bug if panic
-    #[instrument(skip(self, resampler, timestamps, data), 
+    #[instrument(skip(self, resampler, timestamps, data),
         fields(range = format!("{:?}..{:?}", range.start_bound(), range.end_bound())))]
     pub fn read_n<R: Resampler>(
         &mut self,

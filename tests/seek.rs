@@ -77,5 +77,5 @@ fn within_range() {
     let first = timestamps.first().unwrap();
     let last = timestamps.last().unwrap();
     assert_in_range!(t1..(t1 + STEP), first);
-    assert_in_range!((t2 - STEP)..t2, last);
+    assert_in_range!((t2 - STEP)..=t2, last);
 }

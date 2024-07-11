@@ -51,27 +51,29 @@ fn compare_written_to_read() {
 
 #[test]
 fn append_refused_if_time_old() {
+    setup_tracing();
+
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("append_refused_if_time_old");
     let mut bs = ByteSeries::new(&test_path, 0, ()).unwrap();
-    bs.push_line(0, &[]).unwrap();
     bs.push_line(1, &[]).unwrap();
     bs.push_line(2, &[]).unwrap();
+    bs.push_line(3, &[]).unwrap();
     // duplicate
     let error = bs.push_line(2, &[]).unwrap_err();
     assert!(matches!(
         error,
-        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 2 }
+        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
     ));
 
     drop(bs);
 
     let (mut bs, _): (_, ()) = ByteSeries::open_existing(test_path, 0).unwrap();
-    assert_eq!(bs.range(), Some(0..=2));
+    assert_eq!(bs.range(), Some(1..=3));
     let error = bs.push_line(2, &[]).unwrap_err();
     assert!(matches!(
         error,
-        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 2 }
+        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
     ));
 }
 

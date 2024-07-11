@@ -75,8 +75,8 @@ pub enum OpenError {
     IndexAndDataHeaderDifferent,
     #[error("reading in index: {0}")]
     Reading(std::io::Error),
-    #[error("Could not check or repair the index, {0}")]
-    CheckOrRepair(std::io::Error),
+    #[error("Could not check or repair the index: {0}")]
+    CheckOrRepair(#[from] CheckAndRepairError),
 }
 
 impl Index {
@@ -105,6 +105,7 @@ impl Index {
         name: impl AsRef<Path> + fmt::Debug,
         user_header: &H,
         last_line_in_data_start: Option<u64>,
+        last_full_ts_in_data: Option<Timestamp>,
     ) -> Result<Index, OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
@@ -118,7 +119,7 @@ impl Index {
             return Err(OpenError::IndexAndDataHeaderDifferent);
         }
 
-        check_and_repair(&mut file, last_line_in_data_start).map_err(OpenError::CheckOrRepair)?;
+        check_and_repair(&mut file, last_line_in_data_start, last_full_ts_in_data)?;
         let mut bytes = Vec::new();
         file.seek(std::io::SeekFrom::Start(0))
             .map_err(OpenError::Reading)?;
@@ -248,29 +249,61 @@ impl Index {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum CheckAndRepairError {
+    #[error("The index is missing items")]
+    IndexMissesItems,
+    #[error("Could not repair the index by truncating it: {0}")]
+    Truncate(std::io::Error),
+    #[error("Could not check the index, failed to get its length: {0}")]
+    GetLength(std::io::Error),
+    #[error("Could not check the index, failed to seek in it: {0}")]
+    Seek(std::io::Error),
+    #[error("Could not check the index, failed to read it: {0}")]
+    Read(std::io::Error),
+}
+
+#[instrument(err)]
 fn check_and_repair(
     file: &mut OffsetFile,
     last_line_in_data_start: Option<u64>,
-) -> Result<(), std::io::Error> {
+    last_full_ts_in_data: Option<Timestamp>,
+) -> Result<(), CheckAndRepairError> {
+    let len = file.len().map_err(CheckAndRepairError::GetLength)?;
     let Some(last_line_in_data_start) = last_line_in_data_start else {
-        file.set_len(0)?;
+        file.set_len(0).map_err(CheckAndRepairError::Truncate)?;
         return Ok(());
     };
-    let rest = file.len()? % 16;
-    let uncorrupted_len = file.len()? - rest;
-    file.set_len(uncorrupted_len)?;
+    let rest = len % 16;
+    let uncorrupted_len = len - rest;
+    file.set_len(uncorrupted_len)
+        .map_err(CheckAndRepairError::Truncate)?;
 
-    file.seek(std::io::SeekFrom::End(-16))?;
-    let mut last_entry = vec![0u8;16];
-    file.read_exact(&mut last_entry)?;
+    file.seek(std::io::SeekFrom::End(-16))
+        .map_err(CheckAndRepairError::Seek)?;
+    let mut last_entry = vec![0u8; 16];
+    file.read_exact(&mut last_entry)
+        .map_err(CheckAndRepairError::Read)?;
+    let last_full_ts: [u8; 8] = last_entry[0..8].try_into().expect("just read 16 bytes");
+    let last_full_ts = u64::from_le_bytes(last_full_ts);
     let last_line_start: [u8; 8] = last_entry[8..].try_into().expect("just read 16 bytes");
-    let last_line_start = u64::from_le_bytes(last_line_start); 
+    let last_line_start = u64::from_le_bytes(last_line_start);
 
+    let len = file.len().map_err(CheckAndRepairError::GetLength)?;
     if last_line_start > last_line_in_data_start {
-        file.set_len(file.len()? - 16)?;
+        file.set_len(len - 16)
+            .map_err(CheckAndRepairError::Truncate)?;
     }
 
-    Ok(())
+    let last_full_ts_in_data = last_full_ts_in_data.expect(
+        "last time in the data since last_line_in_data_start is not None \
+         so there is at least one time in the data",
+    );
+    if last_full_ts_in_data != last_full_ts {
+        Err(CheckAndRepairError::IndexMissesItems)
+    } else {
+        Ok(())
+    }
 }
 
 // https://rust-algo.club/doc/src/rust_algorithm_club/searching/interpolation_search/mod.rs.html#16-69

@@ -6,8 +6,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::series::data::inline_meta::{read_meta, MetaResult};
 use crate::file::{FileWithHeader, OffsetFile, OpenError};
+use crate::series::data::inline_meta::{bytes_per_metainfo, read_meta, MetaResult};
+use crate::Timestamp;
 
 use super::{Entry, Index};
 
@@ -41,7 +42,7 @@ impl Index {
         let entries = extract_entries(byteseries, payload_size)?;
 
         let mut index = Self {
-            last_timestamp: entries.last().map(|Entry { timestamp, .. }| *timestamp),
+            last_full_timestamp: entries.last().map(|Entry { timestamp, .. }| *timestamp),
             file: index_file.split_off_header().0,
             entries: Vec::new(),
         };
@@ -76,9 +77,19 @@ pub(crate) fn extract_entries(
     file: &mut OffsetFile,
     payload_size: usize,
 ) -> Result<Vec<Entry>, ExtractingTsError> {
+    let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
+    extract_entries_inner(file, payload_size, 0, data_len)
+}
+
+#[instrument]
+pub(crate) fn extract_entries_inner(
+    file: &mut OffsetFile,
+    payload_size: usize,
+    start: u64,
+    end: u64,
+) -> Result<Vec<Entry>, ExtractingTsError> {
     let mut entries = Vec::new();
 
-    let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
     let chunk_size = 16384usize.next_multiple_of(payload_size + 2);
 
     // max size of the metadata section.
@@ -87,35 +98,55 @@ pub(crate) fn extract_entries(
     // do not init with zero or the initially empty overlap
     // will be seen as a full timestamp
     let mut buffer = vec![1u8; chunk_size + overlap];
-    file.seek(std::io::SeekFrom::Start(0)).map_err(ExtractingTsError::Seek)?;
-    for i in 0..(data_len / chunk_size as u64) {
-        file.read_exact(&mut buffer[overlap..])
+    file.seek(std::io::SeekFrom::Start(start))
+        .map_err(ExtractingTsError::Seek)?;
+
+    let mut to_read = end - start;
+    let mut previously_read = 0;
+
+    while to_read > 0 {
+        let read_size = chunk_size.min(usize::try_from(to_read).unwrap_or(usize::MAX));
+        file.read_exact(&mut buffer[overlap..overlap + read_size])
             .map_err(ExtractingTsError::ReadChunk)?;
+        to_read -= read_size as u64;
+
         entries.extend(
-            meta(&buffer, payload_size, overlap)
+            meta(&buffer[..overlap + read_size], payload_size, overlap)
                 .into_iter()
                 .map(|(pos, timestamp)| Entry {
                     timestamp,
-                    line_start: i * (chunk_size as u64) + pos as u64,
+                    line_start: previously_read + pos as u64,
                 }),
         );
+        previously_read += read_size as u64;
     }
 
-    // mod chunk_size (was usize) is within usize
-    #[allow(clippy::cast_possible_truncation)]
-    let left = (data_len % (chunk_size as u64)) as usize;
-    file.read_exact(&mut buffer[overlap..overlap + left])
-        .map_err(ExtractingTsError::ReadFinalChunk)?;
-    entries.extend(
-        meta(&buffer, payload_size, overlap)
-            .into_iter()
-            .map(|(pos, timestamp)| Entry {
-                timestamp,
-                line_start: data_len - left as u64 + pos as u64,
-            }),
-    );
-
     Ok(entries)
+}
+
+#[instrument]
+pub(crate) fn last_full_timestamp(
+    file: &mut OffsetFile,
+    payload_size: usize,
+) -> Result<Option<Timestamp>, ExtractingTsError> {
+    let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
+
+    let window = 10_000u64.next_multiple_of(payload_size as u64 + 2);
+    let overlap = bytes_per_metainfo(payload_size);
+    let mut start = data_len.saturating_sub(window);
+
+    loop {
+        let end = (start + window).min(data_len);
+        if start == end {
+            return Ok(None);
+        };
+        let mut list = extract_entries_inner(file, payload_size, start, end)?;
+
+        if let Some(Entry { timestamp, .. }) = list.pop() {
+            return Ok(Some(timestamp));
+        }
+        start = (start + overlap as u64).saturating_sub(window);
+    }
 }
 
 pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usize, u64)> {
@@ -137,7 +168,7 @@ pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usiz
         }
 
         let chunks = chunks.by_ref().map(|(_, chunk)| chunk);
-        let MetaResult::Meta(meta) = read_meta(chunks, chunk, next_chunk) else {
+        let MetaResult::Meta { meta, .. } = read_meta(chunks, chunk, next_chunk) else {
             return res;
         };
         let index_of_meta = idx * (2 + payload_size) - overlap;

@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::Write;
 use std::path::Path;
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::{Decoder, SeekPos, Timestamp};
@@ -13,7 +13,7 @@ use inline_meta::FileWithInlineMeta;
 pub mod index;
 use index::Index;
 
-use self::index::create;
+use self::index::create::{self, last_full_timestamp, ExtractingTsError};
 use self::inline_meta::write_meta;
 
 #[derive(Debug)]
@@ -52,9 +52,14 @@ pub enum OpenError {
     #[error("Could not check file for integrity or repair it: {0}")]
     CheckOrRepair(std::io::Error),
     #[error("{0}")]
-    Index(create::Error),
+    Index(#[from] create::Error),
     #[error("{0}")]
     GetLength(std::io::Error),
+    #[error(
+        "Could not find last full time in data, needed to check\
+        index integrity: {0}"
+    )]
+    GetLastMeta(ExtractingTsError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -112,9 +117,6 @@ impl Data {
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
-        // TODO, check for zero pattern at the end
-        // a single u16 time of zeros
-        // may only exists with a full timestamp in front
         let file: FileWithHeader<H> = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries"),
             payload_size + 2,
@@ -122,20 +124,28 @@ impl Data {
         .map_err(OpenError::File)?;
         let (file_handle, header) = file.split_off_header();
 
-        let data_len = file_handle.data_len().map_err(OpenError::GetLength)?;
         let mut file_handle =
             FileWithInlineMeta::new(file_handle, payload_size).map_err(OpenError::CheckOrRepair)?;
+        let data_len = file_handle
+            .file_handle
+            .data_len()
+            .map_err(OpenError::GetLength)?;
         let last_line_starts = data_len.checked_sub((payload_size + 2) as u64);
-        let index = match Index::open_existing(&name, &header, last_line_starts) {
-            Ok(index) => index,
-            Err(_) => Index::create_from_byteseries(
-                file_handle.inner_mut(),
-                payload_size,
-                name,
-                header.clone(),
-            )
-            .map_err(OpenError::Index)?,
-        };
+        let last_full_ts_in_data = last_full_timestamp(file_handle.inner_mut(), payload_size)
+            .map_err(OpenError::GetLastMeta)?;
+        let index =
+            match Index::open_existing(&name, &header, last_line_starts, last_full_ts_in_data) {
+                Ok(index) => index,
+                Err(e) => {
+                    warn!("Creating new index since existing could not be used: {e}");
+                    Index::create_from_byteseries(
+                        file_handle.inner_mut(),
+                        payload_size,
+                        name,
+                        header.clone(),
+                    )?
+                }
+            };
 
         let data = Self {
             file_handle,
@@ -172,7 +182,7 @@ impl Data {
 
     #[instrument]
     pub(crate) fn first_time(&mut self) -> Option<Timestamp> {
-        self.index.first_time_in_data()
+        self.index.first_full_timestamp()
     }
 
     #[instrument]
@@ -186,10 +196,6 @@ impl Data {
         //we store the timestamp - the last recorded full timestamp as u16. If
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
-        assert!(
-            ts > 0,
-            "timestamp may not be zero. If you need zero correct in your application"
-        );
 
         tracing::trace!("{}, {:?}", ts, self.index.last_timestamp());
         let small_ts = self
@@ -212,14 +218,14 @@ impl Data {
                 "inserting full timestamp via and updating index\
                 , timestamp: {ts}"
             );
-            let meta = (ts - 1).to_le_bytes();
+            let meta = ts.to_le_bytes();
             let written = write_meta(&mut self.file_handle, meta, self.payload_size)
                 .map_err(PushError::Meta)?;
             self.data_len += written;
             self.index
                 .update(ts, self.data_len)
                 .map_err(PushError::Index)?;
-            1 // makes it easy to disern
+            0 // value does not matter, full timestamp just ahead is used
         };
 
         self.file_handle
