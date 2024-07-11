@@ -220,9 +220,11 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     let mut to_check = vec![0u8; bytes_per_metainfo(payload_size)];
     file.read_exact(&mut to_check)?;
     let lines = to_check.chunks_exact(payload_size + 2);
+    dbg!(&lines);
     let meta_section_start = lines
         .tuple_windows()
-        .position(|(a, b)| (a[0..2] == META_PREAMBLE || b[0..2] == META_PREAMBLE));
+        .position(|(a, b)| (a[0..2] == META_PREAMBLE && b[0..2] == META_PREAMBLE));
+    dbg!(meta_section_start);
 
     if let Some(pos) = meta_section_start {
         file.set_len(
