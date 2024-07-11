@@ -23,3 +23,5 @@ smallvec = { version = "2.0.0-alpha.6", optional = true }
 temp-dir = "0.1.13"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 pretty_assertions = "1.4.0"
+rstest = "0.21.0"
+rstest_reuse = "0.7.0"
