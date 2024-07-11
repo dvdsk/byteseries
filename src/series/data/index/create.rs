@@ -7,7 +7,7 @@ use serde::Serialize;
 use tracing::instrument;
 
 use crate::file::{FileWithHeader, OffsetFile, OpenError};
-use crate::series::data::inline_meta::{bytes_per_metainfo, read_meta, MetaResult};
+use crate::series::data::inline_meta::{bytes_per_metainfo, read_meta, MetaResult, META_PREAMBLE};
 use crate::Timestamp;
 
 use super::{Entry, Index};
@@ -138,32 +138,45 @@ pub(crate) fn last_full_timestamp(
     loop {
         let end = (start + window).min(data_len);
         if start == end {
+            dbg!("hi");
             return Ok(None);
         };
+        dbg!(start, end);
         let mut list = extract_entries_inner(file, payload_size, start, end)?;
 
         if let Some(Entry { timestamp, .. }) = list.pop() {
+            dbg!("hi");
             return Ok(Some(timestamp));
         }
+
+        if start == 0 {
+            panic!(
+                "Should have found timestamp in data as file (ensured by repair) \
+                is guaranteed to either be empty or contain at least one full \
+                timestamp metadata section."
+            )
+        }
+
         start = (start + overlap as u64).saturating_sub(window);
     }
 }
 
 pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usize, u64)> {
     let mut chunks = buf.chunks_exact(2 + payload_size).enumerate();
+    dbg!(&chunks);
     let mut res = Vec::new();
     loop {
         let Some((idx, chunk)) = chunks.next() else {
             return res;
         };
-        if chunk[..2] != [0, 0] {
+        if chunk[..2] != META_PREAMBLE {
             continue;
         }
 
         let Some((_, next_chunk)) = chunks.next() else {
             return res;
         };
-        if next_chunk[..2] != [0, 0] {
+        if next_chunk[..2] != META_PREAMBLE {
             continue;
         }
 

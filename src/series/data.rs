@@ -197,6 +197,7 @@ impl Data {
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
 
+        const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
         tracing::trace!("{}, {:?}", ts, self.index.last_timestamp());
         let small_ts = self
             .index
@@ -208,8 +209,14 @@ impl Data {
                     in Byteseries::push_line",
                 )
             })
-            .map(TryInto::<u16>::try_into)
-            .and_then(Result::ok);
+            .map(|diff| {
+                if diff > MAX_SMALL_TS {
+                    None
+                } else {
+                    Some(u16::try_from(diff).expect("MAX_SMALL_TS < u16::MAX"))
+                }
+            })
+            .flatten();
 
         let small_ts = if let Some(small_ts) = small_ts {
             small_ts

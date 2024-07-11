@@ -7,6 +7,8 @@ use crate::{Resampler, SeekPos};
 
 use super::{Decoder, Timestamp};
 
+pub(crate) const META_PREAMBLE: [u8; 2] = [0b1111_1111, 0b1111_1111];
+
 #[derive(Debug)]
 pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
     pub(crate) file_handle: F,
@@ -123,7 +125,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 let Some(line) = lines.next() else {
                     break 0;
                 };
-                if line[..2] != [0, 0] {
+                if line[..2] != META_PREAMBLE {
                     let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
                     let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                     processor(small_ts + full_ts, &line[2..]);
@@ -142,7 +144,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                     }
                     break 1;
                 };
-                if next_line[..2] != [0, 0] {
+                if next_line[..2] != META_PREAMBLE {
                     let small_ts: [u8; 2] = line[0..2].try_into().expect("len is 2");
                     let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                     dbg!(small_ts + full_ts);
@@ -180,11 +182,11 @@ fn removed_start_of_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     file: &mut F,
     payload_size: usize,
 ) -> Result<bool, io::Error> {
-    let mut dbg_buf = Vec::new();
-    file.seek(SeekFrom::Start(0)).unwrap();
-    file.read_to_end(&mut dbg_buf).unwrap();
-    dbg!(dbg_buf);
-    dbg!(payload_size);
+    // let mut dbg_buf = Vec::new();
+    // file.seek(SeekFrom::Start(0)).unwrap();
+    // file.read_to_end(&mut dbg_buf).unwrap();
+    // dbg!(dbg_buf);
+    // dbg!(payload_size);
     file.seek(SeekFrom::Start(
         dbg!(file.len()?) - dbg!(bytes_per_metainfo(payload_size) as u64),
     ))?; // - (payload_size + 2) as u64,
@@ -194,10 +196,13 @@ fn removed_start_of_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     dbg!(&to_check);
     let mut lines = to_check.chunks_exact(payload_size + 2);
     let last_line = lines.by_ref().last().expect("read multiple lines");
-    let meta_start_before_last_line = lines.by_ref().take(2).all(|line| line[0..2] == [0, 0]);
+    let meta_start_before_last_line = lines
+        .by_ref()
+        .take(2)
+        .all(|line| line[0..2] == META_PREAMBLE);
     // unless there is a meta section directly before it time zero lines
     // are not allowed.
-    if last_line[0..2] == [0, 0] && !meta_start_before_last_line {
+    if last_line[0..2] == META_PREAMBLE && !meta_start_before_last_line {
         file.set_len(file.len()? - (payload_size + 2) as u64)?;
         Ok(true)
     } else {
@@ -217,7 +222,7 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     let lines = to_check.chunks_exact(payload_size + 2);
     let meta_section_start = lines
         .tuple_windows()
-        .position(|(a, b)| (a[0..2] == [0; 0] || b[0..2] == [0; 0]));
+        .position(|(a, b)| (a[0..2] == META_PREAMBLE || b[0..2] == META_PREAMBLE));
 
     if let Some(pos) = meta_section_start {
         file.set_len(
@@ -315,8 +320,8 @@ pub(crate) fn write_meta(
     let t = meta;
     let lines = match payload_size {
         0 => {
-            file_handle.write_all(&[0, 0])?;
-            file_handle.write_all(&[0, 0])?;
+            file_handle.write_all(&META_PREAMBLE)?;
+            file_handle.write_all(&META_PREAMBLE)?;
             file_handle.write_all(&t[0..2])?;
             file_handle.write_all(&t[2..4])?;
             file_handle.write_all(&t[4..6])?;
@@ -324,29 +329,31 @@ pub(crate) fn write_meta(
             6
         }
         1 => {
-            file_handle.write_all(&[0, 0, t[0]])?;
-            file_handle.write_all(&[0, 0, t[1]])?;
+            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[0]])?;
+            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[1]])?;
             file_handle.write_all(&t[2..5])?;
             file_handle.write_all(&t[5..8])?;
             4
         }
         2 => {
-            file_handle.write_all(&[0, 0, t[0], t[1]])?;
-            file_handle.write_all(&[0, 0, t[2], t[3]])?;
+            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[0], t[1]])?;
+            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[2], t[3]])?;
             file_handle.write_all(&t[4..8])?;
             3
         }
         3 => {
-            file_handle.write_all(&[0, 0, t[0], t[1], t[2]])?;
-            file_handle.write_all(&[0, 0, t[3], t[4], t[5]])?;
+            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[0], t[1], t[2]])?;
+            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[3], t[4], t[5]])?;
             file_handle.write_all(&[t[6], t[7], 0, 0, 0])?;
             3
         }
         4.. => {
-            let mut line = vec![0u8; payload_size + 2];
+            let mut line = vec![META_PREAMBLE[0]; payload_size + 2];
             line[2..6].copy_from_slice(&[t[0], t[1], t[2], t[3]]);
+            dbg!(&line);
             file_handle.write_all(&line)?;
             line[2..6].copy_from_slice(&[t[4], t[5], t[6], t[7]]);
+            dbg!(&line);
             file_handle.write_all(&line)?;
             2
         }

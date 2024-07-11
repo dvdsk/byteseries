@@ -193,6 +193,7 @@ fn truncated_downsampled_is_detected() {
             bs.push_line(ts, &[0, 0, 0, 0]).unwrap();
         }
     }
+
     {
         // corrupt the downsample cache
         let mut name = test_path.file_name().unwrap_or_default().to_owned();
@@ -209,9 +210,10 @@ fn truncated_downsampled_is_detected() {
         downsampled_cache.set_len(len - 1).unwrap();
     }
 
+
     let error = ByteSeries::open_existing_with_resampler::<(), _>(
         test_path,
-        4,
+        0,
         FloatResampler,
         vec![downsample::Config {
             max_gap: Some(10),
