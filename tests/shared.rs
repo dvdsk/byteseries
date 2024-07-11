@@ -1,8 +1,9 @@
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code, unused_imports, unused_macros)]
 use std::io::Write;
 
 use byteseries::ByteSeries;
 use num_traits::ToBytes;
+use rstest_reuse::template;
 
 pub type Timestamp = u64;
 
@@ -22,6 +23,16 @@ pub fn setup_tracing() {
         .with(fmt)
         .try_init();
 }
+
+#[template]
+#[rstest]
+#[case(0)]
+#[case(1)]
+#[case(2)]
+#[case(3)]
+#[case(4)]
+#[case(5)]
+fn payload_sizes(#[case] payload_size: usize) {}
 
 #[derive(Debug, Clone)]
 pub struct EmptyDecoder;

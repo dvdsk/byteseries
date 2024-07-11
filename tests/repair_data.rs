@@ -1,23 +1,14 @@
 use byteseries::search::SeekError;
 use byteseries::ByteSeries;
 use rstest::rstest;
-use rstest_reuse::{apply, template};
+use rstest_reuse::apply;
 use temp_dir::TempDir;
 
 mod shared;
 use shared::setup_tracing;
 
-use crate::shared::EmptyDecoder;
-
-#[template]
-#[rstest]
-#[case(0)]
-#[case(1)]
-#[case(2)]
-#[case(3)]
-#[case(4)]
-#[case(5)]
-fn payload_sizes(#[case] payload_size: usize) {}
+use shared::EmptyDecoder;
+use shared::payload_sizes;
 
 fn lines_per_metainfo(payload_size: usize) -> usize {
     let base_lines = 2; // needed to recognise meta section
