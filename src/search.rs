@@ -251,7 +251,6 @@ fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Resul
         .map(u16::from_le_bytes)
         .rposition(|line_ts| line_ts <= end_time)
     {
-        dbg!(stop_line);
         let stop_byte = start + (stop_line + 1) as u64 * (data.payload_size() + 2) as u64;
         Ok(stop_byte)
     } else {
