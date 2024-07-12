@@ -16,6 +16,8 @@ use index::Index;
 use self::index::create::{self, last_full_timestamp, ExtractingTsError};
 use self::inline_meta::write_meta;
 
+pub(crate) const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
+
 #[derive(Debug)]
 pub struct Data {
     pub(crate) file_handle: FileWithInlineMeta<OffsetFile>,
@@ -186,8 +188,12 @@ impl Data {
     }
 
     #[instrument]
-    pub(crate) fn last_time(&mut self) -> Option<Timestamp> {
-        self.last_line(&mut EmptyDecoder).map(|(ts, ())| ts).ok()
+    pub(crate) fn last_time(&mut self) -> Result<Option<Timestamp>, ReadError> {
+        match self.last_line(&mut EmptyDecoder) {
+            Ok((ts, _)) => Ok(Some(ts)),
+            Err(ReadError::NoData) => Ok(None),
+            Err(other) => Err(other),
+        }
     }
 
     /// Append data to disk but do not flush, a crash can still lead to the data being lost
@@ -197,7 +203,6 @@ impl Data {
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
 
-        const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
         tracing::trace!("{}, {:?}", ts, self.index.last_timestamp());
         let small_ts = self
             .index

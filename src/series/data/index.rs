@@ -39,6 +39,7 @@ pub enum StartArea {
 
 #[derive(Debug, Clone)]
 pub enum EndArea {
+    /// Pos at which the end line ends
     Found(u64),
     /// end timestamp lies in section from this position till the end of the data
     TillEnd(u64),
@@ -197,7 +198,8 @@ impl Index {
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
         match idx {
             Ok(i) => (
-                EndArea::Found(self.entries[i].line_start),
+                // entry marks start of end line, need end
+                EndArea::Found(self.entries[i].line_start + payload_len as u64 + 2),
                 self.entries[i].timestamp,
             ),
             Err(end) => {

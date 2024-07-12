@@ -138,14 +138,11 @@ pub(crate) fn last_full_timestamp(
     loop {
         let end = (start + window).min(data_len);
         if start == end {
-            dbg!("hi");
             return Ok(None);
         };
-        dbg!(start, end);
         let mut list = extract_entries_inner(file, payload_size, start, end)?;
 
         if let Some(Entry { timestamp, .. }) = list.pop() {
-            dbg!("hi");
             return Ok(Some(timestamp));
         }
 
@@ -163,7 +160,6 @@ pub(crate) fn last_full_timestamp(
 
 pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usize, u64)> {
     let mut chunks = buf.chunks_exact(2 + payload_size).enumerate();
-    dbg!(&chunks);
     let mut res = Vec::new();
     loop {
         let Some((idx, chunk)) = chunks.next() else {

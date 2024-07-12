@@ -244,12 +244,13 @@ fn verify_last_downsampled_ts(
         )
         .map_err(OpenError::CanNotCompareToSource)?;
 
-    if data.last_time() == timestamps.last().copied() {
+    let last_time_in_source = data.last_time().map_err(OpenError::CanNotCompareToSource)?;
+    if last_time_in_source == timestamps.last().copied() {
         Ok(())
     } else {
         Err(OpenError::OutOfSync {
             expected_last_time: timestamps.last().copied(),
-            found_in_file: data.last_time(),
+            found_in_file: last_time_in_source,
         })
     }
 }

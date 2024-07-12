@@ -2,7 +2,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::ops::Bound;
 
 use crate::series::data::index::{EndArea, StartArea};
-use crate::series::data::Data;
+use crate::series::data::{Data, MAX_SMALL_TS};
 use crate::Timestamp;
 
 #[derive(thiserror::Error, Debug)]
@@ -65,7 +65,7 @@ impl RoughSeekPos {
             Bound::Included(ts) => data.index.end_search_bounds(ts, data.payload_size()),
             Bound::Excluded(ts) => data.index.end_search_bounds(ts - 1, data.payload_size()),
             Bound::Unbounded => (
-                EndArea::Found(data.last_line_start()),
+                EndArea::Found(data.last_line_start() + data.payload_size() as u64 + 2),
                 data.index
                     .last_timestamp()
                     .expect("first time is set so last should be too"),
@@ -83,15 +83,15 @@ impl RoughSeekPos {
     }
 
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
-        let start_time: u16 = self
+        let start_time = self
             .start_ts
             .checked_sub(self.start_section_full_ts)
             .expect(
                 "search_bounds should be such that requested_start_time falls within \
                 start_full_time..start_full_time+u16::MAX",
-            )
-            .try_into()
-            .expect("search range should be smaller then u16::MAX");
+            );
+        assert!(start_time < MAX_SMALL_TS);
+        let start_time = start_time as u16;
         let start_byte = match self.start_search_area {
             StartArea::Found(pos) => pos,
             StartArea::Clipped => 0,
@@ -102,15 +102,12 @@ impl RoughSeekPos {
             StartArea::Window(start, stop) => find_read_start(data, start_time, start, stop)?,
         };
 
-        let end_time: u16 = self
-            .end_ts
-            .checked_sub(self.end_section_full_ts)
-            .expect(
-                "search_bounds should be such that requested_end_time falls within \
-                end_full_time..end_full_time+u16::MAX",
-            )
-            .try_into()
-            .expect("search range should be smaller then u16::MAX");
+        let end_time = self.end_ts.checked_sub(self.end_section_full_ts).expect(
+            "search_bounds should be such that requested_end_time falls within \
+                end_full_time..end_full_time+MAX_SMALL_TS",
+        );
+        assert!(end_time < MAX_SMALL_TS);
+        let end_time = end_time as u16;
         let end_byte = match self.end_search_area {
             EndArea::Found(pos) => pos,
             EndArea::TillEnd(pos) => {
@@ -195,7 +192,7 @@ pub(crate) struct Estimate {
 pub struct SeekPos {
     /// start of the first line that should be read
     pub start: u64,
-    /// start of the last line that should be read
+    /// end of the last line that should be read
     pub end: u64,
     /// 64 bit timestamp that should be added to the small time
     /// for the first section.
@@ -254,6 +251,7 @@ fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Resul
         .map(u16::from_le_bytes)
         .rposition(|line_ts| line_ts <= end_time)
     {
+        dbg!(stop_line);
         let stop_byte = start + (stop_line + 1) as u64 * (data.payload_size() + 2) as u64;
         Ok(stop_byte)
     } else {

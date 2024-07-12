@@ -111,7 +111,6 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
     let line_size = payload_size + 2;
     let data_plus_all_but_first_meta_line = lines_per_metainfo(payload_size) + line_size;
     series_file.set_len(len - data_plus_all_but_first_meta_line as u64).unwrap();
-    dbg!("done messing everything up :)");
 
     let (mut series, _) = ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
     let mut timestamps = Vec::new();

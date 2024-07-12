@@ -14,6 +14,7 @@ use crate::search::{Estimate, SeekError};
 use crate::{search, Decoder, Resampler, Timestamp};
 
 use self::data::inline_meta::bytes_per_metainfo;
+use self::data::ReadError;
 use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug + Send + 'static {
@@ -23,13 +24,68 @@ trait DownSampled: fmt::Debug + Send + 'static {
     fn data(&self) -> &Data;
 }
 
+#[derive(Debug, Clone, Default)]
+pub enum TimeRange {
+    #[default]
+    None,
+    Some(std::ops::RangeInclusive<Timestamp>),
+}
+
+impl TimeRange {
+    fn first(&self) -> Option<Timestamp> {
+        match self {
+            Self::None => None,
+            Self::Some(range) => Some(*range.start()),
+        }
+    }
+    fn last(&self) -> Option<Timestamp> {
+        match self {
+            Self::None => None,
+            Self::Some(range) => Some(*range.end()),
+        }
+    }
+    fn from_data(data: &mut Data) -> Result<Self, ReadError> {
+        Ok(if let Some(first) = data.first_time() {
+            let last = data
+                .last_time()?
+                .expect("if there is a first time there is a last (can be equal to first)");
+            Self::Some(first..=last)
+        } else {
+            Self::None
+        })
+    }
+
+    fn update(&mut self, new_ts: Timestamp) -> Result<(), Error> {
+        let new = match self {
+            Self::Some(range) if *range.end() >= new_ts => {
+                return Err(Error::NewLineBeforePrevious {
+                    new: new_ts,
+                    prev: *range.end(),
+                })
+            }
+            Self::Some(range) => Self::Some(*range.start()..=new_ts),
+            Self::None => Self::Some(new_ts..=new_ts),
+        };
+        *self = new;
+        Ok(())
+    }
+}
+
+impl Into<Option<std::ops::RangeInclusive<Timestamp>>> for TimeRange {
+    fn into(self) -> Option<std::ops::RangeInclusive<Timestamp>> {
+        match self {
+            Self::None => None,
+            Self::Some(range) => Some(range.clone()),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ByteSeries {
     pub(crate) data: Data,
     downsampled: Vec<Box<dyn DownSampled>>,
 
-    pub(crate) first_time_in_data: Option<Timestamp>,
-    pub(crate) last_time_in_data: Option<Timestamp>,
+    pub(crate) range: TimeRange,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,8 +146,7 @@ impl ByteSeries {
     {
         let mut data = Data::new(name.as_ref(), payload_size, header).map_err(Error::Create)?;
         Ok(ByteSeries {
-            first_time_in_data: None,
-            last_time_in_data: None,
+            range: TimeRange::None,
             downsampled: resample_configs
                 .into_iter()
                 .map(|config| {
@@ -124,8 +179,7 @@ impl ByteSeries {
         let (mut data, header) = Data::open_existing(name, payload_size).map_err(Error::Open)?;
 
         let bs = ByteSeries {
-            first_time_in_data: data.first_time(),
-            last_time_in_data: data.last_time(),
+            range: TimeRange::from_data(&mut data).map_err(Error::Reading)?,
             downsampled: Vec::new(),
             data,
         };
@@ -150,8 +204,7 @@ impl ByteSeries {
 
         Ok((
             ByteSeries {
-                first_time_in_data: data.first_time(),
-                last_time_in_data: data.last_time(),
+                range: TimeRange::from_data(&mut data).map_err(Error::Reading)?,
                 downsampled: resample_configs
                     .into_iter()
                     .map(|config| {
@@ -178,21 +231,11 @@ impl ByteSeries {
     pub fn push_line(&mut self, ts: Timestamp, line: impl AsRef<[u8]>) -> Result<(), Error> {
         //write 16 bit timestamp and then the line to file
         //for now no support for sign bit since data will always be after 0 (1970)
-        match self.last_time_in_data {
-            Some(last_in_data) if last_in_data >= ts => {
-                return Err(Error::NewLineBeforePrevious {
-                    new: ts,
-                    prev: last_in_data,
-                })
-            }
-            Some(_) | None => (),
-        }
+        self.range.update(ts)?;
 
         self.data
             .push_data(ts, line.as_ref())
             .map_err(Error::Pushing)?;
-        self.last_time_in_data = Some(ts);
-        self.first_time_in_data.get_or_insert(ts);
 
         for downsampled in &mut self.downsampled {
             downsampled
@@ -306,12 +349,12 @@ impl ByteSeries {
 
         match start {
             Bound::Included(ts) => {
-                if ts > self.last_time_in_data.expect("data_len > 0") {
+                if ts > self.range.last().expect("data_len > 0") {
                     return Err(SeekError::StartAfterData);
                 }
             }
             Bound::Excluded(ts) => {
-                if ts >= self.last_time_in_data.expect("data_len > 0") {
+                if ts >= self.range.last().expect("data_len > 0") {
                     return Err(SeekError::StartAfterData);
                 }
             }
@@ -320,12 +363,12 @@ impl ByteSeries {
 
         match end {
             Bound::Included(ts) => {
-                if ts < self.first_time_in_data.expect("data_len > 0") {
+                if ts < self.range.first().expect("data_len > 0") {
                     return Err(SeekError::StopBeforeData);
                 }
             }
             Bound::Excluded(ts) => {
-                if ts <= self.first_time_in_data.expect("data_len > 0") {
+                if ts <= self.range.first().expect("data_len > 0") {
                     return Err(SeekError::StopBeforeData);
                 }
             }
@@ -353,11 +396,6 @@ impl ByteSeries {
     #[must_use]
     #[allow(clippy::missing_panics_doc)] // is bug if panic
     pub fn range(&self) -> Option<core::ops::RangeInclusive<Timestamp>> {
-        self.first_time_in_data.map(|first| {
-            first
-                ..=self
-                    .last_time_in_data
-                    .expect("set at the same time as first_time_in_data")
-        })
+        self.range.clone().into()
     }
 }

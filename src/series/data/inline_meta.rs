@@ -104,7 +104,6 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         seek: SeekPos,
         mut processor: impl FnMut(Timestamp, &[u8]),
     ) -> Result<(), std::io::Error> {
-        dbg!("**********8");
         let mut to_read = seek.end - seek.start;
         let chunk_size = 16384usize.next_multiple_of(self.line_size);
         let mut buf = vec![0; chunk_size];
@@ -119,7 +118,6 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 .read_exact(&mut buf[needed_overlap..needed_overlap + read_size])?;
             to_read -= read_size as u64;
             let mut lines = buf[..needed_overlap + read_size].chunks_exact(self.line_size);
-            dbg!(&buf[..needed_overlap + read_size]);
 
             needed_overlap = loop {
                 let Some(line) = lines.next() else {
@@ -129,7 +127,6 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                     let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
                     let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                     processor(small_ts + full_ts, &line[2..]);
-                    dbg!(small_ts + full_ts);
                     continue;
                 }
 
@@ -138,21 +135,17 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                         // take care of the last item
                         let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
                         let small_ts: u64 = u16::from_le_bytes(small_ts).into();
-                        dbg!(line);
                         processor(small_ts + full_ts, &line[2..]);
-                        dbg!(small_ts + full_ts);
                     }
-                    break 1;
+                    break self.line_size;
                 };
                 if next_line[..2] != META_PREAMBLE {
                     let small_ts: [u8; 2] = line[0..2].try_into().expect("len is 2");
                     let small_ts: u64 = u16::from_le_bytes(small_ts).into();
-                    dbg!(small_ts + full_ts);
                     processor(small_ts + full_ts, &line[2..]);
                     let small_ts: [u8; 2] = next_line[0..2].try_into().expect("len is 2");
                     let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                     processor(small_ts + full_ts, &next_line[2..]);
-                    dbg!(small_ts + full_ts);
                     continue;
                 }
 
@@ -163,16 +156,13 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                         line_after_meta,
                     } => {
                         full_ts = u64::from_le_bytes(meta);
-                        dbg!(full_ts);
-                        dbg!(line_after_meta);
                         processor(full_ts, &line_after_meta[2..]);
                     }
-                    MetaResult::OutOfLines { consumed } => break 2 + consumed,
+                    MetaResult::OutOfLines { consumed_lines } => {
+                        break consumed_lines * self.line_size;
+                    }
                 };
-                dbg!(&lines);
             };
-
-            if to_read == 0 {}
         }
         Ok(())
     }
@@ -182,18 +172,11 @@ fn removed_start_of_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     file: &mut F,
     payload_size: usize,
 ) -> Result<bool, io::Error> {
-    // let mut dbg_buf = Vec::new();
-    // file.seek(SeekFrom::Start(0)).unwrap();
-    // file.read_to_end(&mut dbg_buf).unwrap();
-    // dbg!(dbg_buf);
-    // dbg!(payload_size);
     file.seek(SeekFrom::Start(
-        dbg!(file.len()?) - dbg!(bytes_per_metainfo(payload_size) as u64),
-    ))?; // - (payload_size + 2) as u64,
-         // ))?;
+        file.len()? - bytes_per_metainfo(payload_size) as u64,
+    ))?;
     let mut to_check = vec![1u8; 2 * (payload_size + 2)];
     file.read_exact(&mut to_check)?;
-    dbg!(&to_check);
     let mut lines = to_check.chunks_exact(payload_size + 2);
     let last_line = lines.by_ref().last().expect("read multiple lines");
     let meta_start_before_last_line = lines
@@ -215,16 +198,14 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     payload_size: usize,
 ) -> Result<bool, io::Error> {
     file.seek(SeekFrom::Start(
-        dbg!(file.len()?) - dbg!(bytes_per_metainfo(payload_size)) as u64,
+        file.len()? - bytes_per_metainfo(payload_size) as u64,
     ))?;
     let mut to_check = vec![0u8; bytes_per_metainfo(payload_size)];
     file.read_exact(&mut to_check)?;
     let lines = to_check.chunks_exact(payload_size + 2);
-    dbg!(&lines);
     let meta_section_start = lines
         .tuple_windows()
         .position(|(a, b)| (a[0..2] == META_PREAMBLE && b[0..2] == META_PREAMBLE));
-    dbg!(meta_section_start);
 
     if let Some(pos) = meta_section_start {
         file.set_len(
@@ -352,10 +333,8 @@ pub(crate) fn write_meta(
         4.. => {
             let mut line = vec![META_PREAMBLE[0]; payload_size + 2];
             line[2..6].copy_from_slice(&[t[0], t[1], t[2], t[3]]);
-            dbg!(&line);
             file_handle.write_all(&line)?;
             line[2..6].copy_from_slice(&[t[4], t[5], t[6], t[7]]);
-            dbg!(&line);
             file_handle.write_all(&line)?;
             2
         }
@@ -366,7 +345,7 @@ pub(crate) fn write_meta(
 #[derive(Debug)]
 pub(crate) enum MetaResult<'a> {
     OutOfLines {
-        consumed: usize,
+        consumed_lines: usize,
     },
     Meta {
         meta: [u8; 8],
@@ -385,19 +364,19 @@ pub(crate) fn read_meta<'a>(
     match payload_size {
         0 => {
             result[0..2].copy_from_slice(match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 0 },
+                None => return MetaResult::OutOfLines { consumed_lines: 0 },
                 Some(chunk) => chunk,
             });
             result[2..4].copy_from_slice(match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 1 },
+                None => return MetaResult::OutOfLines { consumed_lines: 1 },
                 Some(chunk) => chunk,
             });
             result[4..6].copy_from_slice(match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 2 },
+                None => return MetaResult::OutOfLines { consumed_lines: 2 },
                 Some(chunk) => chunk,
             });
             result[6..8].copy_from_slice(match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 3 },
+                None => return MetaResult::OutOfLines { consumed_lines: 3 },
                 Some(chunk) => chunk,
             });
         }
@@ -405,11 +384,11 @@ pub(crate) fn read_meta<'a>(
             result[0] = first_chunk[2];
             result[1] = next_chunk[2];
             result[2..5].copy_from_slice(match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 0 },
+                None => return MetaResult::OutOfLines { consumed_lines: 0 },
                 Some(chunk) => chunk,
             });
             result[5..8].copy_from_slice(match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 1 },
+                None => return MetaResult::OutOfLines { consumed_lines: 1 },
                 Some(chunk) => chunk,
             });
         }
@@ -417,7 +396,7 @@ pub(crate) fn read_meta<'a>(
             result[0..2].copy_from_slice(&first_chunk[2..]);
             result[2..4].copy_from_slice(&next_chunk[2..]);
             result[4..8].copy_from_slice(match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 0 },
+                None => return MetaResult::OutOfLines { consumed_lines: 0 },
                 Some(chunk) => chunk,
             });
         }
@@ -425,7 +404,7 @@ pub(crate) fn read_meta<'a>(
             result[0..3].copy_from_slice(&first_chunk[2..]);
             result[3..6].copy_from_slice(&next_chunk[2..]);
             let chunk = match chunks.next() {
-                None => return MetaResult::OutOfLines { consumed: 0 },
+                None => return MetaResult::OutOfLines { consumed_lines: 0 },
                 Some(chunk) => chunk,
             };
             result[6..8].copy_from_slice(&chunk[0..2]);
@@ -443,7 +422,7 @@ pub(crate) fn read_meta<'a>(
         }
     } else {
         MetaResult::OutOfLines {
-            consumed: lines_per_metainfo(payload_size) - 2,
+            consumed_lines: lines_per_metainfo(payload_size),
         }
     }
 }
