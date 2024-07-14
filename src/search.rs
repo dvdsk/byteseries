@@ -38,7 +38,7 @@ pub struct RoughSeekPos {
 impl RoughSeekPos {
     /// # returns `None` if the data file is empty
     pub(crate) fn new(data: &Data, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Option<Self> {
-        let first_time_in_data = data.index.first_full_timestamp()?;
+        let first_time_in_data = data.index.first_meta_timestamp()?;
         let start_ts = match start {
             Bound::Included(ts) => ts,
             Bound::Excluded(ts) => ts - 1,

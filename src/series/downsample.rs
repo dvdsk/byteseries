@@ -69,14 +69,19 @@ pub enum OpenError {
     Data(data::OpenError),
     #[error(
         "The last timestamp in the opened file {found_in_file:?}, is not what \
-        it should: {expected_last_time:?}"
+        it should: {correct_last_time:?}"
     )]
     OutOfSync {
-        expected_last_time: Option<Timestamp>,
+        correct_last_time: Option<Timestamp>,
         found_in_file: Option<Timestamp>,
     },
     #[error("Can not check last downsampled item by comparing to source, read error: {0}")]
     CanNotCompareToSource(data::ReadError),
+    #[error(
+        "There should not be a downsampled item since there are not \
+        enough items in the source to form one"
+    )]
+    ShouldBeEmpty,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -220,37 +225,37 @@ fn verify_last_downsampled_ts(
     line_size: usize,
 ) -> Result<(), OpenError> {
     let bucket_len = config.bucket_size as u64 * line_size as u64;
-    let Some(start) = source.last_line_start().checked_sub(bucket_len) else {
-        tracing::debug!(
-            "Not enough samples in source to create downsampled \
-            timestamp for downsampled dataset verification"
-        );
-        return Ok(());
+    let Some(start) = source
+        .last_line_start()
+        .checked_sub(bucket_len * line_size as u64)
+    else {
+        return Err(OpenError::ShouldBeEmpty);
     };
     let seek = crate::SeekPos {
         start,
         end: source.last_line_start() + line_size as u64,
-        first_full_ts: source.index.full_ts_for(start),
+        first_full_ts: source.index.meta_ts_for(start),
     };
+    dbg!(&seek, source.payload_size());
     let mut placeholder = Vec::new();
-    let mut timestamps = Vec::new();
+    let mut read_timestamps = Vec::new();
     source
         .read_resampling(
             seek,
             &mut EmptyResampler,
             config.bucket_size,
-            &mut timestamps,
+            &mut read_timestamps,
             &mut placeholder,
         )
         .map_err(OpenError::CanNotCompareToSource)?;
 
-    let last_time_in_source = data.last_time().map_err(OpenError::CanNotCompareToSource)?;
-    if last_time_in_source == timestamps.last().copied() {
+    let last_downsampled_ts = data.last_time().map_err(OpenError::CanNotCompareToSource)?;
+    if last_downsampled_ts == read_timestamps.last().copied() {
         Ok(())
     } else {
         Err(OpenError::OutOfSync {
-            expected_last_time: timestamps.last().copied(),
-            found_in_file: last_time_in_source,
+            correct_last_time: read_timestamps.last().copied(),
+            found_in_file: last_downsampled_ts,
         })
     }
 }

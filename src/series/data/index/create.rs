@@ -42,7 +42,7 @@ impl Index {
         let entries = extract_entries(byteseries, payload_size)?;
 
         let mut index = Self {
-            last_full_timestamp: entries.last().map(|Entry { timestamp, .. }| *timestamp),
+            last_timestamp: entries.last().map(|Entry { timestamp, .. }| *timestamp),
             file: index_file.split_off_header().0,
             entries: Vec::new(),
         };
@@ -107,8 +107,6 @@ pub(crate) fn extract_entries_inner(
         file.read_exact(&mut buffer[overlap..overlap + read_size])
             .map_err(ExtractingTsError::ReadChunk)?;
         to_read -= read_size as u64;
-        dbg!(payload_size);
-        dbg!(&buffer[..overlap + read_size]);
 
         entries.extend(
             meta(&buffer[..overlap + read_size], payload_size, overlap)
@@ -125,7 +123,7 @@ pub(crate) fn extract_entries_inner(
 }
 
 #[instrument]
-pub(crate) fn last_full_timestamp(
+pub(crate) fn last_meta_timestamp(
     file: &mut OffsetFile,
     payload_size: usize,
 ) -> Result<Option<Timestamp>, ExtractingTsError> {
@@ -140,7 +138,6 @@ pub(crate) fn last_full_timestamp(
         if start == end {
             return Ok(None);
         };
-        dbg!(start, end);
         let mut list = extract_entries_inner(file, payload_size, start, end)?;
 
         if let Some(Entry { timestamp, .. }) = list.pop() {

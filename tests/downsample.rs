@@ -238,3 +238,39 @@ fn truncated_downsampled_is_detected() {
         ))
     ))
 }
+
+#[rstest]
+#[trace]
+#[case(0)]
+#[case(1)]
+#[case(9)]
+fn undamaged_downsampled_passes_checks(#[case] lines_more_then_bucket_size: u64) {
+    shared::setup_tracing();
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("downsampled_cache_present");
+
+    let resample_configs = vec![downsample::Config {
+        max_gap: None,
+        bucket_size: 10,
+    }];
+    {
+        let mut bs = ByteSeries::new_with_resamplers(
+            &test_path,
+            4,
+            (),
+            FloatResampler,
+            resample_configs.clone(),
+        )
+        .unwrap();
+        insert_lines(&mut bs, 10 + lines_more_then_bucket_size);
+    }
+
+    let _bs = ByteSeries::open_existing_with_resampler::<(), FloatResampler>(
+        test_path,
+        4,
+        FloatResampler,
+        resample_configs,
+    )
+    .unwrap();
+}

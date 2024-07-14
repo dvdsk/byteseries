@@ -24,7 +24,7 @@ pub(crate) struct Index {
 
     entries: Vec<Entry>,
     /// time for next point is 1 larger the this
-    last_full_timestamp: Option<Timestamp>,
+    last_timestamp: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,7 +98,7 @@ impl Index {
             file: file.split_off_header().0,
 
             entries: Vec::new(),
-            last_full_timestamp: None,
+            last_timestamp: None,
         })
     }
     #[instrument]
@@ -142,7 +142,7 @@ impl Index {
 
         Ok(Index {
             file,
-            last_full_timestamp: entries
+            last_timestamp: entries
                 .last()
                 .map(|Entry { timestamp, .. }| timestamp)
                 .copied(),
@@ -160,7 +160,7 @@ impl Index {
             timestamp,
             line_start,
         });
-        self.last_full_timestamp = Some(timestamp);
+        self.last_timestamp = Some(timestamp);
         Ok(())
     }
 
@@ -230,18 +230,19 @@ impl Index {
             }
         }
     }
-    pub fn first_full_timestamp(&self) -> Option<Timestamp> {
+    pub fn first_meta_timestamp(&self) -> Option<Timestamp> {
         self.entries.first().map(|e| e.timestamp)
     }
 
     pub fn last_timestamp(&self) -> Option<Timestamp> {
-        self.last_full_timestamp
+        self.last_timestamp
     }
 
-    pub(crate) fn full_ts_for(&self, start: u64) -> u64 {
+    #[instrument]
+    pub(crate) fn meta_ts_for(&self, line_start: u64) -> u64 {
         match self
             .entries
-            .binary_search_by_key(&start, |entry| entry.timestamp)
+            .binary_search_by_key(&line_start, |entry| entry.line_start)
         {
             Ok(idx) => self.entries[idx].timestamp,
             // inserting at idx would keep the list sorted, so the full timestamp

@@ -13,7 +13,7 @@ use inline_meta::FileWithInlineMeta;
 pub mod index;
 use index::Index;
 
-use self::index::create::{self, last_full_timestamp, ExtractingTsError};
+use self::index::create::{self, last_meta_timestamp, ExtractingTsError};
 use self::inline_meta::write_meta;
 
 pub(crate) const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
@@ -133,7 +133,7 @@ impl Data {
             .data_len()
             .map_err(OpenError::GetLength)?;
         let last_line_starts = data_len.checked_sub((payload_size + 2) as u64);
-        let last_full_ts_in_data = last_full_timestamp(file_handle.inner_mut(), payload_size)
+        let last_full_ts_in_data = last_meta_timestamp(file_handle.inner_mut(), payload_size)
             .map_err(OpenError::GetLastMeta)?;
         let index =
             match Index::open_existing(&name, &header, last_line_starts, last_full_ts_in_data) {
@@ -184,7 +184,7 @@ impl Data {
 
     #[instrument]
     pub(crate) fn first_time(&mut self) -> Option<Timestamp> {
-        self.index.first_full_timestamp()
+        self.index.first_meta_timestamp()
     }
 
     #[instrument]
