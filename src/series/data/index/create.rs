@@ -91,9 +91,7 @@ pub(crate) fn extract_entries_inner(
     let mut entries = Vec::new();
 
     let chunk_size = 16384usize.next_multiple_of(payload_size + 2);
-
-    // max size of the metadata section.
-    let overlap = 5 * (payload_size + 2);
+    let overlap = bytes_per_metainfo(payload_size);
 
     // do not init with zero or the initially empty overlap
     // will be seen as a full timestamp
@@ -109,6 +107,8 @@ pub(crate) fn extract_entries_inner(
         file.read_exact(&mut buffer[overlap..overlap + read_size])
             .map_err(ExtractingTsError::ReadChunk)?;
         to_read -= read_size as u64;
+        dbg!(payload_size);
+        dbg!(&buffer[..overlap + read_size]);
 
         entries.extend(
             meta(&buffer[..overlap + read_size], payload_size, overlap)
@@ -140,6 +140,7 @@ pub(crate) fn last_full_timestamp(
         if start == end {
             return Ok(None);
         };
+        dbg!(start, end);
         let mut list = extract_entries_inner(file, payload_size, start, end)?;
 
         if let Some(Entry { timestamp, .. }) = list.pop() {
@@ -148,9 +149,9 @@ pub(crate) fn last_full_timestamp(
 
         if start == 0 {
             panic!(
-                "Should have found timestamp in data as file (ensured by repair) \
-                is guaranteed to either be empty or contain at least one full \
-                timestamp metadata section."
+                "Should have found timestamp in data when its not empty \
+                (ensured by repair) is guaranteed to either be empty or \
+                contain at least one full timestamp metadata section."
             )
         }
 

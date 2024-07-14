@@ -331,9 +331,11 @@ pub(crate) fn write_meta(
             3
         }
         4.. => {
-            let mut line = vec![META_PREAMBLE[0]; payload_size + 2];
+            let mut line = vec![0; payload_size + 2];
+            line[0..2].copy_from_slice(&META_PREAMBLE);
             line[2..6].copy_from_slice(&[t[0], t[1], t[2], t[3]]);
             file_handle.write_all(&line)?;
+            line[0..2].copy_from_slice(&META_PREAMBLE);
             line[2..6].copy_from_slice(&[t[4], t[5], t[6], t[7]]);
             file_handle.write_all(&line)?;
             2

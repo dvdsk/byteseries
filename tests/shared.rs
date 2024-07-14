@@ -32,6 +32,7 @@ pub fn setup_tracing() {
 #[case(3)]
 #[case(4)]
 #[case(5)]
+#[case(6)]
 fn payload_sizes(#[case] payload_size: usize) {}
 
 #[derive(Debug, Clone)]
