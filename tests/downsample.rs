@@ -228,6 +228,7 @@ fn truncated_downsampled_is_detected() {
         }],
     )
     .unwrap_err();
+    println!("{}", error);
 
     use byteseries::series;
     use series::downsample;

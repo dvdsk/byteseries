@@ -94,7 +94,7 @@ pub enum Error {
     Open(data::OpenError),
     #[error("Failed to create new byteseries: {0}")]
     Create(data::CreateError),
-    #[error("Error caching downsampled data")]
+    #[error("Error with cached downsampled data: {0}")]
     Downsampled(downsample::Error),
     #[error("Could not push, new timestamp: {new} lies before last in data: {prev}")]
     NewLineBeforePrevious { new: u64, prev: u64 },

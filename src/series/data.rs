@@ -230,13 +230,13 @@ impl Data {
                 "inserting full timestamp via and updating index\
                 , timestamp: {ts}"
             );
+            self.index
+                .update(ts, self.data_len)
+                .map_err(PushError::Index)?;
             let meta = ts.to_le_bytes();
             let written = write_meta(&mut self.file_handle, meta, self.payload_size)
                 .map_err(PushError::Meta)?;
             self.data_len += written;
-            self.index
-                .update(ts, self.data_len)
-                .map_err(PushError::Index)?;
             0 // value does not matter, full timestamp just ahead is used
         };
 

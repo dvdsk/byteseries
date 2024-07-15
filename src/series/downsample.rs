@@ -5,6 +5,7 @@ use std::io;
 use std::ops::Bound;
 use std::path::Path;
 
+use itertools::Itertools;
 use tracing::instrument;
 
 use self::resample::EmptyResampler;
@@ -68,12 +69,12 @@ pub enum OpenError {
     #[error("Failed to open data file: {0}")]
     Data(data::OpenError),
     #[error(
-        "The last timestamp in the opened file {found_in_file:?}, is not what \
-        it should: {correct_last_time:?}"
+        "The last timestamp in the opened file {found_in_file:?}, is \
+        should be: {correct_options:?}"
     )]
     OutOfSync {
-        correct_last_time: Option<Timestamp>,
-        found_in_file: Option<Timestamp>,
+        correct_options: OneOrRange,
+        found_in_file: Timestamp,
     },
     #[error("Can not check last downsampled item by comparing to source, read error: {0}")]
     CanNotCompareToSource(data::ReadError),
@@ -96,7 +97,7 @@ pub enum OpenOrCreateError {
 pub enum Error {
     #[error("Could not create new data file: {0}")]
     Creating(CreateError),
-    #[error("create or open: {0}")]
+    #[error("While creating or opening: {0}")]
     OpenOrCreate(OpenOrCreateError),
 }
 
@@ -217,6 +218,55 @@ where
     }
 }
 
+#[derive(Debug)]
+pub enum OneOrRange {
+    One(Timestamp),
+    Between(core::ops::RangeInclusive<Timestamp>),
+}
+
+impl From<itertools::MinMaxResult<Timestamp>> for OneOrRange {
+    fn from(value: itertools::MinMaxResult<Timestamp>) -> Self {
+        match value {
+            itertools::MinMaxResult::NoElements => panic!("timestamp list is checked to be large enough for the iterator to provide at least one item"),
+            itertools::MinMaxResult::OneElement(ts) => Self::One(ts),
+            itertools::MinMaxResult::MinMax(min, max) => Self::Between(min..=max),
+        }
+    }
+}
+
+#[instrument]
+fn timestamps(
+    source: &mut Data,
+    config: &Config,
+    line_size: usize,
+) -> Result<Vec<Timestamp>, OpenError> {
+    let mut to_read = 2 * config.bucket_size as u64 * line_size as u64;
+    let mut timestamps = Vec::new();
+
+    loop {
+        let start = source.last_line_start().saturating_sub(to_read);
+        let seek = crate::SeekPos {
+            start,
+            end: source.last_line_start() + line_size as u64,
+            first_full_ts: source.index.meta_ts_for(start),
+        };
+
+        timestamps.clear();
+        source
+            .read_all(seek, &mut EmptyResampler, &mut timestamps, &mut Vec::new())
+            .map_err(OpenError::CanNotCompareToSource)?;
+
+        let read_enough = timestamps.len() < 2 * config.bucket_size - 1;
+        if read_enough || start == 0 {
+            break;
+        } else {
+            to_read += 10 * line_size as u64;
+        }
+    }
+
+    Ok(timestamps)
+}
+
 #[instrument(err)]
 fn verify_last_downsampled_ts(
     data: &mut Data,
@@ -224,37 +274,31 @@ fn verify_last_downsampled_ts(
     config: &Config,
     line_size: usize,
 ) -> Result<(), OpenError> {
-    let bucket_len = config.bucket_size as u64 * line_size as u64;
-    let Some(start) = source
-        .last_line_start()
-        .checked_sub(bucket_len * line_size as u64)
+    let source_timestamps = timestamps(source, config, line_size)?;
+    let Some(last_downsampled_ts) = data.last_time().map_err(OpenError::CanNotCompareToSource)?
     else {
-        return Err(OpenError::ShouldBeEmpty);
+        if source_timestamps.len() < config.bucket_size {
+            tracing::debug!("downsampled is correctly empty");
+            return Ok(());
+        } else {
+            return Err(OpenError::ShouldBeEmpty);
+        }
     };
-    let seek = crate::SeekPos {
-        start,
-        end: source.last_line_start() + line_size as u64,
-        first_full_ts: source.index.meta_ts_for(start),
-    };
-    dbg!(&seek, source.payload_size());
-    let mut placeholder = Vec::new();
-    let mut read_timestamps = Vec::new();
-    source
-        .read_resampling(
-            seek,
-            &mut EmptyResampler,
-            config.bucket_size,
-            &mut read_timestamps,
-            &mut placeholder,
-        )
-        .map_err(OpenError::CanNotCompareToSource)?;
 
-    let last_downsampled_ts = data.last_time().map_err(OpenError::CanNotCompareToSource)?;
-    if last_downsampled_ts == read_timestamps.last().copied() {
+    let correct_options = source_timestamps
+        .windows(config.bucket_size)
+        .rev()
+        .take(config.bucket_size)
+        .map(|w| w.iter().sum::<u64>() / config.bucket_size as u64);
+
+    if correct_options
+        .clone()
+        .any(|option| option == last_downsampled_ts)
+    {
         Ok(())
     } else {
         Err(OpenError::OutOfSync {
-            correct_last_time: read_timestamps.last().copied(),
+            correct_options: correct_options.minmax().into(),
             found_in_file: last_downsampled_ts,
         })
     }

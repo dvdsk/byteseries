@@ -109,7 +109,7 @@ pub(crate) fn extract_entries_inner(
         to_read -= read_size as u64;
 
         entries.extend(
-            meta(&buffer[..overlap + read_size], payload_size, overlap)
+            meta(&buffer[..overlap + read_size], payload_size + 2, overlap)
                 .into_iter()
                 .map(|(pos, timestamp)| Entry {
                     timestamp,
@@ -156,8 +156,8 @@ pub(crate) fn last_meta_timestamp(
     }
 }
 
-pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usize, u64)> {
-    let mut chunks = buf.chunks_exact(2 + payload_size).enumerate();
+pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, u64)> {
+    let mut chunks = buf.chunks_exact(line_size).enumerate();
     let mut res = Vec::new();
     loop {
         let Some((idx, chunk)) = chunks.next() else {
@@ -178,10 +178,9 @@ pub(crate) fn meta(buf: &[u8], payload_size: usize, overlap: usize) -> Vec<(usiz
         let MetaResult::Meta { meta, .. } = read_meta(chunks, chunk, next_chunk) else {
             return res;
         };
-        let index_of_meta = idx * (2 + payload_size) - overlap;
-        let index_of_line = index_of_meta + 2 * (2 + payload_size);
+        let index_of_meta = idx * line_size - overlap;
         let ts = u64::from_le_bytes(meta);
-        res.push((index_of_line, ts));
+        res.push((index_of_meta, ts));
     }
 }
 
