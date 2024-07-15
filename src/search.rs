@@ -2,6 +2,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::ops::Bound;
 
 use crate::series::data::index::{EndArea, StartArea};
+use crate::series::data::inline_meta::bytes_per_metainfo;
 use crate::series::data::{Data, MAX_SMALL_TS};
 use crate::Timestamp;
 
@@ -83,6 +84,9 @@ impl RoughSeekPos {
     }
 
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
+        let meta_section_size = bytes_per_metainfo(data.payload_size()) as u64;
+
+        dbg!(&self);
         let start_time = self
             .start_ts
             .checked_sub(self.start_section_full_ts)
@@ -97,9 +101,11 @@ impl RoughSeekPos {
             StartArea::Clipped => 0,
             StartArea::TillEnd(start) => {
                 let end = data.data_len;
-                find_read_start(data, start_time, start, end)?
+                find_read_start(data, start_time, start + meta_section_size, end)?
             }
-            StartArea::Window(start, stop) => find_read_start(data, start_time, start, stop)?,
+            StartArea::Window(start, stop) => {
+                find_read_start(data, start_time, start + meta_section_size, stop)?
+            }
         };
 
         let end_time = self.end_ts.checked_sub(self.end_section_full_ts).expect(
@@ -110,11 +116,13 @@ impl RoughSeekPos {
         let end_time = end_time as u16;
         let end_byte = match self.end_search_area {
             EndArea::Found(pos) => pos,
-            EndArea::TillEnd(pos) => {
+            EndArea::TillEnd(start) => {
                 let end = data.data_len;
-                find_read_end(data, end_time, pos, end)?
+                find_read_end(data, end_time, start + meta_section_size, end)?
             }
-            EndArea::Window(start, end) => find_read_end(data, end_time, start, end)?,
+            EndArea::Window(start, end) => {
+                find_read_end(data, end_time, start + meta_section_size, end)?
+            }
         };
 
         Ok(SeekPos {
@@ -215,7 +223,7 @@ fn find_read_start(
 ) -> Result<u64, SeekError> {
     assert!(stop >= start + 2);
 
-    let buf_len = usize::try_from(stop - start).expect("search area is smaller the u16::MAX");
+    let buf_len = usize::try_from(stop - start).expect("search area < u16::MAX");
     let mut buf = vec![0u8; buf_len];
     data.file_handle.seek(SeekFrom::Start(start))?;
     data.file_handle.file_handle.read_exact(&mut buf)?;
@@ -230,6 +238,7 @@ fn find_read_start(
         .map(u16::from_le_bytes)
         .position(|line_ts| line_ts >= start_time)
     {
+        dbg!(start_line);
         let start_byte = start + start_line as u64 * (data.payload_size() + 2) as u64;
         Ok(start_byte)
     } else {

@@ -1,5 +1,4 @@
 use core::fmt;
-use num_traits::Saturating;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::{Read, Seek, Write};
@@ -32,19 +31,32 @@ pub(crate) struct Index {
 pub enum StartArea {
     Found(u64),
     /// start lies before first timestamp or end lies after last timestamp
+    /// # Note
+    /// This points to the meta position after which the relevant line lies
     Clipped,
     /// start timestamp lies in section from this position till the end of the data
+    /// # Note
+    /// There is a meta section directly after the start position.
     TillEnd(u64),
+    /// start timestamp lies in between the first and second position
+    /// # Note
+    /// There is a meta section directly after the start position.
     Window(u64, u64),
 }
 
 #[derive(Debug, Clone)]
 pub enum EndArea {
     /// Pos at which the end line ends
+    /// # Note
+    /// This points to the meta position after which the relevant line lies
     Found(u64),
     /// end timestamp lies in section from this position till the end of the data
+    /// # Note
+    /// There is a meta section directly after the start position.
     TillEnd(u64),
     /// end timestamp lies in between the first and second position
+    /// # Note
+    /// There is a meta section directly after the start position.
     Window(u64, u64),
 }
 

@@ -266,6 +266,7 @@ impl ByteSeries {
         .expect("no data should be caught be check range")
         .refine(&mut self.data)
         .map_err(Error::Seeking)?;
+        dbg!(&seek);
         self.data
             .read_all(seek, decoder, timestamps, data)
             .map_err(Error::Reading)
