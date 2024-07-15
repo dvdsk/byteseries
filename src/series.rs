@@ -10,8 +10,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::search::{Estimate, SeekError};
-use crate::{search, Decoder, Resampler, Timestamp};
+use crate::seek::{Estimate, SeekError};
+use crate::{seek, Decoder, Resampler, Timestamp};
 
 use self::data::inline_meta::bytes_per_metainfo;
 use self::data::ReadError;
@@ -258,7 +258,7 @@ impl ByteSeries {
         let start = range.start_bound().cloned();
         let end = range.end_bound().cloned();
         self.check_range(start, end).map_err(Error::InvalidRange)?;
-        let seek = search::RoughSeekPos::new(
+        let seek = seek::RoughSeekPos::new(
             &self.data,
             range.start_bound().cloned(),
             range.end_bound().cloned(),
@@ -326,7 +326,7 @@ impl ByteSeries {
             optimal_data = downsampled.data_mut();
         }
 
-        let seek = search::RoughSeekPos::new(optimal_data, start, end)
+        let seek = seek::RoughSeekPos::new(optimal_data, start, end)
             .expect(
                 "check range catches the undownsampled file missing data \
                 and downsampled are not selected if their `estimate_lines` is None ",

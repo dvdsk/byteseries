@@ -12,7 +12,7 @@ use self::resample::EmptyResampler;
 
 use super::data::{self, Data};
 use super::DownSampled;
-use crate::search::RoughSeekPos;
+use crate::seek::RoughSeekPos;
 use crate::{file, ResampleState, Resampler, SeekPos, Timestamp};
 
 #[derive(Debug, Clone)]
@@ -332,7 +332,7 @@ where
         &self,
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
-    ) -> Option<crate::search::Estimate> {
+    ) -> Option<crate::seek::Estimate> {
         RoughSeekPos::new(&self.data, start, end)
             .map(|seek| seek.estimate_lines(self.data.payload_size() + 2, self.data.data_len))
     }

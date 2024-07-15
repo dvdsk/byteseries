@@ -1,8 +1,8 @@
 pub mod file;
-pub mod search;
+pub mod seek;
 pub mod series;
 
-pub use search::SeekPos;
+pub use seek::SeekPos;
 pub use series::{downsample, ByteSeries};
 
 pub type Timestamp = u64;

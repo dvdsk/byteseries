@@ -1,4 +1,4 @@
-use byteseries::search::SeekError;
+use byteseries::seek::SeekError;
 use byteseries::ByteSeries;
 use rstest::rstest;
 use rstest_reuse::apply;
