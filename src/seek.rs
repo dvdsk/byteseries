@@ -86,7 +86,6 @@ impl RoughSeekPos {
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
         let meta_section_size = bytes_per_metainfo(data.payload_size()) as u64;
 
-        dbg!(&self);
         let start_time = self
             .start_ts
             .checked_sub(self.start_section_full_ts)
@@ -238,7 +237,6 @@ fn find_read_start(
         .map(u16::from_le_bytes)
         .position(|line_ts| line_ts >= start_time)
     {
-        dbg!(start_line);
         let start_byte = start + start_line as u64 * (data.payload_size() + 2) as u64;
         Ok(start_byte)
     } else {

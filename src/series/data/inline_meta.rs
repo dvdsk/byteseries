@@ -267,7 +267,6 @@ impl<'a, R: Resampler> Sampler<'a, R> {
         self.timestamp_sum += ts;
         self.resample_state.add(item);
         self.sampled += 1;
-        dbg!(self.sampled);
         if self.sampled >= self.bucket_size {
             self.timestamps
                 .push(self.timestamp_sum / self.bucket_size as u64);
