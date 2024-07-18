@@ -1,7 +1,7 @@
 use core::fmt;
 use itertools::Itertools;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use tracing::{instrument, trace, warn};
+use tracing::{instrument, warn};
 
 use crate::{Resampler, SeekPos};
 
@@ -74,7 +74,6 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         data: &mut Vec<D::Item>,
         seek: SeekPos,
     ) -> Result<(), std::io::Error> {
-        trace!("reading data: {seek:?}");
         self.read_with_processor(seek, |ts, payload| {
             let item = decoder.decode_payload(payload);
             data.push(item);
@@ -91,7 +90,6 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         data: &mut Vec<<R as Decoder>::Item>,
         seek: SeekPos,
     ) -> Result<(), std::io::Error> {
-        trace!("reading data while resampling: {seek:?}");
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
         self.read_with_processor(seek, |ts, payload| {
             sampler.process(ts, payload);
@@ -355,7 +353,7 @@ pub(crate) enum MetaResult<'a> {
     },
 }
 /// returns None if not enough data was left to decode a u64
-#[instrument(level = "trace", skip(chunks), ret)]
+#[instrument(level = "trace", skip(chunks))]
 pub(crate) fn read_meta<'a>(
     mut chunks: impl Iterator<Item = &'a [u8]>,
     first_chunk: &'a [u8],

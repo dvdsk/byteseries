@@ -203,7 +203,6 @@ impl Data {
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
 
-        tracing::trace!("{}, {:?}", ts, self.index.last_timestamp());
         let small_ts = self
             .index
             .last_timestamp()

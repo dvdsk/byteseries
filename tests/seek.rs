@@ -1,5 +1,6 @@
 use byteseries::seek::SeekError;
 use byteseries::ByteSeries;
+use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rstest_reuse::apply;
 use temp_dir::TempDir;
@@ -87,4 +88,26 @@ fn within_range(#[case] step: u64) {
     let last = timestamps.last().unwrap();
     assert_in_range!(t1..(t1 + step), first);
     assert_in_range!((t2 - step)..=t2, last);
+}
+
+#[test]
+fn before_range() {
+    const PAYLOAD_SIZE: usize = 8;
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("test_beyond_range");
+    let mut bs = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
+    bs.push_line(100, &vec![0u8; 8]).unwrap();
+    bs.push_line(105, &vec![0u8; 8]).unwrap();
+    bs.push_line(110, &vec![0u8; 8]).unwrap();
+
+    let mut timestamps = Vec::new();
+    let mut data = Vec::new();
+    bs.read_all(90..=120, &mut EmptyDecoder, &mut timestamps, &mut data)
+        .unwrap();
+
+    let first = timestamps.first().unwrap();
+    let last = timestamps.last().unwrap();
+    assert_eq!(*first, 100);
+    assert_eq!(*last, 110);
 }

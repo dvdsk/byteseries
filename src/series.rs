@@ -187,7 +187,14 @@ impl ByteSeries {
         Ok((bs, header))
     }
 
+    /// Caches one or more downsampled versions of the data
     /// line size in bytes, path is *without* any extension
+    ///
+    /// # Note
+    /// If the data file got truncated (due to corruption/failed writes/another
+    /// process) and the cache did not the library can panic. This should be
+    /// exceedingly rare. Please let me know if this hits you and I'll see into
+    /// fixing this behaviour.
     #[instrument]
     pub fn open_existing_with_resampler<H, R>(
         name: impl AsRef<Path> + fmt::Debug,

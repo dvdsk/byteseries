@@ -1,6 +1,8 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Bound;
 
+use tracing::instrument;
+
 use crate::series::data::index::{EndArea, StartArea};
 use crate::series::data::inline_meta::bytes_per_metainfo;
 use crate::series::data::{Data, MAX_SMALL_TS};
@@ -16,7 +18,7 @@ pub enum SeekError {
     StartAfterData,
     #[error("no data to return as the stop time is before the data")]
     StopBeforeData,
-    #[error("error while searching through data")]
+    #[error("error while searching through data for precise end or start: {0}")]
     Io(#[from] std::io::Error),
 }
 
@@ -83,6 +85,7 @@ impl RoughSeekPos {
         })
     }
 
+    #[tracing::instrument]
     pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
         let meta_section_size = bytes_per_metainfo(data.payload_size()) as u64;
 
@@ -93,7 +96,10 @@ impl RoughSeekPos {
                 "search_bounds should be such that requested_start_time falls within \
                 start_full_time..start_full_time+u16::MAX",
             );
-        assert!(start_time < MAX_SMALL_TS);
+        assert!(
+            start_time < MAX_SMALL_TS,
+            "start time: {start_time}, MAX_SMALL_TS: {MAX_SMALL_TS}"
+        );
         let start_time = start_time as u16;
         let start_byte = match self.start_search_area {
             StartArea::Found(pos) => pos,
@@ -214,6 +220,7 @@ impl SeekPos {
 }
 
 /// returns the offset from the start of the file where the first line starts
+#[instrument(err)]
 fn find_read_start(
     data: &mut Data,
     start_time: u16,
@@ -245,6 +252,7 @@ fn find_read_start(
 }
 
 /// returns the offset from the start of the file where last line **stops**
+#[instrument(err)]
 fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Result<u64, SeekError> {
     //compare partial (16 bit) timestamps in between these bounds
     let buf_len = usize::try_from(stop - start).expect("search area is smaller the u16::MAX");

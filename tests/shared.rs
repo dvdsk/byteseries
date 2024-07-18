@@ -62,3 +62,44 @@ pub fn insert_timestamps(data: &mut ByteSeries, n_to_insert: u32, step: u64, mut
         ts += step;
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct FloatResampler;
+impl byteseries::Decoder for FloatResampler {
+    type Item = f32;
+
+    fn decode_payload(&mut self, line: &[u8]) -> Self::Item {
+        let bytes: [u8; 4] = line[0..4].try_into().expect("line should be long enough");
+        f32::from_le_bytes(bytes)
+    }
+}
+
+impl byteseries::Encoder for FloatResampler {
+    type Item = f32;
+
+    fn encode_item(&mut self, item: &Self::Item) -> Vec<u8> {
+        item.to_le_bytes().to_vec()
+    }
+}
+
+impl byteseries::Resampler for FloatResampler {
+    type State = f32;
+
+    fn state(&self) -> Self::State {
+        0f32
+    }
+}
+
+pub fn insert_lines(bs: &mut ByteSeries, n_points: u64, t_start: Timestamp, t_end: Timestamp) {
+    let slope = 0.1;
+
+    let dt = (t_end - t_start) / n_points as u64;
+    assert_ne!(dt, 0);
+    let mut time = t_start;
+
+    for _ in 0..n_points {
+        let val = time as f32 * slope;
+        bs.push_line(time, val.to_le_bytes()).unwrap();
+        time += dt;
+    }
+}

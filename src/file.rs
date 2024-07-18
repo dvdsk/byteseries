@@ -139,7 +139,7 @@ where
 /// and complicating all algorithms we use this. It forwards corrected
 /// file seeks. We can use this as if the header does not exist.
 #[derive(Debug)]
-pub(crate) struct OffsetFile {
+pub struct OffsetFile {
     pub(crate) handle: File,
     offset: u64,
 }
