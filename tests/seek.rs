@@ -1,4 +1,4 @@
-use byteseries::seek::SeekError;
+use byteseries::seek::Error;
 use byteseries::ByteSeries;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
@@ -42,7 +42,7 @@ fn beyond_range(#[case] step: u64) {
     match read_res {
         Err(e) => match e {
             byteseries::series::Error::InvalidRange(e) => assert!(
-                std::mem::discriminant(&e) == std::mem::discriminant(&SeekError::StartAfterData)
+                std::mem::discriminant(&e) == std::mem::discriminant(&Error::StartAfterData)
             ),
             _ => panic!("sampler should be error StartAfterData"),
         },

@@ -28,7 +28,7 @@ pub(crate) struct Index {
 }
 
 #[derive(Debug, Clone)]
-pub enum StartArea {
+pub(crate) enum StartArea {
     Found(u64),
     /// start lies before first timestamp or end lies after last timestamp
     /// # Note
@@ -45,7 +45,7 @@ pub enum StartArea {
 }
 
 #[derive(Debug, Clone)]
-pub enum EndArea {
+pub(crate) enum EndArea {
     /// Pos at which the end line ends
     /// # Note
     /// This points to the meta position after which the relevant line lies
@@ -95,7 +95,7 @@ pub enum OpenError {
 
 impl Index {
     #[instrument]
-    pub fn new<H>(
+    pub(crate) fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
         user_header: H,
     ) -> Result<Index, file::OpenError>
@@ -115,7 +115,7 @@ impl Index {
         })
     }
     #[instrument]
-    pub fn open_existing<H>(
+    pub(crate) fn open_existing<H>(
         name: impl AsRef<Path> + fmt::Debug,
         user_header: &H,
         last_line_in_data_start: Option<u64>,
@@ -164,7 +164,7 @@ impl Index {
     }
 
     #[instrument(level = "trace", skip(self), ret)]
-    pub fn update(&mut self, timestamp: u64, line_start: u64) -> Result<(), std::io::Error> {
+    pub(crate) fn update(&mut self, timestamp: u64, line_start: u64) -> Result<(), std::io::Error> {
         let ts = timestamp;
         self.file.write_all(&ts.to_le_bytes())?;
         self.file.write_all(&line_start.to_le_bytes())?;
@@ -177,7 +177,7 @@ impl Index {
         Ok(())
     }
 
-    pub fn start_search_bounds(
+    pub(crate) fn start_search_bounds(
         &self,
         start: Timestamp,
         payload_size: usize,
@@ -207,7 +207,7 @@ impl Index {
             }
         }
     }
-    pub fn end_search_bounds(&self, stop: Timestamp, payload_len: usize) -> (EndArea, Timestamp) {
+    pub(crate) fn end_search_bounds(&self, stop: Timestamp, payload_len: usize) -> (EndArea, Timestamp) {
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
         match idx {
             Ok(i) => (
@@ -243,11 +243,11 @@ impl Index {
             }
         }
     }
-    pub fn first_meta_timestamp(&self) -> Option<Timestamp> {
+    pub(crate) fn first_meta_timestamp(&self) -> Option<Timestamp> {
         self.entries.first().map(|e| e.timestamp)
     }
 
-    pub fn last_timestamp(&self) -> Option<Timestamp> {
+    pub(crate) fn last_timestamp(&self) -> Option<Timestamp> {
         self.last_timestamp
     }
 
@@ -264,7 +264,7 @@ impl Index {
         }
     }
 
-    pub(crate) fn clear(&mut self) -> Result<(), std::io::Error>{
+    pub(crate) fn clear(&mut self) -> Result<(), std::io::Error> {
         self.file.set_len(0)?;
         self.entries.clear();
         self.last_timestamp = None;
@@ -286,8 +286,10 @@ pub enum CheckAndRepairError {
     Read(std::io::Error),
 }
 
+/// repairs only failed writes not user induced damage
+/// such as purposefully truncating files
 #[instrument(err)]
-fn check_and_repair(
+pub(crate) fn check_and_repair(
     file: &mut OffsetFile,
     last_line_in_data_start: Option<u64>,
     last_full_ts_in_data: Option<Timestamp>,
@@ -314,6 +316,9 @@ fn check_and_repair(
 
     let len = file.len().map_err(CheckAndRepairError::GetLength)?;
     if last_line_start > last_line_in_data_start {
+        // can only be caused by a failed write in data with a
+        // succeed one in the index. Taking off that succeeded line
+        // in the index is enough to restore it.
         file.set_len(len - 16)
             .map_err(CheckAndRepairError::Truncate)?;
     }
@@ -322,10 +327,10 @@ fn check_and_repair(
         "last time in the data since last_line_in_data_start is not None \
          so there is at least one time in the data",
     );
-    if last_full_ts_in_data != last_full_ts {
-        Err(CheckAndRepairError::IndexMissesItems)
-    } else {
+    if last_full_ts_in_data == last_full_ts {
         Ok(())
+    } else {
+        Err(CheckAndRepairError::IndexMissesItems)
     }
 }
 

@@ -89,7 +89,7 @@ pub trait SampleCombiner<T: Sized>: Debug {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Empty {}
+pub(crate) struct Empty {}
 impl<T: Debug + Clone + Sized> SampleCombiner<T> for Empty {
     fn process(&mut self, t: Timestamp, v: Vec<T>) -> Option<(i64, Vec<T>)> {
         Some((t, v))
@@ -100,14 +100,14 @@ impl<T: Debug + Clone + Sized> SampleCombiner<T> for Empty {
 }
 
 #[derive(Debug, Clone)]
-pub struct Mean<B> {
+pub(crate) struct Mean<B> {
     v_sum: Vec<f32>,
     n: usize,
     bin: B,
 }
 
 impl<B> Mean<B> {
-    pub fn new(bin: B) -> Self {
+    pub(crate) fn new(bin: B) -> Self {
         Mean {
             v_sum: Vec::new(),
             n: 0,
@@ -145,7 +145,7 @@ where
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Combiner<A, B>
+pub(crate) struct Combiner<A, B>
 where
     A: SampleCombiner<f32>,
     B: SampleCombiner<f32>,
@@ -160,7 +160,7 @@ where
     B: SampleCombiner<f32>,
 {
     #[allow(dead_code)]
-    pub fn new(a: A, b: B) -> Self {
+    pub(crate) fn new(a: A, b: B) -> Self {
         Self { a, b }
     }
 }
@@ -192,7 +192,7 @@ where
 
 //minimum sample size is 2
 #[derive(Debug, Clone, Default)]
-pub struct Differentiate {
+pub(crate) struct Differentiate {
     pair_1: Option<(Timestamp, Vec<f32>)>,
 }
 impl SampleCombiner<f32> for Differentiate {

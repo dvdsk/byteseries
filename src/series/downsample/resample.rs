@@ -140,7 +140,7 @@ macro_rules! impl_resample_state {
     };
 }
 
-pub use impl_resample_state;
+pub(crate) use impl_resample_state;
 
 impl_resample_state!(f32);
 impl_resample_state!(f64);

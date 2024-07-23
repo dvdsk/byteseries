@@ -10,8 +10,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tracing::instrument;
 
-use crate::seek::{Estimate, SeekError};
-use crate::{seek, Decoder, Resampler, Timestamp};
+use crate::seek::{self, Estimate};
+use crate::{Decoder, Resampler, Timestamp};
 
 use self::data::inline_meta::bytes_per_metainfo;
 use self::data::ReadError;
@@ -71,16 +71,17 @@ impl TimeRange {
     }
 }
 
-impl Into<Option<std::ops::RangeInclusive<Timestamp>>> for TimeRange {
-    fn into(self) -> Option<std::ops::RangeInclusive<Timestamp>> {
-        match self {
-            Self::None => None,
-            Self::Some(range) => Some(range.clone()),
+impl From<TimeRange> for Option<std::ops::RangeInclusive<Timestamp>> {
+    fn from(val: TimeRange) -> Self {
+        match val {
+            TimeRange::None => None,
+            TimeRange::Some(range) => Some(range.clone()),
         }
     }
 }
 
 #[derive(Debug)]
+#[allow(clippy::module_name_repetitions)]
 pub struct ByteSeries {
     pub(crate) data: Data,
     downsampled: Vec<Box<dyn DownSampled>>,
@@ -103,9 +104,9 @@ pub enum Error {
     #[error("Could not updated downsampled data file's metadata: {0}")]
     Downampling(data::PushError),
     #[error("Timestamps do not exist in Data: {0}")]
-    InvalidRange(SeekError),
+    InvalidRange(seek::Error),
     #[error("Error while finding start and end point in data: {0}")]
-    Seeking(SeekError),
+    Seeking(seek::Error),
     #[error("Could not read data: {0}")]
     Reading(data::ReadError),
     #[error("Would need to collect more then usize::MAX samples to resample.")]
@@ -255,6 +256,9 @@ impl ByteSeries {
     /// # Errors
     ///
     /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
+    /// Its mostly io-errors
+    ///
+    /// # Panics
     pub fn read_all<D: Decoder>(
         &mut self,
         range: impl RangeBounds<Timestamp>,
@@ -265,7 +269,7 @@ impl ByteSeries {
         let start = range.start_bound().cloned();
         let end = range.end_bound().cloned();
         self.check_range(start, end).map_err(Error::InvalidRange)?;
-        let seek = seek::RoughSeekPos::new(
+        let seek = seek::RoughPos::new(
             &self.data,
             range.start_bound().cloned(),
             range.end_bound().cloned(),
@@ -332,7 +336,7 @@ impl ByteSeries {
             optimal_data = downsampled.data_mut();
         }
 
-        let seek = seek::RoughSeekPos::new(optimal_data, start, end)
+        let seek = seek::RoughPos::new(optimal_data, start, end)
             .expect(
                 "check range catches the undownsampled file missing data \
                 and downsampled are not selected if their `estimate_lines` is None ",
@@ -348,21 +352,25 @@ impl ByteSeries {
             .map_err(Error::Reading)
     }
 
-    fn check_range(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Result<(), SeekError> {
+    fn check_range(
+        &self,
+        start: Bound<Timestamp>,
+        end: Bound<Timestamp>,
+    ) -> Result<(), seek::Error> {
         let inline_meta_size = bytes_per_metainfo(self.data.payload_size());
-        if self.data.data_len as usize <= inline_meta_size {
-            return Err(SeekError::EmptyFile);
+        if self.data.data_len <= inline_meta_size as u64 {
+            return Err(seek::Error::EmptyFile);
         }
 
         match start {
             Bound::Included(ts) => {
                 if ts > self.range.last().expect("data_len > 0") {
-                    return Err(SeekError::StartAfterData);
+                    return Err(seek::Error::StartAfterData);
                 }
             }
             Bound::Excluded(ts) => {
                 if ts >= self.range.last().expect("data_len > 0") {
-                    return Err(SeekError::StartAfterData);
+                    return Err(seek::Error::StartAfterData);
                 }
             }
             Bound::Unbounded => (),
@@ -371,12 +379,12 @@ impl ByteSeries {
         match end {
             Bound::Included(ts) => {
                 if ts < self.range.first().expect("data_len > 0") {
-                    return Err(SeekError::StopBeforeData);
+                    return Err(seek::Error::StopBeforeData);
                 }
             }
             Bound::Excluded(ts) => {
                 if ts <= self.range.first().expect("data_len > 0") {
-                    return Err(SeekError::StopBeforeData);
+                    return Err(seek::Error::StopBeforeData);
                 }
             }
             Bound::Unbounded => (),
@@ -385,6 +393,9 @@ impl ByteSeries {
         Ok(())
     }
 
+    /// # Errors
+    /// Returns a [`ReadError`](data::ReadError) if anything goes wrong reading
+    /// the last line. That could be an io issue or the file could be empty.
     pub fn last_line<D>(
         &mut self,
         decoder: &mut D,
@@ -396,6 +407,9 @@ impl ByteSeries {
         self.data.last_line(decoder)
     }
 
+    /// # Errors
+    /// When the os fails to flush files to disk the underlying
+    /// io error is returned
     pub fn flush_to_disk(&mut self) -> std::io::Result<()> {
         self.data.flush_to_disk()
     }

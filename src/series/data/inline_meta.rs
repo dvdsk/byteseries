@@ -3,7 +3,7 @@ use itertools::Itertools;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use tracing::{instrument, warn};
 
-use crate::{Resampler, SeekPos};
+use crate::{Resampler, Pos};
 
 use super::{Decoder, Timestamp};
 
@@ -72,7 +72,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
-        seek: SeekPos,
+        seek: Pos,
     ) -> Result<(), std::io::Error> {
         self.read_with_processor(seek, |ts, payload| {
             let item = decoder.decode_payload(payload);
@@ -88,7 +88,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         bucket_size: usize,
         timestamps: &mut Vec<u64>,
         data: &mut Vec<<R as Decoder>::Item>,
-        seek: SeekPos,
+        seek: Pos,
     ) -> Result<(), std::io::Error> {
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
         self.read_with_processor(seek, |ts, payload| {
@@ -99,7 +99,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     #[instrument(level = "debug", skip(processor))]
     pub(crate) fn read_with_processor(
         &mut self,
-        seek: SeekPos,
+        seek: Pos,
         mut processor: impl FnMut(Timestamp, &[u8]),
     ) -> Result<(), std::io::Error> {
         let mut to_read = seek.end - seek.start;

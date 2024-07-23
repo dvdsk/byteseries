@@ -6,7 +6,7 @@ use std::path::Path;
 use tracing::{instrument, warn};
 
 use crate::file::{self, FileWithHeader, OffsetFile};
-use crate::{Decoder, SeekPos, Timestamp};
+use crate::{Decoder, Pos, Timestamp};
 
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
@@ -19,7 +19,7 @@ use self::inline_meta::{write_meta, SetLen};
 pub(crate) const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
 
 #[derive(Debug)]
-pub struct Data {
+pub(crate) struct Data {
     pub(crate) file_handle: FileWithInlineMeta<OffsetFile>,
     pub(crate) index: Index,
 
@@ -88,7 +88,7 @@ impl Data {
     /// # Errors
     ///
     /// See the [`CreateError`] docs for an exhaustive list of everything that can go wrong.
-    pub fn new<H>(
+    pub(crate) fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
         header: H,
@@ -112,7 +112,7 @@ impl Data {
     }
 
     #[instrument]
-    pub fn open_existing<H>(
+    pub(crate) fn open_existing<H>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
     ) -> Result<(Data, H), OpenError>
@@ -161,13 +161,13 @@ impl Data {
     /// # Errors
     ///
     /// See the [`ReadError`] docs for an exhaustive list of everything that can go wrong.
-    pub fn last_line<T: std::fmt::Debug + std::clone::Clone>(
+    pub(crate) fn last_line<T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
     ) -> Result<(Timestamp, T), ReadError> {
         let mut timestamps = Vec::new();
         let mut data = Vec::new();
-        let seek = SeekPos {
+        let seek = Pos {
             first_full_ts: self.index.last_timestamp().ok_or(ReadError::NoData)?,
             start: self.data_len - (self.payload_size + 2) as u64,
             end: self.data_len,
@@ -190,7 +190,7 @@ impl Data {
     #[instrument]
     pub(crate) fn last_time(&mut self) -> Result<Option<Timestamp>, ReadError> {
         match self.last_line(&mut EmptyDecoder) {
-            Ok((ts, _)) => Ok(Some(ts)),
+            Ok((ts, ())) => Ok(Some(ts)),
             Err(ReadError::NoData) => Ok(None),
             Err(other) => Err(other),
         }
@@ -198,7 +198,7 @@ impl Data {
 
     /// Append data to disk but do not flush, a crash can still lead to the data being lost
     #[instrument(skip(self, line), level = "trace")]
-    pub fn push_data(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), PushError> {
+    pub(crate) fn push_data(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), PushError> {
         //we store the timestamp - the last recorded full timestamp as u16. If
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
@@ -213,14 +213,13 @@ impl Data {
                     in Byteseries::push_line",
                 )
             })
-            .map(|diff| {
+            .and_then(|diff| {
                 if diff > MAX_SMALL_TS {
                     None
                 } else {
                     Some(u16::try_from(diff).expect("MAX_SMALL_TS < u16::MAX"))
                 }
-            })
-            .flatten();
+            });
 
         let small_ts = if let Some(small_ts) = small_ts {
             small_ts
@@ -250,7 +249,7 @@ impl Data {
     }
 
     /// asks the os to write its buffers and block till its done
-    pub(crate) fn flush_to_disk(&mut self) -> std::io::Result<()>{
+    pub(crate) fn flush_to_disk(&mut self) -> std::io::Result<()> {
         self.file_handle.inner_mut().sync_data()?;
         self.index.file.sync_data()?;
         Ok(())
@@ -259,9 +258,9 @@ impl Data {
     /// # Errors
     ///
     /// See the [`ReadError`] docs for an exhaustive list of everything that can go wrong.
-    pub fn read_all<D: Decoder>(
+    pub(crate) fn read_all<D: Decoder>(
         &mut self,
-        seek: SeekPos,
+        seek: Pos,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
@@ -274,7 +273,7 @@ impl Data {
     #[instrument(skip(self, resampler, timestamps, data), err)]
     pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
-        seek: SeekPos,
+        seek: Pos,
         resampler: &mut R,
         bucket_size: usize,
         timestamps: &mut Vec<u64>,

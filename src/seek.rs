@@ -9,7 +9,7 @@ use crate::series::data::{Data, MAX_SMALL_TS};
 use crate::Timestamp;
 
 #[derive(thiserror::Error, Debug)]
-pub enum SeekError {
+pub enum Error {
     #[error("could not find timestamp in this series")]
     NotFound,
     #[error("data file is empty")]
@@ -23,7 +23,7 @@ pub enum SeekError {
 }
 
 #[derive(Debug)]
-pub struct RoughSeekPos {
+pub struct RoughPos {
     start_ts: Timestamp,
     /// area where to search for the start time
     start_search_area: StartArea,
@@ -38,7 +38,7 @@ pub struct RoughSeekPos {
     end_section_full_ts: Timestamp,
 }
 
-impl RoughSeekPos {
+impl RoughPos {
     /// # returns `None` if the data file is empty
     pub(crate) fn new(data: &Data, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Option<Self> {
         let first_time_in_data = data.index.first_meta_timestamp()?;
@@ -86,7 +86,7 @@ impl RoughSeekPos {
     }
 
     #[tracing::instrument]
-    pub(crate) fn refine(self, data: &mut Data) -> Result<SeekPos, SeekError> {
+    pub(crate) fn refine(self, data: &mut Data) -> Result<Pos, Error> {
         let meta_section_size = bytes_per_metainfo(data.payload_size()) as u64;
 
         let start_time = self
@@ -100,7 +100,7 @@ impl RoughSeekPos {
             start_time < MAX_SMALL_TS,
             "start time: {start_time}, MAX_SMALL_TS: {MAX_SMALL_TS}"
         );
-        let start_time = start_time as u16;
+        let start_time = u16::try_from(start_time).expect("just asserted");
         let start_byte = match self.start_search_area {
             StartArea::Found(pos) => pos,
             StartArea::Clipped => 0,
@@ -118,7 +118,7 @@ impl RoughSeekPos {
                 end_full_time..end_full_time+MAX_SMALL_TS",
         );
         assert!(end_time < MAX_SMALL_TS);
-        let end_time = end_time as u16;
+        let end_time = u16::try_from(end_time).expect("just asserted");
         let end_byte = match self.end_search_area {
             EndArea::Found(pos) => pos,
             EndArea::TillEnd(start) => {
@@ -130,7 +130,7 @@ impl RoughSeekPos {
             }
         };
 
-        Ok(SeekPos {
+        Ok(Pos {
             start: start_byte,
             end: end_byte,
             first_full_ts: self.start_section_full_ts,
@@ -202,19 +202,19 @@ pub(crate) struct Estimate {
 }
 
 #[derive(Debug)]
-pub struct SeekPos {
+pub struct Pos {
     /// start of the first line that should be read
-    pub start: u64,
+    pub(crate) start: u64,
     /// end of the last line that should be read
-    pub end: u64,
+    pub(crate) end: u64,
     /// 64 bit timestamp that should be added to the small time
     /// for the first section.
-    pub first_full_ts: Timestamp,
+    pub(crate) first_full_ts: Timestamp,
 }
 
-impl SeekPos {
+impl Pos {
     #[must_use]
-    pub fn lines(&self, series: &Data) -> u64 {
+    pub(crate) fn lines(&self, series: &Data) -> u64 {
         (self.end - self.start) / (series.payload_size() + 2) as u64
     }
 }
@@ -226,7 +226,7 @@ fn find_read_start(
     start_time: u16,
     start: u64,
     stop: u64,
-) -> Result<u64, SeekError> {
+) -> Result<u64, Error> {
     assert!(stop >= start + 2);
 
     let buf_len = usize::try_from(stop - start).expect("search area < u16::MAX");
@@ -253,7 +253,7 @@ fn find_read_start(
 
 /// returns the offset from the start of the file where last line **stops**
 #[instrument(err)]
-fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Result<u64, SeekError> {
+fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Result<u64, Error> {
     //compare partial (16 bit) timestamps in between these bounds
     let buf_len = usize::try_from(stop - start).expect("search area is smaller the u16::MAX");
     let mut buf = vec![0u8; buf_len];

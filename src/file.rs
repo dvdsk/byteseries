@@ -48,7 +48,7 @@ impl<H> FileWithHeader<H>
 where
     H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
 {
-    pub fn new(path: impl AsRef<Path>, user_header: H) -> Result<FileWithHeader<H>, OpenError> {
+    pub(crate) fn new(path: impl AsRef<Path>, user_header: H) -> Result<FileWithHeader<H>, OpenError> {
         let mut file = match OpenOptions::new()
             .read(true)
             .append(true)
@@ -80,7 +80,7 @@ where
     }
 
     #[instrument(fields(file_len, user_header_len, header_len))]
-    pub fn open_existing(path: PathBuf, line_size: usize) -> Result<FileWithHeader<H>, OpenError>
+    pub(crate) fn open_existing(path: PathBuf, line_size: usize) -> Result<FileWithHeader<H>, OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
@@ -124,7 +124,7 @@ where
         })
     }
 
-    pub fn split_off_header(self) -> (OffsetFile, H) {
+    pub(crate) fn split_off_header(self) -> (OffsetFile, H) {
         (
             OffsetFile {
                 handle: self.handle,
@@ -138,21 +138,25 @@ where
 /// The files have headers, instead of take these into account
 /// and complicating all algorithms we use this. It forwards corrected
 /// file seeks. We can use this as if the header does not exist.
+#[allow(clippy::module_name_repetitions)]
 #[derive(Debug)]
-pub struct OffsetFile {
+pub(crate) struct OffsetFile {
     pub(crate) handle: File,
     offset: u64,
 }
 
 impl OffsetFile {
-    pub fn sync_data(&self) -> std::io::Result<()> {
+    pub(crate) fn sync_data(&self) -> std::io::Result<()> {
         self.handle.sync_data()
     }
 
     /// length needed to read the entire file without the header.
     /// You can use this as input for `read_exact` though you might
     /// want to spread the read.
-    pub fn data_len(&self) -> std::io::Result<u64> {
+    ///
+    /// # Errors
+    /// Returns an error if the underlying file returned an io error.
+    pub(crate) fn data_len(&self) -> std::io::Result<u64> {
         self.handle.metadata().map(|m| m.len() - self.offset)
     }
 }

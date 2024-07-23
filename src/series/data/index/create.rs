@@ -28,7 +28,7 @@ pub enum Error {
 
 impl Index {
     #[instrument]
-    pub fn create_from_byteseries<H>(
+    pub(crate) fn create_from_byteseries<H>(
         byteseries: &mut OffsetFile,
         payload_size: usize,
         name: impl AsRef<Path> + fmt::Debug,
@@ -144,13 +144,12 @@ pub(crate) fn last_meta_timestamp(
             return Ok(Some(timestamp));
         }
 
-        if start == 0 {
-            panic!(
-                "Should have found timestamp in data when its not empty \
+        assert!(
+            start > 0,
+            "Should have found timestamp in data when its not empty \
                 (ensured by repair) is guaranteed to either be empty or \
                 contain at least one full timestamp metadata section."
-            )
-        }
+        );
 
         start = (start + overlap as u64).saturating_sub(window);
     }

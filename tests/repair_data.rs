@@ -1,4 +1,4 @@
-use byteseries::seek::SeekError;
+use byteseries::seek::Error;
 use byteseries::ByteSeries;
 use rstest::rstest;
 use rstest_reuse::apply;
@@ -53,7 +53,7 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
     assert!(
         matches!(
             res,
-            byteseries::series::Error::InvalidRange(SeekError::EmptyFile)
+            byteseries::series::Error::InvalidRange(Error::EmptyFile)
         ),
         "expected InvalidRange got: {res:?}"
     );

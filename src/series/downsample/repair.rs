@@ -4,14 +4,14 @@ use tracing::{instrument, warn};
 
 use super::data::Data;
 use super::Config;
-use crate::seek::{RoughSeekPos, SeekError};
+use crate::seek::{self, RoughPos};
 use crate::series::data;
 use crate::Resampler;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Could not seek in source")]
-    SeekingSource(#[from] SeekError),
+    SeekingSource(#[from] seek::Error),
     #[error("Could not empty (clear) downsampled data")]
     ClearingDownsampled(std::io::Error),
     #[error("Could not read from source")]
@@ -31,7 +31,7 @@ pub(super) fn repair_missing_data(
         Some(ts) => Bound::Excluded(ts),
         None => Bound::Unbounded,
     };
-    let Some(seek) = RoughSeekPos::new(source, start_bound, Bound::Unbounded)
+    let Some(seek) = RoughPos::new(source, start_bound, Bound::Unbounded)
         .map(|p| p.refine(source))
         .transpose()?
     else {

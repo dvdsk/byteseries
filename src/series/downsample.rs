@@ -10,8 +10,8 @@ use tracing::instrument;
 
 use super::data::{self, Data};
 use super::DownSampled;
-use crate::seek::RoughSeekPos;
-use crate::{file, ResampleState, Resampler, SeekPos, Timestamp};
+use crate::seek::RoughPos;
+use crate::{file, ResampleState, Resampler, Pos, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -22,6 +22,7 @@ pub struct Config {
 }
 
 impl Config {
+    #[must_use]
     pub fn file_name_suffix(&self) -> String {
         format!("{:?}_{}", self.max_gap, self.bucket_size)
     }
@@ -73,6 +74,8 @@ pub enum OpenError {
         enough items in the source to form one"
     )]
     ShouldBeEmpty,
+    #[error("Could not repair downsampled data cache: {0}")]
+    Repair(repair::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -136,7 +139,8 @@ where
         let (mut data, _): (_, String) =
             Data::open_existing(path, payload_size).map_err(OpenError::Data)?;
         // repair::check_last_ts(&mut data, source, &config, payload_size + 2)?;
-        repair::repair_missing_data(source, &mut data, &config, &mut resampler);
+        repair::repair_missing_data(source, &mut data, &config, &mut resampler)
+            .map_err(OpenError::Repair)?;
 
         Ok(Self {
             data,
@@ -162,7 +166,7 @@ where
             return Ok(empty);
         };
 
-        let seek = SeekPos {
+        let seek = Pos {
             start: 0,
             end: source.data_len,
             first_full_ts: first_time,
@@ -238,7 +242,7 @@ where
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
     ) -> Option<crate::seek::Estimate> {
-        RoughSeekPos::new(&self.data, start, end)
+        RoughPos::new(&self.data, start, end)
             .map(|seek| seek.estimate_lines(self.data.payload_size() + 2, self.data.data_len))
     }
 
