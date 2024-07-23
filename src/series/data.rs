@@ -14,7 +14,7 @@ pub mod index;
 use index::Index;
 
 use self::index::create::{self, last_meta_timestamp, ExtractingTsError};
-use self::inline_meta::write_meta;
+use self::inline_meta::{write_meta, SetLen};
 
 pub(crate) const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
 
@@ -250,9 +250,10 @@ impl Data {
     }
 
     /// asks the os to write its buffers and block till its done
-    pub(crate) fn flush_to_disk(&mut self) {
-        self.file_handle.inner_mut().sync_data().unwrap();
-        self.index.file.sync_data().unwrap();
+    pub(crate) fn flush_to_disk(&mut self) -> std::io::Result<()>{
+        self.file_handle.inner_mut().sync_data()?;
+        self.index.file.sync_data()?;
+        Ok(())
     }
 
     /// # Errors
@@ -290,5 +291,16 @@ impl Data {
 
     pub(crate) fn last_line_start(&self) -> u64 {
         self.data_len - (self.payload_size as u64 + 2)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.data_len == 0
+    }
+
+    pub(crate) fn clear(&mut self) -> Result<(), std::io::Error> {
+        self.file_handle.file_handle.set_len(0)?;
+        self.index.clear()?;
+        self.data_len = 0;
+        Ok(())
     }
 }

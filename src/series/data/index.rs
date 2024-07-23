@@ -263,6 +263,13 @@ impl Index {
             Err(idx) => self.entries[idx - 1].timestamp,
         }
     }
+
+    pub(crate) fn clear(&mut self) -> Result<(), std::io::Error>{
+        self.file.set_len(0)?;
+        self.entries.clear();
+        self.last_timestamp = None;
+        Ok(())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

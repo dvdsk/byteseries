@@ -396,8 +396,8 @@ impl ByteSeries {
         self.data.last_line(decoder)
     }
 
-    pub fn flush_to_disk(&mut self) {
-        self.data.flush_to_disk();
+    pub fn flush_to_disk(&mut self) -> std::io::Result<()> {
+        self.data.flush_to_disk()
     }
 
     #[must_use]

@@ -31,7 +31,7 @@ fn before_matches_after_repair() {
         read(&mut bs)
     };
 
-    truncate_downsampled(&test_path, config.clone());
+    shorten_downsampled(&test_path, config.clone());
 
     let (mut bs, _) = ByteSeries::open_existing_with_resampler::<(), _>(
         &test_path,
@@ -51,7 +51,7 @@ fn downsampled_has_more_items() {
     setup_tracing();
 
     let test_dir = TempDir::new().unwrap();
-    let test_path = test_dir.child("before_matches_after_repair");
+    let test_path = test_dir.child("downsampled_has_more_items");
 
     let config = downsample::Config {
         max_gap: None,
@@ -63,7 +63,7 @@ fn downsampled_has_more_items() {
         (read(&mut bs), bs.range())
     };
 
-    truncate_source(&test_path);
+    shorten_source(&test_path, 4);
 
     let (mut bs, _) = ByteSeries::open_existing_with_resampler::<(), _>(
         &test_path,
@@ -80,14 +80,73 @@ fn downsampled_has_more_items() {
     assert_eq!(data_before, data_after);
 }
 
-fn truncate_source(test_path: &Path) {
+#[test]
+fn repair_empty() {
+    setup_tracing();
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("repair_empty");
+
+    let config = downsample::Config {
+        max_gap: None,
+        bucket_size: 10,
+    };
+
+    {
+        let _bs = ByteSeries::new_with_resamplers(
+            &test_path,
+            4,
+            (),
+            FloatResampler,
+            vec![config.clone()],
+        )
+        .unwrap();
+    }
+
+    let (_bs, _) = ByteSeries::open_existing_with_resampler::<(), _>(
+        &test_path,
+        4,
+        FloatResampler,
+        vec![config],
+    )
+    .unwrap();
+}
+
+#[test]
+fn source_empty_downsampled_not() {
+    setup_tracing();
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("source_empty_downsampled_not");
+
+    let config = downsample::Config {
+        max_gap: None,
+        bucket_size: 10,
+    };
+
+    {
+        create_and_fill(&test_path, config.clone());
+    };
+
+    clear_source(1000 * (4 + 2));
+
+    let (_bs, _) = ByteSeries::open_existing_with_resampler::<(), _>(
+        &test_path,
+        4,
+        FloatResampler,
+        vec![config],
+    )
+    .unwrap();
+}
+
+fn shorten_source(test_path: &Path, to_shrink: usize) {
     let path = test_path.with_extension("byteseries");
     let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
     let len = file.metadata().unwrap().len();
     file.set_len(len - 4).unwrap();
 }
 
-fn truncate_downsampled(path: &Path, config: downsample::Config) {
+fn shorten_downsampled(path: &Path, config: downsample::Config) {
     let path = downsampled_path(path, config);
 
     let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
