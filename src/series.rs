@@ -394,7 +394,7 @@ impl ByteSeries {
     }
 
     /// # Errors
-    /// Returns a [`ReadError`](data::ReadError) if anything goes wrong reading
+    /// Returns a [`ReadError`] if anything goes wrong reading
     /// the last line. That could be an io issue or the file could be empty.
     pub fn last_line<D>(
         &mut self,
