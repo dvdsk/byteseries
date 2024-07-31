@@ -253,6 +253,8 @@ impl ByteSeries {
         Ok(())
     }
 
+    /// Will return zero samples if there is nothing to read.
+    ///
     /// # Errors
     ///
     /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
@@ -269,14 +271,22 @@ impl ByteSeries {
         let start = range.start_bound().cloned();
         let end = range.end_bound().cloned();
         self.check_range(start, end).map_err(Error::InvalidRange)?;
-        let seek = seek::RoughPos::new(
+        let Some(seek) = seek::RoughPos::new(
             &self.data,
             range.start_bound().cloned(),
             range.end_bound().cloned(),
         )
         .expect("no data should be caught be check range")
         .refine(&mut self.data)
-        .map_err(Error::Seeking)?;
+        .map_err(Error::Seeking)?
+        else {
+            tracing::debug!(
+                "No data to read within given range, probably due to \
+                a gap in the data."
+            );
+            return Ok(());
+        };
+
         self.data
             .read_all(seek, decoder, timestamps, data)
             .map_err(Error::Reading)
@@ -336,13 +346,21 @@ impl ByteSeries {
             optimal_data = downsampled.data_mut();
         }
 
-        let seek = seek::RoughPos::new(optimal_data, start, end)
+        let Some(seek) = seek::RoughPos::new(optimal_data, start, end)
             .expect(
                 "check range catches the undownsampled file missing data \
                 and downsampled are not selected if their `estimate_lines` is None ",
             )
             .refine(optimal_data)
-            .map_err(Error::Seeking)?;
+            .map_err(Error::Seeking)?
+        else {
+            tracing::debug!(
+                "No data to read within given range, probably due to \
+                a gap in the data."
+            );
+            return Ok(());
+        };
+
         let lines = seek.lines(optimal_data);
         let bucket_size = 1.max(lines / n as u64);
         let bucket_size = usize::try_from(bucket_size).map_err(|_| Error::TooMuchToResample)?;

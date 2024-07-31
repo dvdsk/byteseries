@@ -34,6 +34,7 @@ pub(super) fn repair_missing_data(
     let Some(seek) = RoughPos::new(source, start_bound, Bound::Unbounded)
         .map(|p| p.refine(source))
         .transpose()?
+        .flatten()
     else {
         if !downsampled.is_empty() {
             warn!("Repairing downsampled data cache, it has items while the source is empty");

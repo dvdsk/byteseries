@@ -225,7 +225,7 @@ impl Data {
             small_ts
         } else {
             tracing::debug!(
-                "inserting full timestamp via and updating index\
+                "inserting full timestamp and updating index\
                 , timestamp: {ts}"
             );
             self.index

@@ -4,7 +4,6 @@ use std::ops::Bound;
 use tracing::instrument;
 
 use crate::series::data::index::{EndArea, StartArea};
-use crate::series::data::inline_meta::bytes_per_metainfo;
 use crate::series::data::{Data, MAX_SMALL_TS};
 use crate::Timestamp;
 
@@ -85,10 +84,52 @@ impl RoughPos {
         })
     }
 
+    /// returns None if there is no data to read
     #[tracing::instrument]
-    pub(crate) fn refine(self, data: &mut Data) -> Result<Pos, Error> {
-        let meta_section_size = bytes_per_metainfo(data.payload_size()) as u64;
+    pub(crate) fn refine(self, data: &mut Data) -> Result<Option<Pos>, Error> {
+        let start_byte = match self.start_search_area {
+            StartArea::Found(pos) | StartArea::Gap { stops: pos } => pos,
+            StartArea::Clipped => 0,
+            StartArea::TillEnd(start) => {
+                let end = data.data_len;
+                find_read_start(data, self.start_small_ts(), start, end)?
+            }
+            StartArea::Window(start, stop) => {
+                find_read_start(data, self.start_small_ts(), start, stop)?
+            }
+        };
 
+        dbg!(&self);
+        let end_byte = match self.end_search_area {
+            EndArea::Found(pos) | EndArea::Gap { start: pos } => pos,
+            EndArea::TillEnd(start) => {
+                let end = data.data_len;
+                find_read_end(data, self.end_small_ts(), start, end)?
+            }
+            EndArea::Window(start, end) => find_read_end(data, self.end_small_ts(), start, end)?,
+        };
+
+        Ok(if end_byte <= start_byte {
+            None
+        } else {
+            Some(Pos {
+                start: start_byte,
+                end: end_byte,
+                first_full_ts: self.start_section_full_ts,
+            })
+        })
+    }
+
+    fn end_small_ts(&self) -> u16 {
+        let end_time = self.end_ts.checked_sub(self.end_section_full_ts).expect(
+            "search_bounds should be such that requested_end_time falls within \
+                end_full_time..end_full_time+MAX_SMALL_TS",
+        );
+        assert!(end_time <= MAX_SMALL_TS);
+        u16::try_from(end_time).expect("just asserted")
+    }
+
+    fn start_small_ts(&self) -> u16 {
         let start_time = self
             .start_ts
             .checked_sub(self.start_section_full_ts)
@@ -97,100 +138,71 @@ impl RoughPos {
                 start_full_time..start_full_time+u16::MAX",
             );
         assert!(
-            start_time < MAX_SMALL_TS,
+            start_time <= MAX_SMALL_TS,
             "start time: {start_time}, MAX_SMALL_TS: {MAX_SMALL_TS}"
         );
-        let start_time = u16::try_from(start_time).expect("just asserted");
-        let start_byte = match self.start_search_area {
-            StartArea::Found(pos) => pos,
-            StartArea::Clipped => 0,
-            StartArea::TillEnd(start) => {
-                let end = data.data_len;
-                find_read_start(data, start_time, start + meta_section_size, end)?
-            }
-            StartArea::Window(start, stop) => {
-                find_read_start(data, start_time, start + meta_section_size, stop)?
-            }
-        };
-
-        let end_time = self.end_ts.checked_sub(self.end_section_full_ts).expect(
-            "search_bounds should be such that requested_end_time falls within \
-                end_full_time..end_full_time+MAX_SMALL_TS",
-        );
-        assert!(end_time < MAX_SMALL_TS);
-        let end_time = u16::try_from(end_time).expect("just asserted");
-        let end_byte = match self.end_search_area {
-            EndArea::Found(pos) => pos,
-            EndArea::TillEnd(start) => {
-                let end = data.data_len;
-                find_read_end(data, end_time, start + meta_section_size, end)?
-            }
-            EndArea::Window(start, end) => {
-                find_read_end(data, end_time, start + meta_section_size, end)?
-            }
-        };
-
-        Ok(Pos {
-            start: start_byte,
-            end: end_byte,
-            first_full_ts: self.start_section_full_ts,
-        })
+        u16::try_from(start_time).expect("just asserted")
     }
 
     pub(crate) fn estimate_lines(&self, line_size: usize, data_len: u64) -> Estimate {
+        use EndArea as End;
+        use StartArea::{Clipped, Found, Gap, TillEnd, Window};
         let total_lines = data_len / line_size as u64;
 
         match (
             self.start_search_area.map(|pos| pos / line_size as u64),
             self.end_search_area.map(|pos| pos / line_size as u64),
         ) {
-            (StartArea::Found(start), EndArea::Found(end)) => Estimate {
-                max: end - start,
-                min: end - start,
-            },
-            (StartArea::Found(start), EndArea::TillEnd(end)) => Estimate {
+            (Found(start) | Gap { stops: start }, End::Found(end) | End::Gap { start: end }) => {
+                Estimate {
+                    max: end - start,
+                    min: end - start,
+                }
+            }
+            (Found(start) | Gap { stops: start }, End::TillEnd(end)) => Estimate {
                 max: total_lines - start,
                 min: end - start,
             },
-            (StartArea::Found(start), EndArea::Window(end_min, end_max)) => Estimate {
+            (Found(start) | Gap { stops: start }, End::Window(end_min, end_max)) => Estimate {
                 max: end_max - start,
                 min: end_min - start,
             },
-            (StartArea::Clipped, EndArea::Found(end)) => Estimate { max: end, min: end },
-            (StartArea::Clipped, EndArea::TillEnd(end)) => Estimate {
+
+            (Clipped, End::Found(end) | End::Gap { start: end }) => Estimate { max: end, min: end },
+            (Clipped, End::TillEnd(end)) => Estimate {
                 max: total_lines,
                 min: end,
             },
-            (StartArea::Clipped, EndArea::Window(end_min, end_max)) => Estimate {
+            (Clipped, End::Window(end_min, end_max)) => Estimate {
                 max: end_max,
                 min: end_min,
             },
-            (StartArea::TillEnd(start), EndArea::Found(end)) => Estimate {
+
+            (TillEnd(start), End::Found(end) | End::Gap { start: end }) => Estimate {
                 max: end - start,
                 min: 1,
             },
-            (StartArea::TillEnd(start), EndArea::TillEnd(_)) => Estimate {
+            (TillEnd(start), End::TillEnd(_)) => Estimate {
                 max: total_lines - start,
                 min: 1,
             },
-            (StartArea::TillEnd(_), EndArea::Window(_, _)) => unreachable!(
+            (TillEnd(_), End::Window(_, _)) => unreachable!(
                 "The start has to lie before the end, if the end is a search area from \
                 min..max then start can not be an area from start..end_of_file"
             ),
-            (StartArea::Window(start_min, start_max), EndArea::Found(end)) => Estimate {
+
+            (Window(start_min, start_max), End::Found(end) | End::Gap { start: end }) => Estimate {
                 max: end - start_min,
                 min: end - start_max,
             },
-            (StartArea::Window(start_min, start_max), EndArea::TillEnd(end)) => Estimate {
+            (Window(start_min, start_max), End::TillEnd(end)) => Estimate {
                 max: total_lines - start_min,
                 min: end - start_max,
             },
-            (StartArea::Window(start_min, start_max), EndArea::Window(end_min, end_max)) => {
-                Estimate {
-                    max: end_max - start_min,
-                    min: end_min - start_max,
-                }
-            }
+            (Window(start_min, start_max), End::Window(end_min, end_max)) => Estimate {
+                max: end_max - start_min,
+                min: end_min - start_max,
+            },
         }
     }
 }
@@ -221,13 +233,11 @@ impl Pos {
 
 /// returns the offset from the start of the file where the first line starts
 #[instrument(err)]
-fn find_read_start(
-    data: &mut Data,
-    start_time: u16,
-    start: u64,
-    stop: u64,
-) -> Result<u64, Error> {
-    assert!(stop >= start + 2);
+fn find_read_start(data: &mut Data, start_time: u16, start: u64, stop: u64) -> Result<u64, Error> {
+    dbg!(start, stop, data.payload_size());
+    if stop <= start + 2 + data.payload_size() as u64 {
+        return Ok(stop);
+    }
 
     let buf_len = usize::try_from(stop - start).expect("search area < u16::MAX");
     let mut buf = vec![0u8; buf_len];
@@ -254,6 +264,10 @@ fn find_read_start(
 /// returns the offset from the start of the file where last line **stops**
 #[instrument(err)]
 fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Result<u64, Error> {
+    assert!(
+        stop >= start,
+        "stop ({stop}) must be large then start ({start})"
+    );
     //compare partial (16 bit) timestamps in between these bounds
     let buf_len = usize::try_from(stop - start).expect("search area is smaller the u16::MAX");
     let mut buf = vec![0u8; buf_len];

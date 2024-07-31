@@ -9,6 +9,7 @@ use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::Timestamp;
 
 use super::inline_meta::{self, SetLen};
+use super::MAX_SMALL_TS;
 
 pub(crate) mod create;
 
@@ -29,6 +30,7 @@ pub(crate) struct Index {
 
 #[derive(Debug, Clone)]
 pub(crate) enum StartArea {
+    /// start timestamp is at exactly this point.
     Found(u64),
     /// start lies before first timestamp or end lies after last timestamp
     /// # Note
@@ -42,6 +44,8 @@ pub(crate) enum StartArea {
     /// # Note
     /// There is a meta section directly after the start position.
     Window(u64, u64),
+    /// start lies before this point but we have no data from start till here
+    Gap { stops: u64 },
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +62,8 @@ pub(crate) enum EndArea {
     /// # Note
     /// There is a meta section directly after the start position.
     Window(u64, u64),
+    /// end lies before this time/point however we have no data between here and it
+    Gap { start: u64 },
 }
 
 impl StartArea {
@@ -67,6 +73,9 @@ impl StartArea {
             Self::Clipped => Self::Clipped,
             Self::TillEnd(x) => Self::TillEnd(op(x)),
             Self::Window(x, y) => Self::Window(op(x), op(y)),
+            Self::Gap { stops: stops_at } => Self::Gap {
+                stops: op(stops_at),
+            },
         }
     }
 }
@@ -77,13 +86,16 @@ impl EndArea {
             Self::Found(pos) => Self::Found(op(pos)),
             Self::TillEnd(x) => Self::TillEnd(op(x)),
             Self::Window(x, y) => Self::Window(op(x), op(y)),
+            Self::Gap { start: starts_at } => Self::Gap {
+                start: op(starts_at),
+            },
         }
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
-    #[error("")]
+    #[error("Could not open index: {0}")]
     File(file::OpenError),
     #[error("The header in the index and byteseries are different")]
     IndexAndDataHeaderDifferent,
@@ -177,70 +189,113 @@ impl Index {
         Ok(())
     }
 
+    #[instrument]
     pub(crate) fn start_search_bounds(
         &self,
         start: Timestamp,
         payload_size: usize,
     ) -> (StartArea, Timestamp) {
         let idx = self.entries.binary_search_by_key(&start, |e| e.timestamp);
-        match idx {
-            Ok(i) => (StartArea::Found(self.entries[i].line_start), start),
-            Err(end) => {
-                if end == 0 {
-                    (StartArea::Clipped, self.entries[0].timestamp)
-                } else if end == self.entries.len() {
-                    (
-                        StartArea::TillEnd(self.entries.last().unwrap().line_start),
-                        self.entries.last().unwrap().timestamp,
-                    )
-                } else {
-                    //end is not 0 or 1 thus data[end] and data[end-1] exist
-                    (
-                        StartArea::Window(
-                            self.entries[end - 1].line_start,
-                            self.entries[end].line_start
-                                - inline_meta::bytes_per_metainfo(payload_size) as u64,
-                        ),
-                        self.entries[end - 1].timestamp,
-                    )
-                }
-            }
+        let end = match idx {
+            Ok(i) => return (StartArea::Found(self.entries[i].line_start), start),
+            Err(end) => end,
+        };
+
+        if end == 0 {
+            return (StartArea::Clipped, self.entries[0].timestamp);
+        }
+
+        if end == self.entries.len() {
+            return (
+                StartArea::TillEnd(self.entries.last().unwrap().line_start),
+                self.entries.last().unwrap().timestamp,
+            );
+        }
+
+        //end is not 0 or 1 thus data[end] and data[end-1] exist
+        if in_gap(start, self.entries[end - 1].timestamp) {
+            return (
+                StartArea::Gap {
+                    stops: self.entries[end].line_start,
+                },
+                self.entries[end].timestamp,
+            );
+        }
+
+        let meta = inline_meta::bytes_per_metainfo(payload_size) as u64;
+        let start = self.entries[end - 1].line_start + meta;
+        let stop = self.entries[end].line_start - meta;
+        if start >= stop {
+            (
+                StartArea::Gap {
+                    stops: self.entries[end].line_start,
+                },
+                self.entries[end].timestamp,
+            )
+        } else {
+            (
+                StartArea::Window(start, stop),
+                self.entries[end - 1].timestamp,
+            )
         }
     }
-    pub(crate) fn end_search_bounds(&self, stop: Timestamp, payload_len: usize) -> (EndArea, Timestamp) {
+    pub(crate) fn end_search_bounds(
+        &self,
+        stop: Timestamp,
+        payload_len: usize,
+    ) -> (EndArea, Timestamp) {
         let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
-        match idx {
-            Ok(i) => (
-                // entry marks start of end line, need end
-                EndArea::Found(self.entries[i].line_start + payload_len as u64 + 2),
-                self.entries[i].timestamp,
-            ),
-            Err(end) => {
-                if end == 0 {
-                    //stop lies before file
-                    panic!(
-                        "end lying before start of data should be caught
-                        before calling search_bounds. We should never reach
-                        this"
-                    )
-                } else if end == self.entries.len() {
-                    let last = self
-                        .entries
-                        .last()
-                        .expect("Index always has one entry when the byteseries is not empty");
-                    (EndArea::TillEnd(last.line_start), last.timestamp)
-                } else {
-                    //end is not 0 or 1 thus data[end] and data[end-1] exist
-                    (
-                        EndArea::Window(
-                            self.entries[end - 1].line_start,
-                            self.entries[end].line_start
-                                - inline_meta::bytes_per_metainfo(payload_len) as u64,
-                        ),
-                        self.entries[end - 1].timestamp,
-                    )
-                }
+        let end = match idx {
+            Ok(i) => {
+                return (
+                    // entry marks start of end line, need end
+                    EndArea::Found(self.entries[i].line_start + payload_len as u64 + 2),
+                    self.entries[i].timestamp,
+                );
             }
+            Err(end) => end,
+        };
+        assert!(
+            end > 0,
+            "end lying before start of data should be caught
+                before calling search_bounds. We should never reach
+                this",
+        );
+
+        if end == self.entries.len() {
+            let last = self
+                .entries
+                .last()
+                .expect("Index always has one entry when the byteseries is not empty");
+            return (EndArea::TillEnd(last.line_start), last.timestamp);
+        }
+
+        //end is not 0 or 1 thus data[end] and data[end-1] exist
+        if in_gap(stop, self.entries[end - 1].timestamp) {
+            return (
+                EndArea::Gap {
+                    start: self.entries[end - 1].line_start,
+                },
+                self.entries[end - 1].timestamp,
+            );
+        }
+
+        let start =
+            self.entries[end - 1].line_start + inline_meta::bytes_per_metainfo(payload_len) as u64;
+        let stop =
+            self.entries[end].line_start - inline_meta::bytes_per_metainfo(payload_len) as u64;
+        if start >= stop {
+            (
+                EndArea::Gap {
+                    start: self.entries[end - 1].line_start,
+                },
+                self.entries[end - 1].timestamp,
+            )
+        } else {
+            (
+                EndArea::Window(start, stop),
+                self.entries[end - 1].timestamp,
+            )
         }
     }
     pub(crate) fn first_meta_timestamp(&self) -> Option<Timestamp> {
@@ -270,6 +325,11 @@ impl Index {
         self.last_timestamp = None;
         Ok(())
     }
+}
+
+fn in_gap(val: Timestamp, gap_start: Timestamp) -> bool {
+    let reach = MAX_SMALL_TS;
+    val > gap_start + reach
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -351,6 +411,7 @@ mod tests {
         for i in 20..24 {
             let ts = i * 2u64.pow(16);
             h.update(ts, i).unwrap();
+            dbg!(ts, i);
         }
     }
 
@@ -383,8 +444,10 @@ mod tests {
         let mut h = test_index();
         fill_index(&mut h);
         let start = 22 * 2u64.pow(16) + 400;
+        dbg!(start);
         let (start, _) = h.start_search_bounds(start, 0);
 
+        dbg!(&start);
         assert_eq!(
             std::mem::discriminant(&start),
             std::mem::discriminant(&StartArea::Window(0, 0))
