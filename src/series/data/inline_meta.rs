@@ -3,7 +3,7 @@ use itertools::Itertools;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use tracing::{instrument, warn};
 
-use crate::{Resampler, Pos};
+use crate::{Pos, Resampler};
 
 use super::{Decoder, Timestamp};
 
@@ -111,18 +111,21 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         let mut needed_overlap = 0;
         let mut full_ts = seek.first_full_ts;
         while to_read > 0 {
-            let read_size = chunk_size.min(usize::try_from(to_read).unwrap_or(usize::MAX));
+            let read_size =
+                chunk_size.min(usize::try_from(to_read).unwrap_or(usize::MAX));
             self.file_handle
                 .read_exact(&mut buf[needed_overlap..needed_overlap + read_size])?;
             to_read -= read_size as u64;
-            let mut lines = buf[..needed_overlap + read_size].chunks_exact(self.line_size);
+            let mut lines =
+                buf[..needed_overlap + read_size].chunks_exact(self.line_size);
 
             needed_overlap = loop {
                 let Some(line) = lines.next() else {
                     break 0;
                 };
                 if line[..2] != META_PREAMBLE {
-                    let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                    let small_ts: [u8; 2] =
+                        line[0..2].try_into().expect("slice len is 2");
                     let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                     processor(small_ts + full_ts, &line[2..]);
                     continue;
@@ -131,7 +134,8 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 let Some(next_line) = lines.next() else {
                     if to_read == 0 {
                         // take care of the last item
-                        let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+                        let small_ts: [u8; 2] =
+                            line[0..2].try_into().expect("slice len is 2");
                         let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                         processor(small_ts + full_ts, &line[2..]);
                     }
@@ -323,8 +327,20 @@ pub(crate) fn write_meta(
             3
         }
         3 => {
-            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[0], t[1], t[2]])?;
-            file_handle.write_all(&[META_PREAMBLE[0], META_PREAMBLE[1], t[3], t[4], t[5]])?;
+            file_handle.write_all(&[
+                META_PREAMBLE[0],
+                META_PREAMBLE[1],
+                t[0],
+                t[1],
+                t[2],
+            ])?;
+            file_handle.write_all(&[
+                META_PREAMBLE[0],
+                META_PREAMBLE[1],
+                t[3],
+                t[4],
+                t[5],
+            ])?;
             file_handle.write_all(&[t[6], t[7], 0, 0, 0])?;
             3
         }

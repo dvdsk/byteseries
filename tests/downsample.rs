@@ -78,8 +78,14 @@ fn with_cache_same_as_without() {
     let mut timestamps_without_cache = Vec::new();
     let mut data_without_cache = Vec::new();
     {
-        let mut bs =
-            ByteSeries::new_with_resamplers(&test_path, 4, (), FloatResampler, Vec::new()).unwrap();
+        let mut bs = ByteSeries::new_with_resamplers(
+            &test_path,
+            4,
+            (),
+            FloatResampler,
+            Vec::new(),
+        )
+        .unwrap();
         insert_lines(&mut bs, 1000, T1, T2);
 
         bs.read_n(

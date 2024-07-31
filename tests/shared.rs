@@ -56,7 +56,12 @@ pub fn insert_uniform_arrays(
     }
 }
 
-pub fn insert_timestamps(data: &mut ByteSeries, n_to_insert: u32, step: u64, mut ts: Timestamp) {
+pub fn insert_timestamps(
+    data: &mut ByteSeries,
+    n_to_insert: u32,
+    step: u64,
+    mut ts: Timestamp,
+) {
     for _ in 0..n_to_insert {
         data.push_line(ts, ts.to_ne_bytes()).unwrap();
         ts += step;
@@ -90,7 +95,12 @@ impl byteseries::Resampler for FloatResampler {
     }
 }
 
-pub fn insert_lines(bs: &mut ByteSeries, n_points: u64, t_start: Timestamp, t_end: Timestamp) {
+pub fn insert_lines(
+    bs: &mut ByteSeries,
+    n_points: u64,
+    t_start: Timestamp,
+    t_end: Timestamp,
+) {
     let slope = 0.1;
 
     let dt = (t_end - t_start) / n_points as u64;

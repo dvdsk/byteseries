@@ -48,7 +48,10 @@ impl<H> FileWithHeader<H>
 where
     H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
 {
-    pub(crate) fn new(path: impl AsRef<Path>, user_header: H) -> Result<FileWithHeader<H>, OpenError> {
+    pub(crate) fn new(
+        path: impl AsRef<Path>,
+        user_header: H,
+    ) -> Result<FileWithHeader<H>, OpenError> {
         let mut file = match OpenOptions::new()
             .read(true)
             .append(true)
@@ -80,7 +83,10 @@ where
     }
 
     #[instrument(fields(file_len, user_header_len, header_len))]
-    pub(crate) fn open_existing(path: PathBuf, line_size: usize) -> Result<FileWithHeader<H>, OpenError>
+    pub(crate) fn open_existing(
+        path: PathBuf,
+        line_size: usize,
+    ) -> Result<FileWithHeader<H>, OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
@@ -98,8 +104,9 @@ where
         file.seek(std::io::SeekFrom::Start(USER_HEADER_STARTS as u64))?;
         file.read_exact(&mut user_header)?;
         let user_header = ron::de::from_bytes(&user_header)?;
-        let header_len =
-            user_header_len as usize + LINE_ENDS.len() + mem::size_of_val(&user_header_len);
+        let header_len = user_header_len as usize
+            + LINE_ENDS.len()
+            + mem::size_of_val(&user_header_len);
 
         tracing::Span::current()
             .record("file_len", metadata.len())

@@ -34,7 +34,8 @@ fn truncated_index(#[case] bytes_removed: u64) {
     let len = index_file.metadata().unwrap().len();
     index_file.set_len(len - bytes_removed).unwrap();
 
-    let (mut series, _) = ByteSeries::open_existing::<()>(test_path, PAYLOAD_SIZE).unwrap();
+    let (mut series, _) =
+        ByteSeries::open_existing::<()>(test_path, PAYLOAD_SIZE).unwrap();
     let mut timestamps = Vec::new();
     series
         .read_all(.., &mut EmptyDecoder, &mut timestamps, &mut Vec::new())

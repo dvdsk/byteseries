@@ -38,16 +38,20 @@ fn beyond_range(#[case] step: u64) {
 
     let t1 = timestamp + start_read_inlines * step;
     let t2 = timestamp + (start_read_inlines + read_length_inlines) * step;
-    let read_res = series.read_all(t1..t2, &mut EmptyDecoder, &mut Vec::new(), &mut Vec::new());
+    let read_res =
+        series.read_all(t1..t2, &mut EmptyDecoder, &mut Vec::new(), &mut Vec::new());
 
     match read_res {
         Err(e) => match e {
             byteseries::series::Error::InvalidRange(e) => assert!(
-                std::mem::discriminant(&e) == std::mem::discriminant(&Error::StartAfterData)
+                std::mem::discriminant(&e)
+                    == std::mem::discriminant(&Error::StartAfterData)
             ),
             _ => panic!("sampler should be error StartAfterData"),
         },
-        Ok(_) => panic!("should return an error as we are trying to read beyond the data"),
+        Ok(_) => {
+            panic!("should return an error as we are trying to read beyond the data")
+        }
     }
 }
 

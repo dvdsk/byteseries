@@ -19,7 +19,11 @@ use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug + Send + 'static {
     fn process(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), data::PushError>;
-    fn estimate_lines(&self, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Option<Estimate>;
+    fn estimate_lines(
+        &self,
+        start: Bound<Timestamp>,
+        end: Bound<Timestamp>,
+    ) -> Option<Estimate>;
     fn data_mut(&mut self) -> &mut Data;
     fn data(&self) -> &Data;
 }
@@ -46,9 +50,9 @@ impl TimeRange {
     }
     fn from_data(data: &mut Data) -> Result<Self, ReadError> {
         Ok(if let Some(first) = data.first_time() {
-            let last = data
-                .last_time()?
-                .expect("if there is a first time there is a last (can be equal to first)");
+            let last = data.last_time()?.expect(
+                "if there is a first time there is a last (can be equal to first)",
+            );
             Self::Some(first..=last)
         } else {
             Self::None
@@ -145,7 +149,8 @@ impl ByteSeries {
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
-        let mut data = Data::new(name.as_ref(), payload_size, header).map_err(Error::Create)?;
+        let mut data =
+            Data::new(name.as_ref(), payload_size, header).map_err(Error::Create)?;
         Ok(ByteSeries {
             range: TimeRange::None,
             downsampled: resample_configs
@@ -177,7 +182,8 @@ impl ByteSeries {
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
-        let (mut data, header) = Data::open_existing(name, payload_size).map_err(Error::Open)?;
+        let (mut data, header) =
+            Data::open_existing(name, payload_size).map_err(Error::Open)?;
 
         let bs = ByteSeries {
             range: TimeRange::from_data(&mut data).map_err(Error::Reading)?,
@@ -208,7 +214,8 @@ impl ByteSeries {
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
-        let (mut data, header) = Data::open_existing(&name, payload_size).map_err(Error::Open)?;
+        let (mut data, header) =
+            Data::open_existing(&name, payload_size).map_err(Error::Open)?;
 
         Ok((
             ByteSeries {
@@ -236,7 +243,11 @@ impl ByteSeries {
     }
 
     #[instrument(skip(self, line), level = "trace")]
-    pub fn push_line(&mut self, ts: Timestamp, line: impl AsRef<[u8]>) -> Result<(), Error> {
+    pub fn push_line(
+        &mut self,
+        ts: Timestamp,
+        line: impl AsRef<[u8]>,
+    ) -> Result<(), Error> {
         //write 16 bit timestamp and then the line to file
         //for now no support for sign bit since data will always be after 0 (1970)
         self.range.update(ts)?;
@@ -363,7 +374,8 @@ impl ByteSeries {
 
         let lines = seek.lines(optimal_data);
         let bucket_size = 1.max(lines / n as u64);
-        let bucket_size = usize::try_from(bucket_size).map_err(|_| Error::TooMuchToResample)?;
+        let bucket_size =
+            usize::try_from(bucket_size).map_err(|_| Error::TooMuchToResample)?;
 
         optimal_data
             .read_resampling(seek, resampler, bucket_size, timestamps, data)

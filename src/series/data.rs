@@ -96,8 +96,11 @@ impl Data {
     where
         H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
     {
-        let file = FileWithHeader::new(name.as_ref().with_extension("byteseries"), header.clone())
-            .map_err(CreateError::File)?;
+        let file = FileWithHeader::new(
+            name.as_ref().with_extension("byteseries"),
+            header.clone(),
+        )
+        .map_err(CreateError::File)?;
         let (file_handle, _) = file.split_off_header();
         let data_len = file_handle.data_len().map_err(CreateError::GetLength)?;
         let file_handle = FileWithInlineMeta::new(file_handle, payload_size)
@@ -124,33 +127,34 @@ impl Data {
             payload_size + 2,
         )
         .map_err(OpenError::File)?;
-        let (file_handle, header) = file.split_off_header();
+        let (file, header) = file.split_off_header();
 
-        let mut file_handle =
-            FileWithInlineMeta::new(file_handle, payload_size).map_err(OpenError::CheckOrRepair)?;
-        let data_len = file_handle
-            .file_handle
-            .data_len()
-            .map_err(OpenError::GetLength)?;
+        let mut file = FileWithInlineMeta::new(file, payload_size)
+            .map_err(OpenError::CheckOrRepair)?;
+        let data_len = file.file_handle.data_len().map_err(OpenError::GetLength)?;
         let last_line_starts = data_len.checked_sub((payload_size + 2) as u64);
-        let last_full_ts_in_data = last_meta_timestamp(file_handle.inner_mut(), payload_size)
+        let last_full_ts_in_data = last_meta_timestamp(file.inner_mut(), payload_size)
             .map_err(OpenError::GetLastMeta)?;
-        let index =
-            match Index::open_existing(&name, &header, last_line_starts, last_full_ts_in_data) {
-                Ok(index) => index,
-                Err(e) => {
-                    warn!("Creating new index since existing could not be used: {e}");
-                    Index::create_from_byteseries(
-                        file_handle.inner_mut(),
-                        payload_size,
-                        name,
-                        header.clone(),
-                    )?
-                }
-            };
+        let index = match Index::open_existing(
+            &name,
+            &header,
+            last_line_starts,
+            last_full_ts_in_data,
+        ) {
+            Ok(index) => index,
+            Err(e) => {
+                warn!("Creating new index, existing is broken: {e}");
+                Index::create_from_byteseries(
+                    file.inner_mut(),
+                    payload_size,
+                    name,
+                    header.clone(),
+                )?
+            }
+        };
 
         let data = Self {
-            file_handle,
+            file_handle: file,
             index,
             payload_size,
             data_len,
@@ -160,7 +164,8 @@ impl Data {
 
     /// # Errors
     ///
-    /// See the [`ReadError`] docs for an exhaustive list of everything that can go wrong.
+    /// See the [`ReadError`] docs for an exhaustive list of everything
+    /// that can go wrong.
     pub(crate) fn last_line<T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
@@ -196,13 +201,17 @@ impl Data {
         }
     }
 
-    /// Append data to disk but do not flush, a crash can still lead to the data being lost
+    /// Append data to disk but do not flush, a crash can still lead to the data
+    /// being lost
     #[instrument(skip(self, line), level = "trace")]
-    pub(crate) fn push_data(&mut self, ts: Timestamp, line: &[u8]) -> Result<(), PushError> {
+    pub(crate) fn push_data(
+        &mut self,
+        ts: Timestamp,
+        line: &[u8],
+    ) -> Result<(), PushError> {
         //we store the timestamp - the last recorded full timestamp as u16. If
         //that overflows a new timestamp will be inserted. The 16 bit small
         //timestamp is stored little endian
-
         let small_ts = self
             .index
             .last_timestamp()

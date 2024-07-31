@@ -149,7 +149,8 @@ fn read(bs: &mut ByteSeries) -> (Vec<Timestamp>, Vec<f32>) {
 
 fn create_and_fill(test_path: &Path, config: downsample::Config) -> ByteSeries {
     let mut bs =
-        ByteSeries::new_with_resamplers(test_path, 4, (), FloatResampler, vec![config]).unwrap();
+        ByteSeries::new_with_resamplers(test_path, 4, (), FloatResampler, vec![config])
+            .unwrap();
     insert_lines(&mut bs, 1000, T1, T2);
     bs
 }

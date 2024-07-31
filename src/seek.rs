@@ -39,7 +39,11 @@ pub struct RoughPos {
 
 impl RoughPos {
     /// # returns `None` if the data file is empty
-    pub(crate) fn new(data: &Data, start: Bound<Timestamp>, end: Bound<Timestamp>) -> Option<Self> {
+    pub(crate) fn new(
+        data: &Data,
+        start: Bound<Timestamp>,
+        end: Bound<Timestamp>,
+    ) -> Option<Self> {
         let first_time_in_data = data.index.first_meta_timestamp()?;
         let start_ts = match start {
             Bound::Included(ts) => ts,
@@ -48,8 +52,12 @@ impl RoughPos {
         };
 
         let (start_search_area, start_section_full_ts) = match start {
-            Bound::Included(ts) => data.index.start_search_bounds(ts, data.payload_size()),
-            Bound::Excluded(ts) => data.index.start_search_bounds(ts - 1, data.payload_size()),
+            Bound::Included(ts) => {
+                data.index.start_search_bounds(ts, data.payload_size())
+            }
+            Bound::Excluded(ts) => {
+                data.index.start_search_bounds(ts - 1, data.payload_size())
+            }
             Bound::Unbounded => (StartArea::Found(0), first_time_in_data),
         };
         let start_ts = start_ts.max(first_time_in_data);
@@ -65,7 +73,9 @@ impl RoughPos {
 
         let (end_search_area, end_section_full_ts) = match end {
             Bound::Included(ts) => data.index.end_search_bounds(ts, data.payload_size()),
-            Bound::Excluded(ts) => data.index.end_search_bounds(ts - 1, data.payload_size()),
+            Bound::Excluded(ts) => {
+                data.index.end_search_bounds(ts - 1, data.payload_size())
+            }
             Bound::Unbounded => (
                 EndArea::Found(data.last_line_start() + data.payload_size() as u64 + 2),
                 data.index
@@ -99,14 +109,15 @@ impl RoughPos {
             }
         };
 
-        dbg!(&self);
         let end_byte = match self.end_search_area {
             EndArea::Found(pos) | EndArea::Gap { start: pos } => pos,
             EndArea::TillEnd(start) => {
                 let end = data.data_len;
                 find_read_end(data, self.end_small_ts(), start, end)?
             }
-            EndArea::Window(start, end) => find_read_end(data, self.end_small_ts(), start, end)?,
+            EndArea::Window(start, end) => {
+                find_read_end(data, self.end_small_ts(), start, end)?
+            }
         };
 
         Ok(if end_byte <= start_byte {
@@ -153,22 +164,27 @@ impl RoughPos {
             self.start_search_area.map(|pos| pos / line_size as u64),
             self.end_search_area.map(|pos| pos / line_size as u64),
         ) {
-            (Found(start) | Gap { stops: start }, End::Found(end) | End::Gap { start: end }) => {
-                Estimate {
-                    max: end - start,
-                    min: end - start,
-                }
-            }
+            (
+                Found(start) | Gap { stops: start },
+                End::Found(end) | End::Gap { start: end },
+            ) => Estimate {
+                max: end - start,
+                min: end - start,
+            },
             (Found(start) | Gap { stops: start }, End::TillEnd(end)) => Estimate {
                 max: total_lines - start,
                 min: end - start,
             },
-            (Found(start) | Gap { stops: start }, End::Window(end_min, end_max)) => Estimate {
-                max: end_max - start,
-                min: end_min - start,
-            },
+            (Found(start) | Gap { stops: start }, End::Window(end_min, end_max)) => {
+                Estimate {
+                    max: end_max - start,
+                    min: end_min - start,
+                }
+            }
 
-            (Clipped, End::Found(end) | End::Gap { start: end }) => Estimate { max: end, min: end },
+            (Clipped, End::Found(end) | End::Gap { start: end }) => {
+                Estimate { max: end, min: end }
+            }
             (Clipped, End::TillEnd(end)) => Estimate {
                 max: total_lines,
                 min: end,
@@ -191,10 +207,12 @@ impl RoughPos {
                 min..max then start can not be an area from start..end_of_file"
             ),
 
-            (Window(start_min, start_max), End::Found(end) | End::Gap { start: end }) => Estimate {
-                max: end - start_min,
-                min: end - start_max,
-            },
+            (Window(start_min, start_max), End::Found(end) | End::Gap { start: end }) => {
+                Estimate {
+                    max: end - start_min,
+                    min: end - start_max,
+                }
+            }
             (Window(start_min, start_max), End::TillEnd(end)) => Estimate {
                 max: total_lines - start_min,
                 min: end - start_max,
@@ -233,8 +251,12 @@ impl Pos {
 
 /// returns the offset from the start of the file where the first line starts
 #[instrument(err)]
-fn find_read_start(data: &mut Data, start_time: u16, start: u64, stop: u64) -> Result<u64, Error> {
-    dbg!(start, stop, data.payload_size());
+fn find_read_start(
+    data: &mut Data,
+    start_time: u16,
+    start: u64,
+    stop: u64,
+) -> Result<u64, Error> {
     if stop <= start + 2 + data.payload_size() as u64 {
         return Ok(stop);
     }
@@ -263,13 +285,19 @@ fn find_read_start(data: &mut Data, start_time: u16, start: u64, stop: u64) -> R
 
 /// returns the offset from the start of the file where last line **stops**
 #[instrument(err)]
-fn find_read_end(data: &mut Data, end_time: u16, start: u64, stop: u64) -> Result<u64, Error> {
+fn find_read_end(
+    data: &mut Data,
+    end_time: u16,
+    start: u64,
+    stop: u64,
+) -> Result<u64, Error> {
     assert!(
         stop >= start,
         "stop ({stop}) must be large then start ({start})"
     );
     //compare partial (16 bit) timestamps in between these bounds
-    let buf_len = usize::try_from(stop - start).expect("search area is smaller the u16::MAX");
+    let buf_len =
+        usize::try_from(stop - start).expect("search area is smaller the u16::MAX");
     let mut buf = vec![0u8; buf_len];
     data.file_handle.seek(SeekFrom::Start(start))?;
     data.file_handle.file_handle.read_exact(&mut buf)?;

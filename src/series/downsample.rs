@@ -11,7 +11,7 @@ use tracing::instrument;
 use super::data::{self, Data};
 use super::DownSampled;
 use crate::seek::RoughPos;
-use crate::{file, ResampleState, Resampler, Pos, Timestamp};
+use crate::{file, Pos, ResampleState, Resampler, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -67,7 +67,9 @@ pub enum CreateError {
 pub enum OpenError {
     #[error("Failed to open data file: {0}")]
     Data(data::OpenError),
-    #[error("Can not check last downsampled item by comparing to source, read error: {0}")]
+    #[error(
+        "Can not check last downsampled item by comparing to source, read error: {0}"
+    )]
     CanNotCompareToSource(data::ReadError),
     #[error(
         "There should not be a downsampled item since there are not \
@@ -200,9 +202,9 @@ where
             payload_size,
         ) {
             Ok(downsampled) => return Ok(downsampled),
-            Err(OpenError::Data(data::OpenError::File(file::OpenError::Io(io_error))))
-                if io_error.kind() == io::ErrorKind::NotFound =>
-            {
+            Err(OpenError::Data(data::OpenError::File(file::OpenError::Io(
+                io_error,
+            )))) if io_error.kind() == io::ErrorKind::NotFound => {
                 tracing::info!("No downsampled data cache, creating one now");
             }
             Err(e) => return Err(OpenOrCreateError::Open(e)),
@@ -242,8 +244,9 @@ where
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
     ) -> Option<crate::seek::Estimate> {
-        RoughPos::new(&self.data, start, end)
-            .map(|seek| seek.estimate_lines(self.data.payload_size() + 2, self.data.data_len))
+        RoughPos::new(&self.data, start, end).map(|seek| {
+            seek.estimate_lines(self.data.payload_size() + 2, self.data.data_len)
+        })
     }
 
     fn data_mut(&mut self) -> &mut Data {

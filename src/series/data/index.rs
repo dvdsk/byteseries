@@ -136,9 +136,11 @@ impl Index {
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
-        let file: FileWithHeader<H> =
-            FileWithHeader::open_existing(name.as_ref().with_extension("byteseries_index"), 16)
-                .map_err(OpenError::File)?;
+        let file: FileWithHeader<H> = FileWithHeader::open_existing(
+            name.as_ref().with_extension("byteseries_index"),
+            16,
+        )
+        .map_err(OpenError::File)?;
 
         let (mut file, header) = file.split_off_header();
         if *user_header != header {
@@ -154,9 +156,11 @@ impl Index {
         let entries: Vec<_> = bytes
             .chunks_exact(16)
             .map(|line| {
-                let timestamp: [u8; 8] = line[0..8].try_into().expect("line is 2*8 bytes");
+                let timestamp: [u8; 8] =
+                    line[0..8].try_into().expect("line is 2*8 bytes");
                 let timestamp = u64::from_le_bytes(timestamp);
-                let line_start: [u8; 8] = line[8..].try_into().expect("line is 2*8 bytes");
+                let line_start: [u8; 8] =
+                    line[8..].try_into().expect("line is 2*8 bytes");
                 let line_start = u64::from_le_bytes(line_start);
                 Entry {
                     timestamp,
@@ -176,7 +180,11 @@ impl Index {
     }
 
     #[instrument(level = "trace", skip(self), ret)]
-    pub(crate) fn update(&mut self, timestamp: u64, line_start: u64) -> Result<(), std::io::Error> {
+    pub(crate) fn update(
+        &mut self,
+        timestamp: u64,
+        line_start: u64,
+    ) -> Result<(), std::io::Error> {
         let ts = timestamp;
         self.file.write_all(&ts.to_le_bytes())?;
         self.file.write_all(&line_start.to_le_bytes())?;
@@ -280,10 +288,10 @@ impl Index {
             );
         }
 
-        let start =
-            self.entries[end - 1].line_start + inline_meta::bytes_per_metainfo(payload_len) as u64;
-        let stop =
-            self.entries[end].line_start - inline_meta::bytes_per_metainfo(payload_len) as u64;
+        let start = self.entries[end - 1].line_start
+            + inline_meta::bytes_per_metainfo(payload_len) as u64;
+        let stop = self.entries[end].line_start
+            - inline_meta::bytes_per_metainfo(payload_len) as u64;
         if start >= stop {
             (
                 EndArea::Gap {
@@ -371,7 +379,8 @@ pub(crate) fn check_and_repair(
         .map_err(CheckAndRepairError::Read)?;
     let last_full_ts: [u8; 8] = last_entry[0..8].try_into().expect("just read 16 bytes");
     let last_full_ts = u64::from_le_bytes(last_full_ts);
-    let last_line_start: [u8; 8] = last_entry[8..].try_into().expect("just read 16 bytes");
+    let last_line_start: [u8; 8] =
+        last_entry[8..].try_into().expect("just read 16 bytes");
     let last_line_start = u64::from_le_bytes(last_line_start);
 
     let len = file.len().map_err(CheckAndRepairError::GetLength)?;

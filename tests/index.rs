@@ -27,7 +27,8 @@ fn reconstructed_index_works() {
     let created_index = fs::read(&index_path).unwrap();
     fs::remove_file(&index_path).unwrap();
 
-    let _: (ByteSeries, ()) = ByteSeries::open_existing(&test_path, PAYLOAD_SIZE).unwrap();
+    let _: (ByteSeries, ()) =
+        ByteSeries::open_existing(&test_path, PAYLOAD_SIZE).unwrap();
     let reconstructed_index = fs::read(&index_path).unwrap();
 
     assert_eq!(created_index, reconstructed_index);

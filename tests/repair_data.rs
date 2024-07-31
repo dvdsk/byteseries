@@ -7,8 +7,8 @@ use temp_dir::TempDir;
 mod shared;
 use shared::setup_tracing;
 
-use shared::EmptyDecoder;
 use shared::payload_sizes;
+use shared::EmptyDecoder;
 
 fn lines_per_metainfo(payload_size: usize) -> usize {
     let base_lines = 2; // needed to recognise meta section
@@ -45,7 +45,8 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
         .set_len(bytes_per_metainfo(payload_size) as u64)
         .unwrap();
 
-    let (mut series, _) = ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
+    let (mut series, _) =
+        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
     let mut timestamps = Vec::new();
     let res = series
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
@@ -80,7 +81,8 @@ fn partial_meta_at_end(#[case] payload_size: usize) {
     let len = series_file.metadata().unwrap().len();
     series_file.set_len(len - 4).unwrap();
 
-    let (mut series, _) = ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
+    let (mut series, _) =
+        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
     let mut timestamps = Vec::new();
     series
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
@@ -110,9 +112,12 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
 
     let line_size = payload_size + 2;
     let data_plus_all_but_first_meta_line = lines_per_metainfo(payload_size) + line_size;
-    series_file.set_len(len - data_plus_all_but_first_meta_line as u64).unwrap();
+    series_file
+        .set_len(len - data_plus_all_but_first_meta_line as u64)
+        .unwrap();
 
-    let (mut series, _) = ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
+    let (mut series, _) =
+        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
     let mut timestamps = Vec::new();
     series
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
