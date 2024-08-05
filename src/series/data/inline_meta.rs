@@ -204,10 +204,10 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
         .position(|(a, b)| (a[0..2] == META_PREAMBLE && b[0..2] == META_PREAMBLE));
 
     if let Some(pos) = meta_section_start {
-        file.set_len(dbg!(
+        file.set_len(
             file.len()? - payload_size.metainfo_size() as u64
                 + pos as u64 * payload_size.line_size() as u64,
-        ))?;
+        )?;
         Ok(true)
     } else {
         Ok(false)

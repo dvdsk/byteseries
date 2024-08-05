@@ -105,7 +105,6 @@ impl RoughPos {
     /// returns None if there is no data to read
     #[tracing::instrument]
     pub(crate) fn refine(self, data: &mut Data) -> Result<Option<Pos>, Error> {
-        dbg!(&self);
         let start_byte = match self.start_search_area {
             StartArea::Found(pos) | StartArea::Gap { stops: pos } => pos,
             StartArea::Clipped => MetaPos::ZERO.line_start(data.payload_size()),
@@ -312,7 +311,6 @@ fn find_read_start(
         let start_byte = start.raw_offset() + bytes_past_start;
         Ok(LinePos(start_byte))
     } else {
-        dbg!("not found");
         Ok(LinePos(stop))
     }
 }

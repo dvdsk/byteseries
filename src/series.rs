@@ -299,7 +299,6 @@ impl ByteSeries {
             );
             return Ok(());
         };
-        dbg!(&seek, self.data.payload_size());
 
         self.data
             .read_all(seek, decoder, timestamps, data)

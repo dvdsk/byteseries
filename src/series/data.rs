@@ -160,7 +160,6 @@ impl Data {
                 )?
             }
         };
-        dbg!(&index);
 
         let last_time =
             match last_line(&index, data_len, payload_size, &mut file, &mut EmptyDecoder)

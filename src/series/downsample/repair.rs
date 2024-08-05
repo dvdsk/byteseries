@@ -27,12 +27,12 @@ pub(super) fn repair_missing_data(
     config: &Config,
     resampler: &mut impl Resampler,
 ) -> Result<(), Error> {
-    let start_bound = match dbg!(downsampled.last_time()) {
+    let start_bound = match downsampled.last_time() {
         Some(ts) => Bound::Excluded(ts),
         None => Bound::Unbounded,
     };
     let Some(seek) = RoughPos::new(source, start_bound, Bound::Unbounded)
-        .map(|p| dbg!(p).refine(source))
+        .map(|p| p.refine(source))
         .transpose()?
         .flatten()
     else {
@@ -43,7 +43,6 @@ pub(super) fn repair_missing_data(
         return Ok(());
     };
 
-    dbg!(&seek);
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
     source
