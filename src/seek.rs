@@ -304,7 +304,6 @@ fn find_read_start(
                 .expect("start and stop at least 2 apart")
         })
         .map(u16::from_le_bytes)
-        .inspect(|line_ts| eprintln!("line_ts: {line_ts}"))
         .position(|line_ts| line_ts >= start_time)
     {
         let bytes_past_start = start_line as u64 * data.payload_size().line_size() as u64;
