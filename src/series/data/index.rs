@@ -9,7 +9,7 @@ use tracing::instrument;
 use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::Timestamp;
 
-use super::inline_meta::{bytes_per_metainfo, SetLen};
+use super::inline_meta::SetLen;
 use super::MAX_SMALL_TS;
 
 pub(crate) mod create;
@@ -20,8 +20,8 @@ pub(crate) struct MetaPos(pub(crate) u64);
 
 impl MetaPos {
     pub(crate) const ZERO: Self = Self(0);
-    pub(crate) fn line_start(&self, payload_size: usize) -> LinePos {
-        LinePos(self.0 + bytes_per_metainfo(payload_size) as u64)
+    pub(crate) fn line_start(&self, payload_size: PayloadSize) -> LinePos {
+        LinePos(self.0 + payload_size.metainfo_size() as u64)
     }
     pub(crate) fn to_le_bytes(self) -> [u8; 8] {
         self.0.to_le_bytes()
@@ -47,8 +47,8 @@ impl LinePos {
     pub(crate) fn raw_offset(&self) -> u64 {
         self.0
     }
-    pub(crate) fn next_line_start(&self, payload_size: usize) -> Self {
-        Self(self.0 + payload_size as u64 + 2)
+    pub(crate) fn next_line_start(&self, payload_size: PayloadSize) -> Self {
+        Self(self.0 + payload_size.line_size() as u64)
     }
 }
 
@@ -57,6 +57,24 @@ impl Sub<LinePos> for LinePos {
 
     fn sub(self, rhs: Self) -> Self::Output {
         self.0 - rhs.0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PayloadSize(usize);
+
+impl PayloadSize {
+    pub(crate) fn metainfo_size(&self) -> usize {
+        super::inline_meta::lines_per_metainfo(self.0) * (self.line_size())
+    }
+    pub(crate) fn line_size(&self) -> usize {
+        self.0 + 2
+    }
+    pub(crate) fn raw(&self) -> usize {
+        self.0
+    }
+    pub(crate) fn from_raw(raw: usize) -> Self {
+        Self(raw)
     }
 }
 
@@ -79,7 +97,7 @@ pub(crate) struct Index {
 
 #[derive(Debug, Clone)]
 pub(crate) enum StartArea {
-    /// This line has the same time as the start time 
+    /// This line has the same time as the start time
     Found(LinePos),
     /// start lies before first timestamp in data
     Clipped,
@@ -213,15 +231,14 @@ impl Index {
     pub(crate) fn start_search_bounds(
         &self,
         start_ts: Timestamp,
-        payload_size: usize,
+        payload_size: PayloadSize,
     ) -> (StartArea, Timestamp) {
         let idx = self
             .entries
             .binary_search_by_key(&start_ts, |e| e.timestamp);
         let end = match idx {
             Ok(i) => {
-                let next_line_start =
-                    self.entries[i].meta_start.line_start(payload_size);
+                let next_line_start = self.entries[i].meta_start.line_start(payload_size);
                 return (StartArea::Found(next_line_start), start_ts);
             }
             Err(end) => end,
@@ -248,23 +265,17 @@ impl Index {
         if in_gap(start_ts, self.entries[end - 1].timestamp) {
             return (
                 StartArea::Gap {
-                    stops: self.entries[end]
-                        .meta_start
-                        .line_start(payload_size),
+                    stops: self.entries[end].meta_start.line_start(payload_size),
                 },
                 self.entries[end].timestamp,
             );
         }
 
         if start_ts >= self.entries[end].timestamp {
-            let stop = self.entries[end]
-                .meta_start
-                .line_start(payload_size);
+            let stop = self.entries[end].meta_start.line_start(payload_size);
             (StartArea::Gap { stops: stop }, self.entries[end].timestamp)
         } else {
-            let start = self.entries[end - 1]
-                .meta_start
-                .line_start(payload_size);
+            let start = self.entries[end - 1].meta_start.line_start(payload_size);
             let stop = self.entries[end].meta_start;
             (
                 StartArea::Window(start, stop),
@@ -275,7 +286,7 @@ impl Index {
     pub(crate) fn end_search_bounds(
         &self,
         end_ts: Timestamp,
-        payload_size: usize,
+        payload_size: PayloadSize,
     ) -> (EndArea, Timestamp) {
         let idx = self.entries.binary_search_by_key(&end_ts, |e| e.timestamp);
         let end = match idx {
@@ -312,9 +323,7 @@ impl Index {
             );
         }
 
-        let start = self.entries[end - 1]
-            .meta_start
-            .line_start(payload_size);
+        let start = self.entries[end - 1].meta_start.line_start(payload_size);
         let stop = self.entries[end].meta_start;
         (
             EndArea::Window(start, stop),

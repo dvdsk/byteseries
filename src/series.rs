@@ -4,6 +4,7 @@ use core::fmt;
 use std::ops::{Bound, RangeBounds};
 use std::path::Path;
 
+use data::index::PayloadSize;
 use data::Data;
 use itertools::Itertools;
 use serde::de::DeserializeOwned;
@@ -13,7 +14,6 @@ use tracing::instrument;
 use crate::seek::{self, Estimate};
 use crate::{Decoder, Resampler, Timestamp};
 
-use self::data::inline_meta::bytes_per_metainfo;
 use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug + Send + 'static {
@@ -148,6 +148,7 @@ impl ByteSeries {
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
+        let payload_size = PayloadSize::from_raw(payload_size);
         let mut data =
             Data::new(name.as_ref(), payload_size, header).map_err(Error::Create)?;
         Ok(ByteSeries {
@@ -181,6 +182,7 @@ impl ByteSeries {
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
+        let payload_size = PayloadSize::from_raw(payload_size);
         let (mut data, header) =
             Data::open_existing(name, payload_size).map_err(Error::Open)?;
 
@@ -213,6 +215,7 @@ impl ByteSeries {
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
+        let payload_size = PayloadSize::from_raw(payload_size);
         let (mut data, header) =
             Data::open_existing(&name, payload_size).map_err(Error::Open)?;
 
@@ -387,7 +390,7 @@ impl ByteSeries {
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
     ) -> Result<(), seek::Error> {
-        let inline_meta_size = bytes_per_metainfo(self.data.payload_size());
+        let inline_meta_size = self.data.payload_size().metainfo_size();
         if self.data.data_len <= inline_meta_size as u64 {
             return Err(seek::Error::EmptyFile);
         }

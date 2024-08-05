@@ -33,7 +33,7 @@ pub fn setup_tracing() {
 #[case(4)]
 #[case(5)]
 #[case(6)]
-fn payload_sizes(#[case] payload_size: usize) {}
+fn payload_sizes(#[case] payload_size: PayloadSize) {}
 
 #[derive(Debug, Clone)]
 pub struct EmptyDecoder;

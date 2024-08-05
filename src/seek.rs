@@ -3,7 +3,7 @@ use std::ops::Bound;
 
 use tracing::instrument;
 
-use crate::series::data::index::{EndArea, LinePos, MetaPos, StartArea};
+use crate::series::data::index::{EndArea, LinePos, MetaPos, PayloadSize, StartArea};
 use crate::series::data::{Data, MAX_SMALL_TS};
 use crate::Timestamp;
 
@@ -165,7 +165,7 @@ impl RoughPos {
         u16::try_from(start_time).expect("just asserted")
     }
 
-    pub(crate) fn estimate_lines(&self, payload_size: usize, data_len: u64) -> Estimate {
+    pub(crate) fn estimate_lines(&self, payload_size: PayloadSize, data_len: u64) -> Estimate {
         use EndArea as End;
         use StartArea::{Clipped, Found, Gap, TillEnd, Window};
 
@@ -248,8 +248,8 @@ impl RoughPos {
             };
 
         Estimate {
-            max: estimate_in_bytes.max / (payload_size + 2) as u64,
-            min: estimate_in_bytes.min / (payload_size + 2) as u64,
+            max: estimate_in_bytes.max / payload_size.line_size() as u64,
+            min: estimate_in_bytes.min / payload_size.line_size() as u64,
         }
     }
 }
@@ -275,7 +275,7 @@ pub struct Pos {
 impl Pos {
     #[must_use]
     pub(crate) fn lines(&self, series: &Data) -> u64 {
-        (self.end - self.start.raw_offset()) / (series.payload_size() + 2) as u64
+        (self.end - self.start.raw_offset()) / series.payload_size().line_size() as u64
     }
 }
 
@@ -298,7 +298,7 @@ fn find_read_start(
     data.file_handle.file_handle.read_exact(&mut buf)?;
 
     if let Some(start_line) = buf
-        .chunks_exact(data.payload_size() + 2)
+        .chunks_exact(data.payload_size().line_size())
         .map(|line| {
             line[0..2]
                 .try_into()
@@ -308,7 +308,7 @@ fn find_read_start(
         .inspect(|line_ts| eprintln!("line_ts: {line_ts}"))
         .position(|line_ts| line_ts >= start_time)
     {
-        let bytes_past_start = start_line as u64 * (data.payload_size() + 2) as u64;
+        let bytes_past_start = start_line as u64 * data.payload_size().line_size() as u64;
         let start_byte = start.raw_offset() + bytes_past_start;
         Ok(LinePos(start_byte))
     } else {
@@ -337,13 +337,13 @@ fn find_read_end(
     data.file_handle.file_handle.read_exact(&mut buf)?;
 
     if let Some(stop_line) = buf
-        .chunks_exact(data.payload_size() + 2)
+        .chunks_exact(data.payload_size().line_size())
         .map(|line| line[..2].try_into().expect("chunks are at least 2 long"))
         .map(u16::from_le_bytes)
         .rposition(|line_ts| line_ts <= end_time)
     {
         let stop_byte = start.raw_offset()
-            + (stop_line + 1) as u64 * (data.payload_size() + 2) as u64;
+            + (stop_line + 1) as u64 * data.payload_size().line_size() as u64;
         Ok(stop_byte)
     } else {
         Ok(stop)

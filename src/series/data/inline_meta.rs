@@ -1,3 +1,4 @@
+use crate::series::data::PayloadSize;
 use core::fmt;
 use itertools::Itertools;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -12,7 +13,7 @@ pub(crate) const META_PREAMBLE: [u8; 2] = [0b1111_1111, 0b1111_1111];
 #[derive(Debug)]
 pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
     pub(crate) file_handle: F,
-    pub(crate) line_size: usize,
+    pub(crate) payload_size: PayloadSize,
 }
 
 pub(crate) trait SetLen {
@@ -24,7 +25,10 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     /// Will
     ///  - truncate the file if it contains only metadata
     ///  - remove a (partial) trailing metadata sections if there is one
-    pub(crate) fn new(mut file: F, payload_size: usize) -> Result<Self, std::io::Error> {
+    pub(crate) fn new(
+        mut file: F,
+        payload_size: PayloadSize,
+    ) -> Result<Self, std::io::Error> {
         'check_and_repair: {
             if file.len()? == 0 {
                 break 'check_and_repair;
@@ -47,7 +51,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
 
         Ok(FileWithInlineMeta {
             file_handle: file,
-            line_size: payload_size + 2,
+            payload_size,
         })
     }
 
@@ -92,7 +96,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         mut processor: impl FnMut(Timestamp, &[u8]),
     ) -> Result<(), std::io::Error> {
         let mut to_read = seek.end - seek.start.raw_offset();
-        let chunk_size = 16384usize.next_multiple_of(self.line_size);
+        let chunk_size = 16384usize.next_multiple_of(self.payload_size.line_size());
         let mut buf = vec![0; chunk_size];
 
         self.file_handle
@@ -106,8 +110,8 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
             self.file_handle
                 .read_exact(&mut buf[needed_overlap..needed_overlap + read_size])?;
             to_read -= read_size as u64;
-            let mut lines =
-                buf[..needed_overlap + read_size].chunks_exact(self.line_size);
+            let mut lines = buf[..needed_overlap + read_size]
+                .chunks_exact(self.payload_size.line_size());
 
             needed_overlap = loop {
                 let Some(line) = lines.next() else {
@@ -129,7 +133,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                         let small_ts: u64 = u16::from_le_bytes(small_ts).into();
                         processor(small_ts + full_ts, &line[2..]);
                     }
-                    break self.line_size;
+                    break self.payload_size.line_size();
                 };
                 if next_line[..2] != META_PREAMBLE {
                     let small_ts: [u8; 2] = line[0..2].try_into().expect("len is 2");
@@ -151,7 +155,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                         processor(full_ts, &line_after_meta[2..]);
                     }
                     MetaResult::OutOfLines { consumed_lines } => {
-                        break consumed_lines * self.line_size;
+                        break consumed_lines * self.payload_size.line_size();
                     }
                 };
             };
@@ -162,14 +166,14 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
 
 fn removed_start_of_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     file: &mut F,
-    payload_size: usize,
+    payload_size: PayloadSize,
 ) -> Result<bool, io::Error> {
     file.seek(SeekFrom::Start(
-        file.len()? - bytes_per_metainfo(payload_size) as u64,
+        file.len()? - payload_size.metainfo_size() as u64,
     ))?;
-    let mut to_check = vec![1u8; 2 * (payload_size + 2)];
+    let mut to_check = vec![1u8; 2 * payload_size.line_size()];
     file.read_exact(&mut to_check)?;
-    let mut lines = to_check.chunks_exact(payload_size + 2);
+    let mut lines = to_check.chunks_exact(payload_size.line_size());
     let last_line = lines.by_ref().last().expect("read multiple lines");
     let meta_start_before_last_line = lines
         .by_ref()
@@ -178,7 +182,7 @@ fn removed_start_of_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     // unless there is a meta section directly before it time zero lines
     // are not allowed.
     if last_line[0..2] == META_PREAMBLE && !meta_start_before_last_line {
-        file.set_len(file.len()? - (payload_size + 2) as u64)?;
+        file.set_len(file.len()? - payload_size.line_size() as u64)?;
         Ok(true)
     } else {
         Ok(false)
@@ -187,22 +191,22 @@ fn removed_start_of_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
 
 fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     file: &mut F,
-    payload_size: usize,
+    payload_size: PayloadSize,
 ) -> Result<bool, io::Error> {
     file.seek(SeekFrom::Start(
-        file.len()? - bytes_per_metainfo(payload_size) as u64,
+        file.len()? - payload_size.metainfo_size() as u64,
     ))?;
-    let mut to_check = vec![0u8; bytes_per_metainfo(payload_size)];
+    let mut to_check = vec![0u8; payload_size.metainfo_size()];
     file.read_exact(&mut to_check)?;
-    let lines = to_check.chunks_exact(payload_size + 2);
+    let lines = to_check.chunks_exact(payload_size.line_size());
     let meta_section_start = lines
         .tuple_windows()
         .position(|(a, b)| (a[0..2] == META_PREAMBLE && b[0..2] == META_PREAMBLE));
 
     if let Some(pos) = meta_section_start {
         file.set_len(dbg!(
-            file.len()? - bytes_per_metainfo(payload_size) as u64
-                + pos as u64 * (payload_size + 2) as u64,
+            file.len()? - payload_size.metainfo_size() as u64
+                + pos as u64 * payload_size.line_size() as u64,
         ))?;
         Ok(true)
     } else {
@@ -212,9 +216,9 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
 
 fn repaired_is_only_meta<F: fmt::Debug + Read + Seek + SetLen>(
     file: &mut F,
-    payload_size: usize,
+    payload_size: PayloadSize,
 ) -> Result<bool, io::Error> {
-    Ok(if file.len()? <= bytes_per_metainfo(payload_size) as u64 {
+    Ok(if file.len()? <= payload_size.metainfo_size() as u64 {
         file.set_len(0)?;
         true
     } else {
@@ -294,19 +298,19 @@ pub(crate) fn lines_per_metainfo(payload_size: usize) -> usize {
     }
 }
 
-pub(crate) fn bytes_per_metainfo(payload_size: usize) -> usize {
-    lines_per_metainfo(payload_size) * (payload_size + 2)
-}
+// pub(crate) fn bytes_per_metainfo(payload_size: PayloadSize) -> usize {
+//     lines_per_metainfo(payload_size.0) * payload_size.line_size()
+// }
 
 /// returns number of bytes written
 #[instrument(level = "trace", skip(file_handle), ret)]
 pub(crate) fn write_meta(
     file_handle: &mut impl Write,
     meta: [u8; 8],
-    payload_size: usize,
+    payload_size: PayloadSize,
 ) -> std::io::Result<u64> {
     let t = meta;
-    let lines = match payload_size {
+    let lines = match payload_size.raw() {
         0 => {
             file_handle.write_all(&META_PREAMBLE)?;
             file_handle.write_all(&META_PREAMBLE)?;
@@ -348,7 +352,7 @@ pub(crate) fn write_meta(
             3
         }
         4.. => {
-            let mut line = vec![0; payload_size + 2];
+            let mut line = vec![0; payload_size.line_size()];
             line[0..2].copy_from_slice(&META_PREAMBLE);
             line[2..6].copy_from_slice(&[t[0], t[1], t[2], t[3]]);
             file_handle.write_all(&line)?;
@@ -358,7 +362,7 @@ pub(crate) fn write_meta(
             2
         }
     };
-    Ok(lines * (payload_size + 2) as u64)
+    Ok(lines * (payload_size.line_size()) as u64)
 }
 
 #[derive(Debug)]

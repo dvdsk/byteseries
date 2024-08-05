@@ -8,7 +8,7 @@ use std::path::Path;
 
 use tracing::instrument;
 
-use super::data::index::MetaPos;
+use super::data::index::{MetaPos, PayloadSize};
 use super::data::{self, Data};
 use super::DownSampled;
 use crate::seek::RoughPos;
@@ -106,7 +106,7 @@ where
         resampler: R,
         config: Config,
         source_path: &Path,
-        payload_size: usize,
+        payload_size: PayloadSize,
     ) -> Result<Self, data::CreateError> {
         let source_name = source_path.file_name().unwrap_or_default();
         let mut resampled_name = source_name.to_owned();
@@ -130,7 +130,7 @@ where
         config: Config,
         source_path: &Path,
         source: &mut Data,
-        payload_size: usize,
+        payload_size: PayloadSize,
     ) -> Result<Self, OpenError> {
         let source_name = source_path.file_name().unwrap_or_default();
         let mut resampled_name = source_name.to_owned();
@@ -159,7 +159,7 @@ where
         resampler: R,
         config: Config,
         source_path: &Path,
-        payload_size: usize,
+        payload_size: PayloadSize,
         source: &mut Data,
     ) -> Result<Self, CreateError> {
         let mut empty = Self::new(resampler, config, source_path, payload_size)
@@ -191,7 +191,7 @@ where
         resampler: R,
         config: Config,
         source_path: &Path,
-        payload_size: usize,
+        payload_size: PayloadSize,
         source: &mut Data,
     ) -> Result<Self, OpenOrCreateError> {
         match Self::open(

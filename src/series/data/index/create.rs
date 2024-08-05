@@ -7,12 +7,10 @@ use serde::Serialize;
 use tracing::instrument;
 
 use crate::file::{FileWithHeader, OffsetFile, OpenError};
-use crate::series::data::inline_meta::{
-    bytes_per_metainfo, read_meta, MetaResult, META_PREAMBLE,
-};
+use crate::series::data::inline_meta::{read_meta, MetaResult, META_PREAMBLE};
 use crate::Timestamp;
 
-use super::{Entry, Index};
+use super::{Entry, Index, PayloadSize};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -32,7 +30,7 @@ impl Index {
     #[instrument]
     pub(crate) fn create_from_byteseries<H>(
         byteseries: &mut OffsetFile,
-        payload_size: usize,
+        payload_size: PayloadSize,
         name: impl AsRef<Path> + fmt::Debug,
         header: H,
     ) -> Result<Self, Error>
@@ -77,7 +75,7 @@ pub enum ExtractingTsError {
 
 pub(crate) fn extract_entries(
     file: &mut OffsetFile,
-    payload_size: usize,
+    payload_size: PayloadSize,
 ) -> Result<Vec<Entry>, ExtractingTsError> {
     let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
     extract_entries_inner(file, payload_size, 0, data_len)
@@ -86,14 +84,14 @@ pub(crate) fn extract_entries(
 #[instrument]
 pub(crate) fn extract_entries_inner(
     file: &mut OffsetFile,
-    payload_size: usize,
+    payload_size: PayloadSize,
     start: u64,
     end: u64,
 ) -> Result<Vec<Entry>, ExtractingTsError> {
     let mut entries = Vec::new();
 
-    let chunk_size = 16384usize.next_multiple_of(payload_size + 2);
-    let overlap = bytes_per_metainfo(payload_size);
+    let chunk_size = 16384usize.next_multiple_of(payload_size.line_size());
+    let overlap = payload_size.metainfo_size();
 
     // do not init with zero or the initially empty overlap
     // will be seen as a full timestamp
@@ -111,7 +109,7 @@ pub(crate) fn extract_entries_inner(
         to_read -= read_size as u64;
 
         entries.extend(
-            meta(&buffer[..overlap + read_size], payload_size + 2, overlap)
+            meta(&buffer[..overlap + read_size], payload_size.line_size(), overlap)
                 .into_iter()
                 .map(|(pos, timestamp)| Entry {
                     timestamp,
@@ -127,12 +125,12 @@ pub(crate) fn extract_entries_inner(
 #[instrument]
 pub(crate) fn last_meta_timestamp(
     file: &mut OffsetFile,
-    payload_size: usize,
+    payload_size: PayloadSize,
 ) -> Result<Option<Timestamp>, ExtractingTsError> {
     let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
 
-    let window = 10_000u64.next_multiple_of(payload_size as u64 + 2);
-    let overlap = bytes_per_metainfo(payload_size);
+    let window = 10_000u64.next_multiple_of(payload_size.line_size() as u64);
+    let overlap = payload_size.metainfo_size();
     let mut start = data_len.saturating_sub(window);
 
     loop {
@@ -191,10 +189,10 @@ fn read_timestamp<'a>(
     mut chunks: impl Iterator<Item = &'a [u8]>,
     first_chunk: &'a [u8],
     next_chunk: &'a [u8],
-    payload_size: usize,
+    payload_size: PayloadSize,
 ) -> Option<u64> {
     let mut result = 0u64.to_le_bytes();
-    match payload_size {
+    match payload_size.raw() {
         0 => {
             result[0..2].copy_from_slice(chunks.next()?);
             result[2..4].copy_from_slice(chunks.next()?);

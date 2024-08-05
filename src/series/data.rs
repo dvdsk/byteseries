@@ -11,7 +11,7 @@ use crate::{Decoder, Pos, Timestamp};
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
 pub mod index;
-use index::{Index, LinePos};
+use index::{Index, LinePos, PayloadSize};
 
 use self::index::create::{self, last_meta_timestamp, ExtractingTsError};
 use self::inline_meta::{write_meta, SetLen};
@@ -23,7 +23,7 @@ pub(crate) struct Data {
     pub(crate) file_handle: FileWithInlineMeta<OffsetFile>,
     pub(crate) index: Index,
 
-    payload_size: usize,
+    payload_size: PayloadSize,
     /// current length of the data file in bytes
     pub(crate) data_len: u64,
     /// last timestamp in the data
@@ -97,7 +97,7 @@ impl Data {
     /// Will return an error if there already is a file
     pub(crate) fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
-        payload_size: usize,
+        payload_size: PayloadSize,
         header: H,
     ) -> Result<Self, CreateError>
     where
@@ -125,14 +125,14 @@ impl Data {
     #[instrument]
     pub(crate) fn open_existing<H>(
         name: impl AsRef<Path> + fmt::Debug,
-        payload_size: usize,
+        payload_size: PayloadSize,
     ) -> Result<(Data, H), OpenError>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
     {
         let file: FileWithHeader<H> = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries"),
-            payload_size + 2,
+            payload_size.line_size(),
         )
         .map_err(OpenError::File)?;
         let (file, header) = file.split_off_header();
@@ -140,7 +140,7 @@ impl Data {
         let mut file = FileWithInlineMeta::new(file, payload_size)
             .map_err(OpenError::CheckOrRepair)?;
         let data_len = file.file_handle.data_len().map_err(OpenError::GetLength)?;
-        let last_line_starts = data_len.checked_sub((payload_size + 2) as u64);
+        let last_line_starts = data_len.checked_sub((payload_size.line_size()) as u64);
         let last_full_ts_in_data = last_meta_timestamp(file.inner_mut(), payload_size)
             .map_err(OpenError::GetLastMeta)?;
         let index = match Index::open_existing(
@@ -257,9 +257,9 @@ impl Data {
             .write_all(&small_ts.to_le_bytes())
             .map_err(PushError::Write)?;
         self.file_handle
-            .write_all(&line[..self.payload_size])
+            .write_all(&line[..self.payload_size.raw()])
             .map_err(PushError::Write)?;
-        self.data_len += (self.payload_size + 2) as u64;
+        self.data_len += self.payload_size.line_size() as u64;
         self.last_time = Some(ts);
         Ok(())
     }
@@ -300,14 +300,14 @@ impl Data {
             .map_err(ReadError::Reading)
     }
 
-    pub(crate) fn payload_size(&self) -> usize {
+    pub(crate) fn payload_size(&self) -> PayloadSize {
         self.payload_size
     }
 
     pub(crate) fn last_line_start(&self) -> LinePos {
         // any metasection is written at the
         // same time and before a line. (they are 'atomic')
-        LinePos(self.data_len - (self.payload_size as u64 + 2))
+        LinePos(self.data_len - self.payload_size.line_size() as u64)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -326,7 +326,7 @@ impl Data {
 fn last_line<T>(
     index: &Index,
     data_len: u64,
-    payload_size: usize,
+    payload_size: PayloadSize,
     file_handle: &mut FileWithInlineMeta<OffsetFile>,
     decoder: &mut impl Decoder<Item = T>,
 ) -> Result<(Timestamp, T), ReadError> {
@@ -336,7 +336,7 @@ fn last_line<T>(
         first_full_ts: index.last_timestamp().ok_or(ReadError::NoData)?,
         // repair will have removed any trialing meta section, thus this
         // will always read an actual line and not part of metadata.
-        start: LinePos(data_len - (payload_size + 2) as u64),
+        start: LinePos(data_len - payload_size.line_size() as u64),
         end: data_len,
     };
     file_handle
