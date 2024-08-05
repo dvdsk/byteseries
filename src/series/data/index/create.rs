@@ -51,7 +51,7 @@ impl Index {
 
         for entry in entries {
             index
-                .update(entry.timestamp, entry.line_start)
+                .update(entry.timestamp, entry.meta_start)
                 .map_err(Error::Appending)?;
         }
 
@@ -115,7 +115,7 @@ pub(crate) fn extract_entries_inner(
                 .into_iter()
                 .map(|(pos, timestamp)| Entry {
                     timestamp,
-                    line_start: previously_read + pos as u64,
+                    meta_start: super::MetaPos(previously_read + pos as u64),
                 }),
         );
         previously_read += read_size as u64;

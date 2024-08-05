@@ -14,7 +14,6 @@ use crate::seek::{self, Estimate};
 use crate::{Decoder, Resampler, Timestamp};
 
 use self::data::inline_meta::bytes_per_metainfo;
-use self::data::ReadError;
 use self::downsample::DownSampledData;
 
 trait DownSampled: fmt::Debug + Send + 'static {
@@ -48,15 +47,15 @@ impl TimeRange {
             Self::Some(range) => Some(*range.end()),
         }
     }
-    fn from_data(data: &mut Data) -> Result<Self, ReadError> {
-        Ok(if let Some(first) = data.first_time() {
-            let last = data.last_time()?.expect(
+    fn from_data(data: &mut Data) -> Self {
+        if let Some(first) = data.first_time() {
+            let last = data.last_time().expect(
                 "if there is a first time there is a last (can be equal to first)",
             );
             Self::Some(first..=last)
         } else {
             Self::None
-        })
+        }
     }
 
     fn update(&mut self, new_ts: Timestamp) -> Result<(), Error> {
@@ -186,7 +185,7 @@ impl ByteSeries {
             Data::open_existing(name, payload_size).map_err(Error::Open)?;
 
         let bs = ByteSeries {
-            range: TimeRange::from_data(&mut data).map_err(Error::Reading)?,
+            range: TimeRange::from_data(&mut data),
             downsampled: Vec::new(),
             data,
         };
@@ -219,7 +218,7 @@ impl ByteSeries {
 
         Ok((
             ByteSeries {
-                range: TimeRange::from_data(&mut data).map_err(Error::Reading)?,
+                range: TimeRange::from_data(&mut data),
                 downsampled: resample_configs
                     .into_iter()
                     .map(|config| {
@@ -297,6 +296,7 @@ impl ByteSeries {
             );
             return Ok(());
         };
+        dbg!(&seek, self.data.payload_size());
 
         self.data
             .read_all(seek, decoder, timestamps, data)

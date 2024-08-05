@@ -8,6 +8,7 @@ use std::path::Path;
 
 use tracing::instrument;
 
+use super::data::index::MetaPos;
 use super::data::{self, Data};
 use super::DownSampled;
 use crate::seek::RoughPos;
@@ -140,7 +141,6 @@ where
 
         let (mut data, _): (_, String) =
             Data::open_existing(path, payload_size).map_err(OpenError::Data)?;
-        // repair::check_last_ts(&mut data, source, &config, payload_size + 2)?;
         repair::repair_missing_data(source, &mut data, &config, &mut resampler)
             .map_err(OpenError::Repair)?;
 
@@ -169,7 +169,7 @@ where
         };
 
         let seek = Pos {
-            start: 0,
+            start: MetaPos::ZERO.line_start(payload_size),
             end: source.data_len,
             first_full_ts: first_time,
         };
@@ -244,9 +244,8 @@ where
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
     ) -> Option<crate::seek::Estimate> {
-        RoughPos::new(&self.data, start, end).map(|seek| {
-            seek.estimate_lines(self.data.payload_size() + 2, self.data.data_len)
-        })
+        RoughPos::new(&self.data, start, end)
+            .map(|seek| seek.estimate_lines(self.data.payload_size(), self.data.data_len))
     }
 
     fn data_mut(&mut self) -> &mut Data {

@@ -48,6 +48,7 @@ impl<H> FileWithHeader<H>
 where
     H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
 {
+    /// Will return an error if the file already exists
     pub(crate) fn new(
         path: impl AsRef<Path>,
         user_header: H,

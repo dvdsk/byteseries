@@ -18,7 +18,7 @@ fn truncated_index(#[case] bytes_removed: u64) {
     const PAYLOAD_SIZE: usize = 0;
 
     let test_dir = TempDir::new().unwrap();
-    let test_path = test_dir.child("only_meta_section_in_file");
+    let test_path = test_dir.child("truncated_index");
     {
         let mut series = ByteSeries::new(&test_path, PAYLOAD_SIZE, ()).unwrap();
         series.push_line(42, vec![12; PAYLOAD_SIZE]).unwrap();

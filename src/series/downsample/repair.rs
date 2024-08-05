@@ -27,22 +27,23 @@ pub(super) fn repair_missing_data(
     config: &Config,
     resampler: &mut impl Resampler,
 ) -> Result<(), Error> {
-    let start_bound = match downsampled.last_time().unwrap() {
+    let start_bound = match dbg!(downsampled.last_time()) {
         Some(ts) => Bound::Excluded(ts),
         None => Bound::Unbounded,
     };
     let Some(seek) = RoughPos::new(source, start_bound, Bound::Unbounded)
-        .map(|p| p.refine(source))
+        .map(|p| dbg!(p).refine(source))
         .transpose()?
         .flatten()
     else {
         if !downsampled.is_empty() {
-            warn!("Repairing downsampled data cache, it has items while the source is empty");
+            warn!("Repairing downsampled data cache, it is not empty but the source is");
             downsampled.clear().map_err(Error::ClearingDownsampled)?;
         }
         return Ok(());
     };
 
+    dbg!(&seek);
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
     source

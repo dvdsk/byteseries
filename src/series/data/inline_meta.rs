@@ -15,26 +15,15 @@ pub(crate) struct FileWithInlineMeta<F: fmt::Debug> {
     pub(crate) line_size: usize,
 }
 
-pub(crate) fn lines_per_metainfo(payload_size: usize) -> usize {
-    let base_lines = 2; // needed to recognise meta section
-    let extra_lines_needed = match payload_size {
-        0 | 1 => 2,
-        2 | 3 => 1,
-        4.. => 0,
-    };
-    base_lines + extra_lines_needed
-}
-
-pub(crate) fn bytes_per_metainfo(payload_size: usize) -> usize {
-    lines_per_metainfo(payload_size) * (payload_size + 2)
-}
-
 pub(crate) trait SetLen {
     fn len(&self) -> Result<u64, std::io::Error>;
     fn set_len(&mut self, len: u64) -> Result<(), std::io::Error>;
 }
 
 impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
+    /// Will
+    ///  - truncate the file if it contains only metadata
+    ///  - remove a (partial) trailing metadata sections if there is one
     pub(crate) fn new(mut file: F, payload_size: usize) -> Result<Self, std::io::Error> {
         'check_and_repair: {
             if file.len()? == 0 {
@@ -102,11 +91,12 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         seek: Pos,
         mut processor: impl FnMut(Timestamp, &[u8]),
     ) -> Result<(), std::io::Error> {
-        let mut to_read = seek.end - seek.start;
+        let mut to_read = seek.end - seek.start.raw_offset();
         let chunk_size = 16384usize.next_multiple_of(self.line_size);
         let mut buf = vec![0; chunk_size];
 
-        self.file_handle.seek(SeekFrom::Start(seek.start))?;
+        self.file_handle
+            .seek(SeekFrom::Start(seek.start.raw_offset()))?;
 
         let mut needed_overlap = 0;
         let mut full_ts = seek.first_full_ts;
@@ -210,10 +200,10 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
         .position(|(a, b)| (a[0..2] == META_PREAMBLE && b[0..2] == META_PREAMBLE));
 
     if let Some(pos) = meta_section_start {
-        file.set_len(
+        file.set_len(dbg!(
             file.len()? - bytes_per_metainfo(payload_size) as u64
                 + pos as u64 * (payload_size + 2) as u64,
-        )?;
+        ))?;
         Ok(true)
     } else {
         Ok(false)
@@ -293,6 +283,19 @@ impl<F: Seek + fmt::Debug> Seek for FileWithInlineMeta<F> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         self.file_handle.seek(pos)
     }
+}
+
+pub(crate) fn lines_per_metainfo(payload_size: usize) -> usize {
+    match payload_size {
+        0 => 6,
+        1 => 4,
+        2 | 3 => 3,
+        4.. => 2,
+    }
+}
+
+pub(crate) fn bytes_per_metainfo(payload_size: usize) -> usize {
+    lines_per_metainfo(payload_size) * (payload_size + 2)
 }
 
 /// returns number of bytes written

@@ -111,9 +111,12 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
     let len = series_file.metadata().unwrap().len();
 
     let line_size = payload_size + 2;
-    let data_plus_all_but_first_meta_line = lines_per_metainfo(payload_size) + line_size;
+    let meta_section_without_last_line_size =
+        ((lines_per_metainfo(payload_size) - 1) * line_size) as u64;
+    // file is: <first_ts_meta> <ts=42> <last_ts_meta> <ts=100_000>;
+    // this is cut to <first_ts_meta> <ts=42> <one line of last_ts_meta>
     series_file
-        .set_len(len - data_plus_all_but_first_meta_line as u64)
+        .set_len(len - meta_section_without_last_line_size - line_size as u64)
         .unwrap();
 
     let (mut series, _) =

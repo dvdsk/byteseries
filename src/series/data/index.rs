@@ -2,21 +2,70 @@ use core::fmt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::{Read, Seek, Write};
+use std::ops::Sub;
 use std::path::Path;
 use tracing::instrument;
 
 use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::Timestamp;
 
-use super::inline_meta::{self, SetLen};
+use super::inline_meta::{bytes_per_metainfo, SetLen};
 use super::MAX_SMALL_TS;
 
 pub(crate) mod create;
 
+/// An offset from the start where a metaposition starts
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MetaPos(pub(crate) u64);
+
+impl MetaPos {
+    pub(crate) const ZERO: Self = Self(0);
+    pub(crate) fn line_start(&self, payload_size: usize) -> LinePos {
+        LinePos(self.0 + bytes_per_metainfo(payload_size) as u64)
+    }
+    pub(crate) fn to_le_bytes(self) -> [u8; 8] {
+        self.0.to_le_bytes()
+    }
+
+    pub(crate) fn raw_offset(&self) -> u64 {
+        self.0
+    }
+}
+
+impl Sub<MetaPos> for MetaPos {
+    type Output = u64;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.0 - rhs.0
+    }
+}
+
+/// Start of a line
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LinePos(pub(crate) u64);
+impl LinePos {
+    pub(crate) fn raw_offset(&self) -> u64 {
+        self.0
+    }
+    pub(crate) fn next_line_start(&self, payload_size: usize) -> Self {
+        Self(self.0 + payload_size as u64 + 2)
+    }
+}
+
+impl Sub<LinePos> for LinePos {
+    type Output = u64;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.0 - rhs.0
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Entry {
     pub timestamp: Timestamp,
-    pub line_start: u64,
+    /// the offset from the start where the meta section with the same timestamp
+    /// starts in the file
+    pub meta_start: MetaPos,
 }
 
 #[derive(Debug)]
@@ -30,67 +79,29 @@ pub(crate) struct Index {
 
 #[derive(Debug, Clone)]
 pub(crate) enum StartArea {
-    /// start timestamp is at exactly this point.
-    Found(u64),
-    /// start lies before first timestamp or end lies after last timestamp
-    /// # Note
-    /// This points to the meta position after which the relevant line lies
+    /// This line has the same time as the start time 
+    Found(LinePos),
+    /// start lies before first timestamp in data
     Clipped,
     /// start timestamp lies in section from this position till the end of the data
-    /// # Note
-    /// There is a meta section directly after the start position.
-    TillEnd(u64),
+    TillEnd(LinePos),
     /// start timestamp lies in between the first and second position
-    /// # Note
-    /// There is a meta section directly after the start position.
-    Window(u64, u64),
-    /// start lies before this point but we have no data from start till here
-    Gap { stops: u64 },
+    Window(LinePos, MetaPos),
+    /// start ts is in a data gap. We again have data starting after the end of
+    /// the gap (`stops`)
+    Gap { stops: LinePos },
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum EndArea {
-    /// Pos at which the end line ends
-    /// # Note
-    /// This points to the meta position after which the relevant line lies
-    Found(u64),
+    /// This line has the same time as the sought after end time
+    Found(LinePos),
     /// end timestamp lies in section from this position till the end of the data
-    /// # Note
-    /// There is a meta section directly after the start position.
-    TillEnd(u64),
+    TillEnd(LinePos),
     /// end timestamp lies in between the first and second position
-    /// # Note
-    /// There is a meta section directly after the start position.
-    Window(u64, u64),
+    Window(LinePos, MetaPos),
     /// end lies before this time/point however we have no data between here and it
-    Gap { start: u64 },
-}
-
-impl StartArea {
-    pub(crate) fn map(&self, mut op: impl FnMut(u64) -> u64) -> Self {
-        match self.clone() {
-            Self::Found(pos) => Self::Found(op(pos)),
-            Self::Clipped => Self::Clipped,
-            Self::TillEnd(x) => Self::TillEnd(op(x)),
-            Self::Window(x, y) => Self::Window(op(x), op(y)),
-            Self::Gap { stops: stops_at } => Self::Gap {
-                stops: op(stops_at),
-            },
-        }
-    }
-}
-
-impl EndArea {
-    pub(crate) fn map(&self, mut op: impl FnMut(u64) -> u64) -> Self {
-        match self.clone() {
-            Self::Found(pos) => Self::Found(op(pos)),
-            Self::TillEnd(x) => Self::TillEnd(op(x)),
-            Self::Window(x, y) => Self::Window(op(x), op(y)),
-            Self::Gap { start: starts_at } => Self::Gap {
-                start: op(starts_at),
-            },
-        }
-    }
+    Gap { start: MetaPos },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -164,7 +175,7 @@ impl Index {
                 let line_start = u64::from_le_bytes(line_start);
                 Entry {
                     timestamp,
-                    line_start,
+                    meta_start: MetaPos(line_start),
                 }
             })
             .collect();
@@ -179,19 +190,20 @@ impl Index {
         })
     }
 
+    /// `line_start` points to the start of the meta section in the dat file
     #[instrument(level = "trace", skip(self), ret)]
     pub(crate) fn update(
         &mut self,
         timestamp: u64,
-        line_start: u64,
+        meta_start: MetaPos,
     ) -> Result<(), std::io::Error> {
         let ts = timestamp;
         self.file.write_all(&ts.to_le_bytes())?;
-        self.file.write_all(&line_start.to_le_bytes())?;
+        self.file.write_all(&meta_start.to_le_bytes())?;
 
         self.entries.push(Entry {
             timestamp,
-            line_start,
+            meta_start,
         });
         self.last_timestamp = Some(timestamp);
         Ok(())
@@ -200,12 +212,18 @@ impl Index {
     #[instrument]
     pub(crate) fn start_search_bounds(
         &self,
-        start: Timestamp,
+        start_ts: Timestamp,
         payload_size: usize,
     ) -> (StartArea, Timestamp) {
-        let idx = self.entries.binary_search_by_key(&start, |e| e.timestamp);
+        let idx = self
+            .entries
+            .binary_search_by_key(&start_ts, |e| e.timestamp);
         let end = match idx {
-            Ok(i) => return (StartArea::Found(self.entries[i].line_start), start),
+            Ok(i) => {
+                let next_line_start =
+                    self.entries[i].meta_start.line_start(payload_size);
+                return (StartArea::Found(next_line_start), start_ts);
+            }
             Err(end) => end,
         };
 
@@ -214,33 +232,40 @@ impl Index {
         }
 
         if end == self.entries.len() {
+            let next_line_start = self
+                .entries
+                .last()
+                .unwrap()
+                .meta_start
+                .line_start(payload_size);
             return (
-                StartArea::TillEnd(self.entries.last().unwrap().line_start),
+                StartArea::TillEnd(next_line_start),
                 self.entries.last().unwrap().timestamp,
             );
         }
 
         //end is not 0 or 1 thus data[end] and data[end-1] exist
-        if in_gap(start, self.entries[end - 1].timestamp) {
+        if in_gap(start_ts, self.entries[end - 1].timestamp) {
             return (
                 StartArea::Gap {
-                    stops: self.entries[end].line_start,
+                    stops: self.entries[end]
+                        .meta_start
+                        .line_start(payload_size),
                 },
                 self.entries[end].timestamp,
             );
         }
 
-        let meta = inline_meta::bytes_per_metainfo(payload_size) as u64;
-        let start = self.entries[end - 1].line_start + meta;
-        let stop = self.entries[end].line_start - meta;
-        if start >= stop {
-            (
-                StartArea::Gap {
-                    stops: self.entries[end].line_start,
-                },
-                self.entries[end].timestamp,
-            )
+        if start_ts >= self.entries[end].timestamp {
+            let stop = self.entries[end]
+                .meta_start
+                .line_start(payload_size);
+            (StartArea::Gap { stops: stop }, self.entries[end].timestamp)
         } else {
+            let start = self.entries[end - 1]
+                .meta_start
+                .line_start(payload_size);
+            let stop = self.entries[end].meta_start;
             (
                 StartArea::Window(start, stop),
                 self.entries[end - 1].timestamp,
@@ -249,20 +274,18 @@ impl Index {
     }
     pub(crate) fn end_search_bounds(
         &self,
-        stop: Timestamp,
-        payload_len: usize,
+        end_ts: Timestamp,
+        payload_size: usize,
     ) -> (EndArea, Timestamp) {
-        let idx = self.entries.binary_search_by_key(&stop, |e| e.timestamp);
+        let idx = self.entries.binary_search_by_key(&end_ts, |e| e.timestamp);
         let end = match idx {
             Ok(i) => {
-                return (
-                    // entry marks start of end line, need end
-                    EndArea::Found(self.entries[i].line_start + payload_len as u64 + 2),
-                    self.entries[i].timestamp,
-                );
+                let pos = self.entries[i].meta_start.line_start(payload_size);
+                return (EndArea::Found(pos), self.entries[i].timestamp);
             }
             Err(end) => end,
         };
+
         assert!(
             end > 0,
             "end lying before start of data should be caught
@@ -275,36 +298,28 @@ impl Index {
                 .entries
                 .last()
                 .expect("Index always has one entry when the byteseries is not empty");
-            return (EndArea::TillEnd(last.line_start), last.timestamp);
+            let start = last.meta_start.line_start(payload_size);
+            return (EndArea::TillEnd(start), last.timestamp);
         }
 
         //end is not 0 or 1 thus data[end] and data[end-1] exist
-        if in_gap(stop, self.entries[end - 1].timestamp) {
+        if in_gap(end_ts, self.entries[end - 1].timestamp) {
             return (
                 EndArea::Gap {
-                    start: self.entries[end - 1].line_start,
+                    start: self.entries[end - 1].meta_start,
                 },
                 self.entries[end - 1].timestamp,
             );
         }
 
-        let start = self.entries[end - 1].line_start
-            + inline_meta::bytes_per_metainfo(payload_len) as u64;
-        let stop = self.entries[end].line_start
-            - inline_meta::bytes_per_metainfo(payload_len) as u64;
-        if start >= stop {
-            (
-                EndArea::Gap {
-                    start: self.entries[end - 1].line_start,
-                },
-                self.entries[end - 1].timestamp,
-            )
-        } else {
-            (
-                EndArea::Window(start, stop),
-                self.entries[end - 1].timestamp,
-            )
-        }
+        let start = self.entries[end - 1]
+            .meta_start
+            .line_start(payload_size);
+        let stop = self.entries[end].meta_start;
+        (
+            EndArea::Window(start, stop),
+            self.entries[end - 1].timestamp,
+        )
     }
     pub(crate) fn first_meta_timestamp(&self) -> Option<Timestamp> {
         self.entries.first().map(|e| e.timestamp)
@@ -315,10 +330,10 @@ impl Index {
     }
 
     #[instrument]
-    pub(crate) fn meta_ts_for(&self, line_start: u64) -> u64 {
+    pub(crate) fn meta_ts_for(&self, line_start: LinePos) -> u64 {
         match self
             .entries
-            .binary_search_by_key(&line_start, |entry| entry.line_start)
+            .binary_search_by_key(&line_start.0, |entry| entry.meta_start.0)
         {
             Ok(idx) => self.entries[idx].timestamp,
             // inserting at idx would keep the list sorted, so the full timestamp
@@ -342,8 +357,14 @@ fn in_gap(val: Timestamp, gap_start: Timestamp) -> bool {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CheckAndRepairError {
-    #[error("The index is missing items")]
-    IndexMissesItems,
+    #[error(
+        "The last item in the index does not match the last in the file.\
+        last timestamp in data: {last_ts_in_data}, in index: {last_ts_in_index}"
+    )]
+    IndexLastTimeMismatch {
+        last_ts_in_index: Timestamp,
+        last_ts_in_data: Timestamp,
+    },
     #[error("Could not repair the index by truncating it: {0}")]
     Truncate(std::io::Error),
     #[error("Could not check the index, failed to get its length: {0}")]
@@ -356,7 +377,7 @@ pub enum CheckAndRepairError {
 
 /// repairs only failed writes not user induced damage
 /// such as purposefully truncating files
-#[instrument(err)]
+#[instrument]
 pub(crate) fn check_and_repair(
     file: &mut OffsetFile,
     last_line_in_data_start: Option<u64>,
@@ -367,16 +388,17 @@ pub(crate) fn check_and_repair(
         file.set_len(0).map_err(CheckAndRepairError::Truncate)?;
         return Ok(());
     };
+
     let rest = len % 16;
     let uncorrupted_len = len - rest;
     file.set_len(uncorrupted_len)
         .map_err(CheckAndRepairError::Truncate)?;
-
     file.seek(std::io::SeekFrom::End(-16))
         .map_err(CheckAndRepairError::Seek)?;
     let mut last_entry = vec![0u8; 16];
     file.read_exact(&mut last_entry)
         .map_err(CheckAndRepairError::Read)?;
+
     let last_full_ts: [u8; 8] = last_entry[0..8].try_into().expect("just read 16 bytes");
     let last_full_ts = u64::from_le_bytes(last_full_ts);
     let last_line_start: [u8; 8] =
@@ -396,9 +418,13 @@ pub(crate) fn check_and_repair(
         "last time in the data since last_line_in_data_start is not None \
          so there is at least one time in the data",
     );
+
     if last_full_ts_in_data == last_full_ts {
         Ok(())
     } else {
-        Err(CheckAndRepairError::IndexMissesItems)
+        Err(CheckAndRepairError::IndexLastTimeMismatch {
+            last_ts_in_index: last_full_ts,
+            last_ts_in_data: last_full_ts_in_data,
+        })
     }
 }

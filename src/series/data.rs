@@ -11,7 +11,7 @@ use crate::{Decoder, Pos, Timestamp};
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
 pub mod index;
-use index::Index;
+use index::{Index, LinePos};
 
 use self::index::create::{self, last_meta_timestamp, ExtractingTsError};
 use self::inline_meta::{write_meta, SetLen};
@@ -26,6 +26,8 @@ pub(crate) struct Data {
     payload_size: usize,
     /// current length of the data file in bytes
     pub(crate) data_len: u64,
+    /// last timestamp in the data
+    last_time: Option<Timestamp>,
 }
 
 #[derive(Debug)]
@@ -37,13 +39,13 @@ impl Decoder for EmptyDecoder {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
-    #[error("{0}")]
+    #[error("Could not create the data file: {0}")]
     File(file::OpenError),
     #[error("Could not check file for integrity or repair it: {0}")]
     CheckOrRepair(std::io::Error),
-    #[error("{0}")]
+    #[error("Could not create the index file: {0}")]
     Index(file::OpenError),
-    #[error("{0}")]
+    #[error("Failed to get the length of the data: {0}")]
     GetLength(std::io::Error),
 }
 
@@ -62,6 +64,8 @@ pub enum OpenError {
         index integrity: {0}"
     )]
     GetLastMeta(ExtractingTsError),
+    #[error("Could not read the last line to get the last time in Data: {0}")]
+    ReadLastTime(ReadError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -74,6 +78,8 @@ pub enum PushError {
     Index(std::io::Error),
     #[error("Could not append new data to file")]
     Write(std::io::Error),
+    #[error("Can only append items newer then the last")]
+    OutOfOrder { last: Timestamp, item: Timestamp },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -88,6 +94,7 @@ impl Data {
     /// # Errors
     ///
     /// See the [`CreateError`] docs for an exhaustive list of everything that can go wrong.
+    /// Will return an error if there already is a file
     pub(crate) fn new<H>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
@@ -111,6 +118,7 @@ impl Data {
             index,
             payload_size,
             data_len,
+            last_time: None,
         })
     }
 
@@ -152,12 +160,22 @@ impl Data {
                 )?
             }
         };
+        dbg!(&index);
+
+        let last_time =
+            match last_line(&index, data_len, payload_size, &mut file, &mut EmptyDecoder)
+            {
+                Ok((time, _)) => Some(time),
+                Err(ReadError::NoData) => None,
+                Err(other) => return Err(OpenError::ReadLastTime(other)),
+            };
 
         let data = Self {
             file_handle: file,
             index,
             payload_size,
             data_len,
+            last_time,
         };
         Ok((data, header))
     }
@@ -170,35 +188,23 @@ impl Data {
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
     ) -> Result<(Timestamp, T), ReadError> {
-        let mut timestamps = Vec::new();
-        let mut data = Vec::new();
-        let seek = Pos {
-            first_full_ts: self.index.last_timestamp().ok_or(ReadError::NoData)?,
-            start: self.data_len - (self.payload_size + 2) as u64,
-            end: self.data_len,
-        };
-        self.file_handle
-            .read(decoder, &mut timestamps, &mut data, seek)
-            .map_err(ReadError::Reading)?;
-
-        let ts = timestamps.pop().ok_or(ReadError::NoData)?;
-        let item = data.pop().ok_or(ReadError::NoData)?;
-
-        Ok((ts, item))
+        last_line(
+            &self.index,
+            self.data_len,
+            self.payload_size,
+            &mut self.file_handle,
+            decoder,
+        )
     }
 
     #[instrument]
-    pub(crate) fn first_time(&mut self) -> Option<Timestamp> {
+    pub(crate) fn first_time(&self) -> Option<Timestamp> {
         self.index.first_meta_timestamp()
     }
 
     #[instrument]
-    pub(crate) fn last_time(&mut self) -> Result<Option<Timestamp>, ReadError> {
-        match self.last_line(&mut EmptyDecoder) {
-            Ok((ts, ())) => Ok(Some(ts)),
-            Err(ReadError::NoData) => Ok(None),
-            Err(other) => Err(other),
-        }
+    pub(crate) fn last_time(&self) -> Option<Timestamp> {
+        self.last_time
     }
 
     /// Append data to disk but do not flush, a crash can still lead to the data
@@ -216,12 +222,12 @@ impl Data {
             .index
             .last_timestamp()
             .map(|last_timestamp| {
-                ts.checked_sub(last_timestamp).expect(
-                    "impossible for last_timestamp to be later (bigger) then new, \
-                    since new timestamp is verified to be later then the last \
-                    in Byteseries::push_line",
-                )
+                ts.checked_sub(last_timestamp).ok_or(PushError::OutOfOrder {
+                    last: last_timestamp,
+                    item: ts,
+                })
             })
+            .transpose()?
             .and_then(|diff| {
                 if diff > MAX_SMALL_TS {
                     None
@@ -238,7 +244,7 @@ impl Data {
                 , timestamp: {ts}"
             );
             self.index
-                .update(ts, self.data_len)
+                .update(ts, index::MetaPos(self.data_len))
                 .map_err(PushError::Index)?;
             let meta = ts.to_le_bytes();
             let written = write_meta(&mut self.file_handle, meta, self.payload_size)
@@ -254,6 +260,7 @@ impl Data {
             .write_all(&line[..self.payload_size])
             .map_err(PushError::Write)?;
         self.data_len += (self.payload_size + 2) as u64;
+        self.last_time = Some(ts);
         Ok(())
     }
 
@@ -297,8 +304,10 @@ impl Data {
         self.payload_size
     }
 
-    pub(crate) fn last_line_start(&self) -> u64 {
-        self.data_len - (self.payload_size as u64 + 2)
+    pub(crate) fn last_line_start(&self) -> LinePos {
+        // any metasection is written at the
+        // same time and before a line. (they are 'atomic')
+        LinePos(self.data_len - (self.payload_size as u64 + 2))
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -311,4 +320,31 @@ impl Data {
         self.data_len = 0;
         Ok(())
     }
+}
+
+// not member of Data since we need it for Data's initialization
+fn last_line<T>(
+    index: &Index,
+    data_len: u64,
+    payload_size: usize,
+    file_handle: &mut FileWithInlineMeta<OffsetFile>,
+    decoder: &mut impl Decoder<Item = T>,
+) -> Result<(Timestamp, T), ReadError> {
+    let mut timestamps = Vec::new();
+    let mut data = Vec::new();
+    let seek = Pos {
+        first_full_ts: index.last_timestamp().ok_or(ReadError::NoData)?,
+        // repair will have removed any trialing meta section, thus this
+        // will always read an actual line and not part of metadata.
+        start: LinePos(data_len - (payload_size + 2) as u64),
+        end: data_len,
+    };
+    file_handle
+        .read(decoder, &mut timestamps, &mut data, seek)
+        .map_err(ReadError::Reading)?;
+
+    let ts = timestamps.pop().ok_or(ReadError::NoData)?;
+    let item = data.pop().ok_or(ReadError::NoData)?;
+
+    Ok((ts, item))
 }
