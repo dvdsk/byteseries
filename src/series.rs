@@ -305,6 +305,32 @@ impl ByteSeries {
             .map_err(Error::Reading)
     }
 
+    /// Will return zero if there is nothing to read between the given points.
+    ///
+    /// # Errors
+    ///
+    /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
+    /// Its mostly io-errors
+    ///
+    /// # Panics
+    pub fn n_lines_between(
+        &mut self,
+        range: impl RangeBounds<Timestamp>,
+    ) -> Result<u64, Error> {
+        let start = range.start_bound().cloned();
+        let end = range.end_bound().cloned();
+        self.check_range(start, end).map_err(Error::InvalidRange)?;
+
+        Ok(seek::RoughPos::new(&self.data, start, end)
+            .expect(
+                "check range catches the undownsampled file missing data \
+                and downsampled are not selected if their `estimate_lines` is None ",
+            )
+            .refine(&mut self.data)
+            .map_err(Error::Seeking)?
+            .map(|pos| pos.lines(&mut self.data))
+            .unwrap_or(0))
+    }
     /// Will return between zero and two times `n` samples
     ///
     /// This might read more but will resample down using averages.

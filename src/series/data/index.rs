@@ -86,13 +86,22 @@ pub(crate) struct Entry {
     pub meta_start: MetaPos,
 }
 
-#[derive(Debug)]
 pub(crate) struct Index {
     pub(crate) file: OffsetFile,
 
     entries: Vec<Entry>,
     /// time for next point is 1 larger the this
     last_timestamp: Option<Timestamp>,
+}
+
+impl fmt::Debug for Index {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Index")
+            .field("file", &self.file)
+            .field("# entries", &self.entries.len())
+            .field("last_timestamp", &self.last_timestamp)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
