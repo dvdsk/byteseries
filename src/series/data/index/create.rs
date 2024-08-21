@@ -2,8 +2,6 @@ use core::fmt;
 use std::io::{Read, Seek};
 use std::path::Path;
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use tracing::instrument;
 
 use crate::file::{FileWithHeader, OffsetFile, OpenError};

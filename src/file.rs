@@ -1,13 +1,10 @@
-use core::{fmt, mem};
+use core::mem;
 use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::{self, SeekFrom};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
-use ron::ser::PrettyConfig;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use tracing::instrument;
 
 use crate::series::data::inline_meta::SetLen;

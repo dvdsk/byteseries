@@ -1,11 +1,9 @@
 use core::fmt;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::io::Write;
 use std::path::Path;
 use tracing::{instrument, warn};
 
-use crate::file::{self, FileWithHeader, HeaderDeserErr, OffsetFile};
+use crate::file::{self, FileWithHeader, OffsetFile};
 use crate::{Decoder, Pos, Timestamp};
 
 pub(crate) mod inline_meta;
@@ -102,7 +100,7 @@ impl Data {
     ) -> Result<Self, CreateError> {
         let file = FileWithHeader::new(
             name.as_ref().with_extension("byteseries"),
-            header.clone(),
+            header,
         )
         .map_err(CreateError::File)?;
         let (file_handle, _) = file.split_off_header();
