@@ -115,7 +115,7 @@ where
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
         Ok(Self {
-            data: Data::new(path, payload_size, config.header(source_name))?,
+            data: Data::new(path, payload_size, config.header(source_name).as_bytes())?,
             resample_state: resampler.state(),
             resampler,
             config,
@@ -139,8 +139,9 @@ where
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
 
-        let (mut data, _): (_, String) =
-            Data::open_existing(path, payload_size).map_err(OpenError::Data)?;
+        let mut data = Data::open_existing(path, payload_size)
+            .map_err(OpenError::Data)?
+            .0;
         repair::repair_missing_data(source, &mut data, &config, &mut resampler)
             .map_err(OpenError::Repair)?;
 

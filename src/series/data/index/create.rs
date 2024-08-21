@@ -28,17 +28,14 @@ pub enum Error {
 
 impl Index {
     #[instrument]
-    pub(crate) fn create_from_byteseries<H>(
+    pub(crate) fn create_from_byteseries(
         byteseries: &mut OffsetFile,
         payload_size: PayloadSize,
         name: impl AsRef<Path> + fmt::Debug,
-        header: H,
-    ) -> Result<Self, Error>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
-    {
+        header: &[u8],
+    ) -> Result<Self, Error> {
         let temp_path = name.as_ref().with_extension("byteseries_index.part");
-        let index_file: FileWithHeader<H> = FileWithHeader::new(&temp_path, header)?;
+        let index_file = FileWithHeader::new(&temp_path, &header)?;
         let entries = extract_entries(byteseries, payload_size)?;
 
         let mut index = Self {
@@ -109,12 +106,16 @@ pub(crate) fn extract_entries_inner(
         to_read -= read_size as u64;
 
         entries.extend(
-            meta(&buffer[..overlap + read_size], payload_size.line_size(), overlap)
-                .into_iter()
-                .map(|(pos, timestamp)| Entry {
-                    timestamp,
-                    meta_start: super::MetaPos(previously_read + pos as u64),
-                }),
+            meta(
+                &buffer[..overlap + read_size],
+                payload_size.line_size(),
+                overlap,
+            )
+            .into_iter()
+            .map(|(pos, timestamp)| Entry {
+                timestamp,
+                meta_start: super::MetaPos(previously_read + pos as u64),
+            }),
         );
         previously_read += read_size as u64;
     }

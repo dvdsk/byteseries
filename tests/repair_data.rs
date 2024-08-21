@@ -1,3 +1,5 @@
+use std::fs;
+
 use byteseries::seek::Error;
 use byteseries::ByteSeries;
 use rstest::rstest;
@@ -126,4 +128,27 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
         .unwrap();
     assert_eq!(&timestamps, &[42]);
+}
+
+#[test]
+fn problematic_file() {
+    setup_tracing();
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("problematic_file");
+
+    let test_copy_data = test_path.with_extension("byteseries");
+    let test_copy_index = test_path.with_extension("byteseries_index");
+
+    fs::copy("tests/assets/problematic_file.byteseries", test_copy_data).unwrap();
+    fs::copy("tests/assets/problematic_file.byteseries_index", test_copy_index).unwrap();
+
+    let payload_size = 3;
+    let (mut series, _) =
+        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
+    // let mut timestamps = Vec::new();
+    // series
+    //     .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
+    //     .unwrap();
+    // assert_eq!(&timestamps, &[42]);
 }

@@ -118,14 +118,11 @@ pub enum Error {
 
 impl ByteSeries {
     #[instrument]
-    pub fn new<H>(
+    pub fn new(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
-        header: H,
-    ) -> Result<ByteSeries, Error>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
-    {
+        header: &[u8],
+    ) -> Result<ByteSeries, Error> {
         Self::new_with_resamplers(
             name,
             payload_size,
@@ -136,15 +133,14 @@ impl ByteSeries {
     }
 
     #[instrument]
-    pub fn new_with_resamplers<H, R>(
+    pub fn new_with_resamplers<R>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
-        header: H,
+        header: &[u8],
         resampler: R,
         resample_configs: Vec<downsample::Config>,
     ) -> Result<ByteSeries, Error>
     where
-        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
@@ -175,13 +171,10 @@ impl ByteSeries {
 
     /// line size in bytes, path is *without* any extension
     #[instrument]
-    pub fn open_existing<H>(
+    pub fn open_existing(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
-    ) -> Result<(ByteSeries, H), Error>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
-    {
+    ) -> Result<(ByteSeries, Vec<u8>), Error> {
         let payload_size = PayloadSize::from_raw(payload_size);
         let (mut data, header) =
             Data::open_existing(name, payload_size).map_err(Error::Open)?;
@@ -209,7 +202,7 @@ impl ByteSeries {
         payload_size: usize,
         resampler: R,
         resample_configs: Vec<downsample::Config>,
-    ) -> Result<(ByteSeries, H), Error>
+    ) -> Result<(ByteSeries, Vec<u8>), Error>
     where
         H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
         R: Resampler + Clone + Send + 'static,

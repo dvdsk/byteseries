@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 use tracing::{instrument, warn};
 
-use crate::file::{self, FileWithHeader, OffsetFile};
+use crate::file::{self, FileWithHeader, HeaderDeserErr, OffsetFile};
 use crate::{Decoder, Pos, Timestamp};
 
 pub(crate) mod inline_meta;
@@ -95,14 +95,11 @@ impl Data {
     ///
     /// See the [`CreateError`] docs for an exhaustive list of everything that can go wrong.
     /// Will return an error if there already is a file
-    pub(crate) fn new<H>(
+    pub(crate) fn new(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: PayloadSize,
-        header: H,
-    ) -> Result<Self, CreateError>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
-    {
+        header: &[u8],
+    ) -> Result<Self, CreateError> {
         let file = FileWithHeader::new(
             name.as_ref().with_extension("byteseries"),
             header.clone(),
@@ -123,14 +120,11 @@ impl Data {
     }
 
     #[instrument]
-    pub(crate) fn open_existing<H>(
+    pub(crate) fn open_existing(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: PayloadSize,
-    ) -> Result<(Data, H), OpenError>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
-    {
-        let file: FileWithHeader<H> = FileWithHeader::open_existing(
+    ) -> Result<(Data, Vec<u8>), OpenError> {
+        let file = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries"),
             payload_size.line_size(),
         )
@@ -156,7 +150,7 @@ impl Data {
                     file.inner_mut(),
                     payload_size,
                     name,
-                    header.clone(),
+                    &header,
                 )?
             }
         };

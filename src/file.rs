@@ -18,17 +18,22 @@ pub enum OpenError {
     Io(#[from] std::io::Error),
     #[error("Can not create new file, one already exists")]
     AlreadyExists,
-    #[error("Failed to deserialize header: {0}")]
-    CorruptHeader(#[from] ron::error::SpannedError),
     #[error("Could not serialize the header to a ron encoded string: {0}")]
     SerializingHeader(ron::Error),
     #[error("Max size for a header is around 2^16, the provided header is too large")]
     HeaderTooLarge,
 }
 
-pub(crate) struct FileWithHeader<T> {
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[error("Failed to deserialize header: {error}")]
+pub struct HeaderDeserErr {
+    error: ron::error::SpannedError,
+    header: Vec<u8>,
+}
+
+pub(crate) struct FileWithHeader {
     pub(crate) handle: File,
-    pub(crate) user_header: T,
+    pub(crate) user_header: Vec<u8>,
     /// data starts at this offset from the start
     pub(crate) data_offset: u64,
 }
@@ -44,15 +49,12 @@ pub(crate) const USER_HEADER_STARTS: usize = LINE_ENDS.len() + mem::size_of::<u1
 ///
 /// takes care to disregard the header for this
 
-impl<H> FileWithHeader<H>
-where
-    H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
-{
+impl FileWithHeader {
     /// Will return an error if the file already exists
     pub(crate) fn new(
         path: impl AsRef<Path>,
-        user_header: H,
-    ) -> Result<FileWithHeader<H>, OpenError> {
+        user_header: &[u8],
+    ) -> Result<FileWithHeader, OpenError> {
         let mut file = match OpenOptions::new()
             .read(true)
             .append(true)
@@ -62,23 +64,20 @@ where
             Ok(file) => file,
             Err(err) => return Err(err)?,
         };
-        let config = PrettyConfig::new();
-        let encoded_user_header = ron::ser::to_string_pretty(&user_header, config)
-            .map_err(OpenError::SerializingHeader)?;
-        let user_header_len: u16 = encoded_user_header
+        let user_header_len: u16 = user_header
             .len()
             .try_into()
             .map_err(|_| OpenError::HeaderTooLarge)?;
         file.write_all(&user_header_len.to_le_bytes())?;
         file.write_all(LINE_ENDS)?;
-        file.write_all(encoded_user_header.as_bytes())?;
+        file.write_all(user_header)?;
 
         let len = LINE_ENDS.len() as u64
             + mem::size_of_val(&user_header_len) as u64
             + u64::from(user_header_len);
         Ok(FileWithHeader {
             handle: file,
-            user_header,
+            user_header: user_header.to_vec(),
             data_offset: len,
         })
     }
@@ -87,10 +86,7 @@ where
     pub(crate) fn open_existing(
         path: PathBuf,
         line_size: usize,
-    ) -> Result<FileWithHeader<H>, OpenError>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
-    {
+    ) -> Result<FileWithHeader, OpenError> {
         let mut file = OpenOptions::new()
             .read(true)
             .append(true)
@@ -104,7 +100,11 @@ where
         let mut user_header = vec![0; user_header_len as usize];
         file.seek(std::io::SeekFrom::Start(USER_HEADER_STARTS as u64))?;
         file.read_exact(&mut user_header)?;
-        let user_header = ron::de::from_bytes(&user_header)?;
+        // let user_header =
+        //     ron::de::from_bytes(&user_header).map_err(|error| HeaderDeserErr {
+        //         error,
+        //         header: user_header,
+        //     });
         let header_len = user_header_len as usize
             + LINE_ENDS.len()
             + mem::size_of_val(&user_header_len);
@@ -132,7 +132,7 @@ where
         })
     }
 
-    pub(crate) fn split_off_header(self) -> (OffsetFile, H) {
+    pub(crate) fn split_off_header(self) -> (OffsetFile, Vec<u8>) {
         (
             OffsetFile {
                 handle: self.handle,

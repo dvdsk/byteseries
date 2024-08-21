@@ -1,6 +1,4 @@
 use core::fmt;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::io::{Read, Seek, Write};
 use std::ops::Sub;
 use std::path::Path;
@@ -145,14 +143,11 @@ pub enum OpenError {
 
 impl Index {
     #[instrument]
-    pub(crate) fn new<H>(
+    pub(crate) fn new(
         name: impl AsRef<Path> + fmt::Debug,
-        user_header: H,
-    ) -> Result<Index, file::OpenError>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + 'static + Clone,
-    {
-        let file: FileWithHeader<H> = FileWithHeader::new(
+        user_header: &[u8],
+    ) -> Result<Index, file::OpenError> {
+        let file = FileWithHeader::new(
             name.as_ref().with_extension("byteseries_index"),
             user_header,
         )?;
@@ -165,16 +160,13 @@ impl Index {
         })
     }
     #[instrument]
-    pub(crate) fn open_existing<H>(
+    pub(crate) fn open_existing(
         name: impl AsRef<Path> + fmt::Debug,
-        user_header: &H,
+        user_header: &[u8],
         last_line_in_data_start: Option<u64>,
         last_full_ts_in_data: Option<Timestamp>,
-    ) -> Result<Index, OpenError>
-    where
-        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
-    {
-        let file: FileWithHeader<H> = FileWithHeader::open_existing(
+    ) -> Result<Index, OpenError> {
+        let file = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries_index"),
             16,
         )
