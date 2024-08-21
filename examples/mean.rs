@@ -13,7 +13,7 @@
 fn main() {
     todo!()
     //     let mut decoder = TestDecoder {};
-    //     let mut ts = ByteSeries::new("examples/data/4", 24, ()).unwrap();
+    //     let mut ts = ByteSeries::new("examples/data/4", 24, &[]).unwrap();
     //     let (endtime, _data) = ts.last_line(&mut decoder).unwrap();
     //
     //     let bin = combiners::SampleBin::new(5);

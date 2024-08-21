@@ -29,7 +29,7 @@ fn no_downsampled_cache(
 ) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_no_downsample_cache");
-    let mut bs = ByteSeries::new(test_path, 4, ()).unwrap();
+    let mut bs = ByteSeries::new(test_path, 4, &[]).unwrap();
     insert_lines(&mut bs, n_lines, T1, T2);
 
     let mut timestamps = Vec::new();
@@ -52,7 +52,7 @@ fn ideal_downsampled_cache() {
     let mut bs = ByteSeries::new_with_resamplers(
         test_path,
         4,
-        (),
+        &[],
         FloatResampler,
         vec![downsample::Config {
             max_gap: None,
@@ -81,7 +81,7 @@ fn with_cache_same_as_without() {
         let mut bs = ByteSeries::new_with_resamplers(
             &test_path,
             4,
-            (),
+            &[],
             FloatResampler,
             Vec::new(),
         )
@@ -101,7 +101,7 @@ fn with_cache_same_as_without() {
     let mut timestamps_with_cache = Vec::new();
     let mut data_with_cache = Vec::new();
     {
-        let (mut bs, _): (_, ()) = ByteSeries::open_existing_with_resampler(
+        let mut bs = ByteSeries::open_existing_with_resampler(
             test_path,
             4,
             FloatResampler,
@@ -110,7 +110,8 @@ fn with_cache_same_as_without() {
                 bucket_size: 10,
             }],
         )
-        .unwrap();
+        .unwrap()
+        .0;
         bs.range().unwrap();
 
         bs.read_n(
@@ -151,7 +152,7 @@ fn undamaged_downsampled_passes_checks(#[case] lines_more_then_bucket_size: u64)
         let mut bs = ByteSeries::new_with_resamplers(
             &test_path,
             4,
-            (),
+            &[],
             FloatResampler,
             resample_configs.clone(),
         )
@@ -159,7 +160,7 @@ fn undamaged_downsampled_passes_checks(#[case] lines_more_then_bucket_size: u64)
         insert_lines(&mut bs, 10 + lines_more_then_bucket_size, T1, T2);
     }
 
-    let _bs = ByteSeries::open_existing_with_resampler::<(), FloatResampler>(
+    let _bs = ByteSeries::open_existing_with_resampler(
         test_path,
         4,
         FloatResampler,

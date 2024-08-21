@@ -7,8 +7,6 @@ use std::path::Path;
 use data::index::PayloadSize;
 use data::Data;
 use itertools::Itertools;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use tracing::instrument;
 
 use crate::seek::{self, Estimate};
@@ -197,14 +195,13 @@ impl ByteSeries {
     /// exceedingly rare. Please let me know if this hits you and I'll see into
     /// fixing this behaviour.
     #[instrument]
-    pub fn open_existing_with_resampler<H, R>(
+    pub fn open_existing_with_resampler<R>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
         resampler: R,
         resample_configs: Vec<downsample::Config>,
     ) -> Result<(ByteSeries, Vec<u8>), Error>
     where
-        H: DeserializeOwned + Serialize + fmt::Debug + PartialEq + 'static + Clone,
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {

@@ -34,7 +34,7 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("only_meta_section_in_file");
     {
-        let mut series = ByteSeries::new(&test_path, payload_size, ()).unwrap();
+        let mut series = ByteSeries::new(&test_path, payload_size, &[]).unwrap();
         series.push_line(42, vec![12; payload_size]).unwrap();
     }
 
@@ -47,8 +47,9 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
         .set_len(bytes_per_metainfo(payload_size) as u64)
         .unwrap();
 
-    let (mut series, _) =
-        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
+    let mut series = ByteSeries::open_existing(test_path, payload_size)
+        .unwrap()
+        .0;
     let mut timestamps = Vec::new();
     let res = series
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
@@ -70,7 +71,7 @@ fn partial_meta_at_end(#[case] payload_size: usize) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("partial_meta_at_end");
     {
-        let mut series = ByteSeries::new(&test_path, payload_size, ()).unwrap();
+        let mut series = ByteSeries::new(&test_path, payload_size, &[]).unwrap();
         series.push_line(42, vec![15; payload_size]).unwrap();
         series.push_line(100_000, vec![16; payload_size]).unwrap();
     }
@@ -83,8 +84,9 @@ fn partial_meta_at_end(#[case] payload_size: usize) {
     let len = series_file.metadata().unwrap().len();
     series_file.set_len(len - 4).unwrap();
 
-    let (mut series, _) =
-        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
+    let mut series = ByteSeries::open_existing(test_path, payload_size)
+        .unwrap()
+        .0;
     let mut timestamps = Vec::new();
     series
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
@@ -100,7 +102,7 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("meta_start_as_last_line");
     {
-        let mut series = ByteSeries::new(&test_path, payload_size, ()).unwrap();
+        let mut series = ByteSeries::new(&test_path, payload_size, &[]).unwrap();
         series.push_line(42, vec![15; payload_size]).unwrap();
         series.push_line(100_000, vec![16; payload_size]).unwrap();
     }
@@ -121,34 +123,12 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
         .set_len(len - meta_section_without_last_line_size - line_size as u64)
         .unwrap();
 
-    let (mut series, _) =
-        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
+    let mut series = ByteSeries::open_existing(test_path, payload_size)
+        .unwrap()
+        .0;
     let mut timestamps = Vec::new();
     series
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
         .unwrap();
     assert_eq!(&timestamps, &[42]);
-}
-
-#[test]
-fn problematic_file() {
-    setup_tracing();
-
-    let test_dir = TempDir::new().unwrap();
-    let test_path = test_dir.child("problematic_file");
-
-    let test_copy_data = test_path.with_extension("byteseries");
-    let test_copy_index = test_path.with_extension("byteseries_index");
-
-    fs::copy("tests/assets/problematic_file.byteseries", test_copy_data).unwrap();
-    fs::copy("tests/assets/problematic_file.byteseries_index", test_copy_index).unwrap();
-
-    let payload_size = 3;
-    let (mut series, _) =
-        ByteSeries::open_existing::<()>(test_path, payload_size).unwrap();
-    // let mut timestamps = Vec::new();
-    // series
-    //     .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
-    //     .unwrap();
-    // assert_eq!(&timestamps, &[42]);
 }

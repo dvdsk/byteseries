@@ -29,7 +29,7 @@ fn compare_written_to_read() {
     let timestamp = 1719330938;
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append_hashes_then_verify");
-    let mut series = ByteSeries::new(test_path, 8, ()).unwrap();
+    let mut series = ByteSeries::new(test_path, 8, &[]).unwrap();
     insert_timestamps(&mut series, NUMBER_TO_INSERT as u32, PERIOD, timestamp);
 
     let t1 = timestamp;
@@ -55,7 +55,7 @@ fn append_refused_if_time_old() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("append_refused_if_time_old");
-    let mut bs = ByteSeries::new(&test_path, 0, ()).unwrap();
+    let mut bs = ByteSeries::new(&test_path, 0, &[]).unwrap();
     bs.push_line(1, &[]).unwrap();
     bs.push_line(2, &[]).unwrap();
     bs.push_line(3, &[]).unwrap();
@@ -68,7 +68,7 @@ fn append_refused_if_time_old() {
 
     drop(bs);
 
-    let (mut bs, _): (_, ()) = ByteSeries::open_existing(test_path, 0).unwrap();
+    let mut bs = ByteSeries::open_existing(test_path, 0).unwrap().0;
     assert_eq!(bs.range(), Some(1..=3));
     let error = bs.push_line(2, &[]).unwrap_err();
     assert!(matches!(
@@ -84,13 +84,13 @@ fn append_after_reopen_empty_works() {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("append_after_reopen_empty");
     {
-        let mut bs = ByteSeries::new(&test_path, 0, ()).unwrap();
+        let mut bs = ByteSeries::new(&test_path, 0, &[]).unwrap();
         assert!(matches!(
             bs.last_line(&mut EmptyDecoder),
             Err(byteseries::series::data::ReadError::NoData)
         ));
     }
 
-    let (mut bs, _) = ByteSeries::open_existing::<()>(&test_path, 0).unwrap();
+    let (mut bs, _) = ByteSeries::open_existing(&test_path, 0).unwrap();
     bs.push_line(1700000000, &[]).unwrap();
 }

@@ -11,6 +11,7 @@ pub fn setup_tracing() {
     use tracing_subscriber::filter;
     use tracing_subscriber::fmt;
     use tracing_subscriber::prelude::*;
+    use tracing_error::ErrorLayer;
 
     let filter = filter::EnvFilter::builder().from_env().unwrap();
     let fmt = fmt::layer()
@@ -21,6 +22,7 @@ pub fn setup_tracing() {
     let _ignore_err = tracing_subscriber::registry()
         .with(filter)
         .with(fmt)
+        .with(ErrorLayer::default())
         .try_init();
 }
 

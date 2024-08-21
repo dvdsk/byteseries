@@ -32,7 +32,7 @@ fn beyond_range(#[case] step: u64) {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut series = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
+    let mut series = ByteSeries::new(test_path, PAYLOAD_SIZE, &[]).unwrap();
 
     insert_uniform_arrays(&mut series, N_TO_INSERT, step, PAYLOAD_SIZE, timestamp);
 
@@ -75,7 +75,7 @@ fn within_range(#[case] step: u64) {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut bs = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
+    let mut bs = ByteSeries::new(test_path, PAYLOAD_SIZE, &[]).unwrap();
 
     insert_uniform_arrays(&mut bs, N_TO_INSERT, step, PAYLOAD_SIZE, timestamp);
 
@@ -101,7 +101,7 @@ fn before_range() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut bs = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
+    let mut bs = ByteSeries::new(test_path, PAYLOAD_SIZE, &[]).unwrap();
     bs.push_line(100, &vec![0u8; 8]).unwrap();
     bs.push_line(105, &vec![0u8; 8]).unwrap();
     bs.push_line(110, &vec![0u8; 8]).unwrap();
@@ -130,7 +130,7 @@ fn into_gap(#[case] read_start: Timestamp, #[case] read_end: Timestamp) {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut bs = ByteSeries::new(test_path, PAYLOAD_SIZE, ()).unwrap();
+    let mut bs = ByteSeries::new(test_path, PAYLOAD_SIZE, &[]).unwrap();
     bs.push_line(0, &vec![0u8; 8]).unwrap();
     // gap between 0 + ~65k and 200k
     bs.push_line(200_000, &vec![0u8; 8]).unwrap();

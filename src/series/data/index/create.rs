@@ -1,8 +1,9 @@
 use core::fmt;
+use std::fs;
 use std::io::{Read, Seek};
 use std::path::Path;
 
-use tracing::instrument;
+use tracing::{debug, instrument};
 
 use crate::file::{FileWithHeader, OffsetFile, OpenError};
 use crate::series::data::inline_meta::{read_meta, MetaResult, META_PREAMBLE};
@@ -127,6 +128,12 @@ pub(crate) fn last_meta_timestamp(
     payload_size: PayloadSize,
 ) -> Result<Option<Timestamp>, ExtractingTsError> {
     let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
+    tracing::info!("data_len: {data_len}");
+
+    let mut buf = Vec::new();
+    file.seek(std::io::SeekFrom::Start(0)).unwrap();
+    file.read_to_end(&mut buf).unwrap();
+    tracing::info!("buf start: {:?}", &buf[0..30]);
 
     let window = 10_000u64.next_multiple_of(payload_size.line_size() as u64);
     let overlap = payload_size.metainfo_size();
@@ -145,8 +152,8 @@ pub(crate) fn last_meta_timestamp(
 
         assert!(
             start > 0,
-            "Should have found timestamp in data when its not empty \
-                (ensured by repair) is guaranteed to either be empty or \
+            "Should have found timestamp in data when its not empty. \
+                repair guarantees the file is either empty or \
                 contain at least one full timestamp metadata section."
         );
 
@@ -154,6 +161,7 @@ pub(crate) fn last_meta_timestamp(
     }
 }
 
+#[instrument(skip(buf))]
 pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, u64)> {
     let mut chunks = buf.chunks_exact(line_size).enumerate();
     let mut res = Vec::new();
