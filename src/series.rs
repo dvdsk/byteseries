@@ -1,8 +1,10 @@
-pub mod data;
-pub mod downsample;
 use core::fmt;
 use std::ops::{Bound, RangeBounds};
 use std::path::Path;
+
+pub mod data;
+pub mod downsample;
+mod file_header;
 
 use data::index::PayloadSize;
 use data::Data;
@@ -92,6 +94,8 @@ pub struct ByteSeries {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Parameter check failed: {0}")]
+    Parameters(#[from] file_header::Error),
     #[error("Could not open byteseries: {0}")]
     Open(data::OpenError),
     #[error("Failed to create new byteseries: {0}")]
@@ -119,12 +123,12 @@ impl ByteSeries {
     pub fn new(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
-        header: &[u8],
+        user_header: &[u8],
     ) -> Result<ByteSeries, Error> {
         Self::new_with_resamplers(
             name,
             payload_size,
-            header,
+            user_header,
             downsample::resample::EmptyResampler,
             Vec::new(),
         )
@@ -134,7 +138,7 @@ impl ByteSeries {
     pub fn new_with_resamplers<R>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
-        header: &[u8],
+        user_header: &[u8],
         resampler: R,
         resample_configs: Vec<downsample::Config>,
     ) -> Result<ByteSeries, Error>
@@ -142,9 +146,16 @@ impl ByteSeries {
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
+        let header = file_header::SeriesParams {
+            payload_size,
+            version: 1,
+        };
+        let mut header = header.to_text();
+        header.extend_from_slice(user_header);
+
         let payload_size = PayloadSize::from_raw(payload_size);
         let mut data =
-            Data::new(name.as_ref(), payload_size, header).map_err(Error::Create)?;
+            Data::new(name.as_ref(), payload_size, &header).map_err(Error::Create)?;
         Ok(ByteSeries {
             range: TimeRange::None,
             downsampled: resample_configs
@@ -173,17 +184,12 @@ impl ByteSeries {
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
     ) -> Result<(ByteSeries, Vec<u8>), Error> {
-        let payload_size = PayloadSize::from_raw(payload_size);
-        let (mut data, header) =
-            Data::open_existing(name, payload_size).map_err(Error::Open)?;
-
-        let bs = ByteSeries {
-            range: TimeRange::from_data(&mut data),
-            downsampled: Vec::new(),
-            data,
-        };
-
-        Ok((bs, header))
+        Self::open_existing_with_resampler(
+            name,
+            payload_size,
+            downsample::resample::EmptyResampler,
+            Vec::new(),
+        )
     }
 
     /// Caches one or more downsampled versions of the data
@@ -208,7 +214,8 @@ impl ByteSeries {
         let payload_size = PayloadSize::from_raw(payload_size);
         let (mut data, header) =
             Data::open_existing(&name, payload_size).map_err(Error::Open)?;
-
+        let user_header =
+            file_header::check_and_split_off_user_header(header, payload_size)?;
         Ok((
             ByteSeries {
                 range: TimeRange::from_data(&mut data),
@@ -230,7 +237,7 @@ impl ByteSeries {
                     .map_err(Error::Downsampled)?,
                 data,
             },
-            header,
+            user_header,
         ))
     }
 

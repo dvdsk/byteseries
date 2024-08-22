@@ -1,5 +1,3 @@
-use std::fs;
-
 use byteseries::seek::Error;
 use byteseries::ByteSeries;
 use rstest::rstest;
@@ -33,18 +31,28 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("only_meta_section_in_file");
+    let series_path = test_path.clone().with_extension("byteseries");
     {
-        let mut series = ByteSeries::new(&test_path, payload_size, &[]).unwrap();
+        // creates the preamble etc
+        let _ = ByteSeries::new(&test_path, payload_size, &[]).unwrap();
+    }
+    let len_without_data = std::fs::metadata(&series_path).unwrap().len();
+
+    {
+        let mut series = ByteSeries::open_existing(&test_path, payload_size)
+            .unwrap()
+            .0;
         series.push_line(42, vec![12; payload_size]).unwrap();
     }
 
-    let series_path = test_path.clone().with_extension("byteseries");
     let series_file = std::fs::OpenOptions::new()
         .write(true)
         .open(series_path)
         .unwrap();
+    let only_preamble_and_metadata_left =
+        len_without_data + bytes_per_metainfo(payload_size) as u64;
     series_file
-        .set_len(bytes_per_metainfo(payload_size) as u64)
+        .set_len(only_preamble_and_metadata_left)
         .unwrap();
 
     let mut series = ByteSeries::open_existing(test_path, payload_size)

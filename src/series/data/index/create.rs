@@ -1,9 +1,8 @@
 use core::fmt;
-use std::fs;
 use std::io::{Read, Seek};
 use std::path::Path;
 
-use tracing::{debug, instrument};
+use tracing::instrument;
 
 use crate::file::{FileWithHeader, OffsetFile, OpenError};
 use crate::series::data::inline_meta::{read_meta, MetaResult, META_PREAMBLE};
