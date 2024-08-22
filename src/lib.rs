@@ -1,3 +1,4 @@
+mod builder;
 pub mod file;
 pub mod seek;
 pub mod series;

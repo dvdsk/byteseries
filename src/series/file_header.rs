@@ -130,10 +130,10 @@ pub(crate) fn check_and_split_off_user_header(
     mut header: Vec<u8>,
     payload_size: PayloadSize,
 ) -> Result<Vec<u8>, Error> {
-    let header_len = header[0..4].try_into().map_err(|_| Error::TooShort)?;
-    let header_len = u32::from_le_bytes(header_len) as usize;
+    let text_len = header[0..4].try_into().map_err(|_| Error::TooShort)?;
+    let text_len = u32::from_le_bytes(text_len) as usize;
 
-    let text = &header[4..header_len];
+    let text = &header[4..text_len];
     let text = core::str::from_utf8(text).map_err(Error::NotText)?;
     let params = SeriesParams::from_text(text)?;
 
@@ -151,10 +151,6 @@ pub(crate) fn check_and_split_off_user_header(
         });
     }
 
-    let file_description_length = header[0..2]
-        .try_into()
-        .expect("first two bytes of header should be length of byteseries description");
-    let file_description_length = u16::from_le_bytes(file_description_length) as usize;
-    header.drain(0..file_description_length);
+    header.drain(0..text_len + core::mem::size_of::<u32>());
     Ok(header)
 }

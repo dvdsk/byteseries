@@ -33,14 +33,11 @@ fn before_matches_after_repair() {
 
     shorten_downsampled(&test_path, config.clone());
 
-    let mut bs = ByteSeries::open_existing_with_resampler(
-        &test_path,
-        4,
-        FloatResampler,
-        vec![config],
-    )
-    .unwrap()
-    .0;
+    let mut bs = ByteSeries::builder()
+        .payload_size(4)
+        .with_downsampled_cache(FloatResampler, vec![config])
+        .open(&test_path)
+        .unwrap();
 
     let (timestamps_after, data_after) = read(&mut bs);
     assert_eq!(timestamps_before, timestamps_after);
@@ -66,14 +63,11 @@ fn downsampled_has_more_items() {
 
     shorten_source_data(&test_path, 4);
 
-    let mut bs = ByteSeries::open_existing_with_resampler(
-        &test_path,
-        4,
-        FloatResampler,
-        vec![config],
-    )
-    .unwrap()
-    .0;
+    let mut bs = ByteSeries::builder()
+        .payload_size(4)
+        .with_downsampled_cache(FloatResampler, vec![config])
+        .open(&test_path)
+        .unwrap();
     let range_after = bs.range();
 
     let (timestamps_after, data_after) = read(&mut bs);
@@ -95,23 +89,19 @@ fn repair_empty() {
     };
 
     {
-        let _bs = ByteSeries::new_with_resamplers(
-            &test_path,
-            4,
-            &[],
-            FloatResampler,
-            vec![config.clone()],
-        )
-        .unwrap();
+        let _ = ByteSeries::builder()
+            .payload_size(4)
+            .create_new(true)
+            .with_downsampled_cache(FloatResampler, vec![config.clone()])
+            .open(&test_path)
+            .unwrap();
     }
 
-    let _ = ByteSeries::open_existing_with_resampler(
-        &test_path,
-        4,
-        FloatResampler,
-        vec![config],
-    )
-    .unwrap();
+    let _ = ByteSeries::builder()
+        .payload_size(4)
+        .with_downsampled_cache(FloatResampler, vec![config])
+        .open(&test_path)
+        .unwrap();
 }
 
 fn shorten_source_data(test_path: &Path, to_shrink: u64) {
@@ -150,9 +140,12 @@ fn read(bs: &mut ByteSeries) -> (Vec<Timestamp>, Vec<f32>) {
 }
 
 fn create_and_fill(test_path: &Path, config: downsample::Config) -> ByteSeries {
-    let mut bs =
-        ByteSeries::new_with_resamplers(test_path, 4, &[], FloatResampler, vec![config])
-            .unwrap();
+    let mut bs = ByteSeries::builder()
+        .payload_size(4)
+        .create_new(true)
+        .with_downsampled_cache(FloatResampler, vec![config])
+        .open(&test_path)
+        .unwrap();
     insert_lines(&mut bs, 1000, T1, T2);
     bs
 }

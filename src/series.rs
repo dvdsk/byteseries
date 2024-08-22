@@ -2,17 +2,19 @@ use core::fmt;
 use std::ops::{Bound, RangeBounds};
 use std::path::Path;
 
+use downsample::resample::EmptyResampler;
+use itertools::Itertools;
+use tracing::instrument;
+
 pub mod data;
 pub mod downsample;
 mod file_header;
 
 use data::index::PayloadSize;
 use data::Data;
-use itertools::Itertools;
-use tracing::instrument;
 
 use crate::seek::{self, Estimate};
-use crate::{Decoder, Resampler, Timestamp};
+use crate::{builder, Decoder, Resampler, Timestamp};
 
 use self::downsample::DownSampledData;
 
@@ -116,26 +118,17 @@ pub enum Error {
     Reading(data::ReadError),
     #[error("Would need to collect more then usize::MAX samples to resample.")]
     TooMuchToResample,
+    #[error("There was an issue checking the passed in header: {0}")]
+    Header(builder::HeaderError),
 }
 
 impl ByteSeries {
-    #[instrument]
-    pub fn new(
-        name: impl AsRef<Path> + fmt::Debug,
-        payload_size: usize,
-        user_header: &[u8],
-    ) -> Result<ByteSeries, Error> {
-        Self::new_with_resamplers(
-            name,
-            payload_size,
-            user_header,
-            downsample::resample::EmptyResampler,
-            Vec::new(),
-        )
+    pub fn builder() -> builder::ByteSeriesBuilder<false, false, EmptyResampler, ()> {
+        builder::ByteSeriesBuilder::<false, false, EmptyResampler, ()>::new()
     }
 
     #[instrument]
-    pub fn new_with_resamplers<R>(
+    pub(crate) fn new_with_resamplers<R>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
         user_header: &[u8],
@@ -178,20 +171,6 @@ impl ByteSeries {
         })
     }
 
-    /// line size in bytes, path is *without* any extension
-    #[instrument]
-    pub fn open_existing(
-        name: impl AsRef<Path> + fmt::Debug,
-        payload_size: usize,
-    ) -> Result<(ByteSeries, Vec<u8>), Error> {
-        Self::open_existing_with_resampler(
-            name,
-            payload_size,
-            downsample::resample::EmptyResampler,
-            Vec::new(),
-        )
-    }
-
     /// Caches one or more downsampled versions of the data
     /// line size in bytes, path is *without* any extension
     ///
@@ -201,7 +180,7 @@ impl ByteSeries {
     /// exceedingly rare. Please let me know if this hits you and I'll see into
     /// fixing this behaviour.
     #[instrument]
-    pub fn open_existing_with_resampler<R>(
+    pub(crate) fn open_existing_with_resampler<R>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
         resampler: R,

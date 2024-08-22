@@ -20,7 +20,11 @@ fn truncated_index(#[case] bytes_removed: u64) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("truncated_index");
     {
-        let mut series = ByteSeries::new(&test_path, PAYLOAD_SIZE, &[]).unwrap();
+        let mut series = ByteSeries::builder()
+            .payload_size(PAYLOAD_SIZE)
+            .create_new(true)
+            .open(&test_path)
+            .unwrap();
         series.push_line(42, vec![12; PAYLOAD_SIZE]).unwrap();
         series.push_line(100_000, vec![13; PAYLOAD_SIZE]).unwrap();
         series.push_line(500_000, vec![14; PAYLOAD_SIZE]).unwrap();
@@ -34,9 +38,10 @@ fn truncated_index(#[case] bytes_removed: u64) {
     let len = index_file.metadata().unwrap().len();
     index_file.set_len(len - bytes_removed).unwrap();
 
-    let mut series = ByteSeries::open_existing(test_path, PAYLOAD_SIZE)
-        .unwrap()
-        .0;
+    let mut series = ByteSeries::builder()
+        .payload_size(PAYLOAD_SIZE)
+        .open(&test_path)
+        .unwrap();
     let mut timestamps = Vec::new();
     series
         .read_all(.., &mut EmptyDecoder, &mut timestamps, &mut Vec::new())

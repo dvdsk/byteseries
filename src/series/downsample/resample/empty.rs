@@ -1,7 +1,7 @@
 use crate::{Decoder, Encoder, ResampleState, Resampler};
 
 #[derive(Debug, Clone)]
-pub(crate) struct EmptyResampler;
+pub struct EmptyResampler;
 
 impl Decoder for EmptyResampler {
     type Item = EmptySample;
@@ -27,10 +27,10 @@ impl Resampler for EmptyResampler {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct EmptySample;
+pub struct EmptySample;
 
 #[derive(Debug)]
-pub(crate) struct EmptySampleState;
+pub struct EmptySampleState;
 
 impl ResampleState for EmptySampleState {
     type Item = EmptySample;
