@@ -63,15 +63,14 @@ where
     pub fn with_header<NewH: Serialize + DeserializeOwned + Eq + fmt::Debug>(
         self,
         header: NewH,
-    ) -> Result<ByteSeriesBuilder<PAYLOAD_SET, true, R, NewH>, ron::Error>
-where {
-        Ok(ByteSeriesBuilder {
+    ) -> ByteSeriesBuilder<PAYLOAD_SET, true, R, NewH> {
+        ByteSeriesBuilder {
             payload_size: self.payload_size,
             header,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
             create_new: self.create_new,
-        })
+        }
     }
     pub fn with_downsampled_cache<NewR>(
         self,
