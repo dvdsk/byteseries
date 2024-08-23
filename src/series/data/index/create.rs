@@ -127,12 +127,10 @@ pub(crate) fn last_meta_timestamp(
     payload_size: PayloadSize,
 ) -> Result<Option<Timestamp>, ExtractingTsError> {
     let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
-    tracing::info!("data_len: {data_len}");
 
     let mut buf = Vec::new();
     file.seek(std::io::SeekFrom::Start(0)).unwrap();
     file.read_to_end(&mut buf).unwrap();
-    tracing::info!("buf start: {:?}", &buf[0..30]);
 
     let window = 10_000u64.next_multiple_of(payload_size.line_size() as u64);
     let overlap = payload_size.metainfo_size();
