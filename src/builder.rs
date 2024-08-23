@@ -20,7 +20,7 @@ pub struct ByteSeriesBuilder<const PAYLOAD_SET: bool, const HEADER_SET: bool, R,
 impl<const PAYLOAD_SET: bool, const HEADER_SET: bool, R, H>
     ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, R, H>
 where
-    H: Serialize + DeserializeOwned + Eq + fmt::Debug,
+    H: Serialize + DeserializeOwned + PartialEq + fmt::Debug,
     R: Resampler + Clone + Send + 'static,
     R::State: Send + 'static,
 {
@@ -60,7 +60,7 @@ where
     /// # Warning
     /// You must pass in a header when opening a file that was created
     /// with one. If you do not you will get a deserialization error.
-    pub fn with_header<NewH: Serialize + DeserializeOwned + Eq + fmt::Debug>(
+    pub fn with_header<NewH: Serialize + DeserializeOwned + PartialEq + fmt::Debug>(
         self,
         header: NewH,
     ) -> ByteSeriesBuilder<PAYLOAD_SET, true, R, NewH> {
@@ -114,7 +114,7 @@ pub enum HeaderError {
 
 impl<R, H> ByteSeriesBuilder<true, true, R, H>
 where
-    H: Serialize + DeserializeOwned + Eq + fmt::Debug,
+    H: Serialize + DeserializeOwned + PartialEq + fmt::Debug,
     R: Resampler + Clone + Send + 'static,
     R::State: Send + 'static,
 {

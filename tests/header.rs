@@ -1,13 +1,12 @@
 use byteseries::series::Error;
 use byteseries::ByteSeries;
-use pretty_assertions::assert_eq;
 use serde::{Deserialize, Serialize};
 use temp_dir::TempDir;
 
 mod shared;
 use shared::setup_tracing;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct TestHeader(usize);
 
 #[test]
