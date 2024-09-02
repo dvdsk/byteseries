@@ -120,6 +120,8 @@ pub enum Error {
     TooMuchToResample,
     #[error("There was an issue checking the passed in header: {0}")]
     Header(builder::HeaderError),
+    #[error("The line should be exactly: {required} bytes long, it was: {got}")]
+    WrongLineLength { required: usize, got: usize },
 }
 
 impl ByteSeries {
@@ -226,6 +228,13 @@ impl ByteSeries {
         ts: Timestamp,
         line: impl AsRef<[u8]>,
     ) -> Result<(), Error> {
+        if line.as_ref().len() != self.data.payload_size().raw() {
+            return Err(Error::WrongLineLength {
+                required: self.data.payload_size().raw(),
+                got: line.as_ref().len(),
+            });
+        }
+
         //write 16 bit timestamp and then the line to file
         //for now no support for sign bit since data will always be after 0 (1970)
         self.range.update(ts)?;
