@@ -295,7 +295,12 @@ impl ByteSeries {
     ) -> Result<u64, Error> {
         let start = range.start_bound().cloned();
         let end = range.end_bound().cloned();
-        self.check_range(start, end).map_err(Error::InvalidRange)?;
+
+        match self.check_range(start, end) {
+            Ok(()) => (),
+            Err(seek::Error::EmptyFile) => return Ok(0),
+            Err(other) => return Err(Error::InvalidRange(other)),
+        };
 
         Ok(seek::RoughPos::new(&self.data, start, end)
             .expect(
