@@ -145,7 +145,10 @@ impl RoughPos {
             "search_bounds should be such that requested_end_time falls within \
                 end_full_time..end_full_time+MAX_SMALL_TS",
         );
-        assert!(end_time <= MAX_SMALL_TS);
+        assert!(
+            end_time <= MAX_SMALL_TS,
+            "end time: {end_time}, MAX_SMALL_TS: {MAX_SMALL_TS}"
+        );
         u16::try_from(end_time).expect("just asserted")
     }
 
@@ -164,7 +167,11 @@ impl RoughPos {
         u16::try_from(start_time).expect("just asserted")
     }
 
-    pub(crate) fn estimate_lines(&self, payload_size: PayloadSize, data_len: u64) -> Estimate {
+    pub(crate) fn estimate_lines(
+        &self,
+        payload_size: PayloadSize,
+        data_len: u64,
+    ) -> Estimate {
         use EndArea as End;
         use StartArea::{Clipped, Found, Gap, TillEnd, Window};
 

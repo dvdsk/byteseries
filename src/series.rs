@@ -180,7 +180,7 @@ impl ByteSeries {
     /// If the data file got truncated (due to corruption/failed writes/another
     /// process) and the cache did not the library can panic. This should be
     /// exceedingly rare. Please let me know if this hits you and I'll see into
-    /// fixing this behaviour.
+    /// fixing this behavior.
     #[instrument]
     pub(crate) fn open_existing_with_resampler<R>(
         name: impl AsRef<Path> + fmt::Debug,

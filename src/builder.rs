@@ -13,6 +13,7 @@ pub struct ByteSeriesBuilder<const PAYLOAD_SET: bool, const HEADER_SET: bool, R,
     payload_size: Option<usize>,
     create_new: bool,
     header: H,
+    ignore_header: bool,
     resampler: R,
     resample_configs: Vec<downsample::Config>,
 }
@@ -28,6 +29,7 @@ where
         ByteSeriesBuilder {
             payload_size: None,
             header: (),
+            ignore_header: false,
             resampler: EmptyResampler,
             resample_configs: Vec::new(),
             create_new: false,
@@ -48,6 +50,7 @@ where
         ByteSeriesBuilder {
             payload_size: Some(bytes),
             header: self.header,
+            ignore_header: self.ignore_header,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
             create_new: self.create_new,
@@ -59,7 +62,7 @@ where
     ///
     /// # Warning
     /// You must pass in a header when opening a file that was created
-    /// with one. If you do not you will get a deserialization error.
+    /// with one. If you do not you will get a de-serialization error.
     pub fn with_header<NewH: Serialize + DeserializeOwned + PartialEq + fmt::Debug>(
         self,
         header: NewH,
@@ -67,6 +70,19 @@ where
         ByteSeriesBuilder {
             payload_size: self.payload_size,
             header,
+            ignore_header: false,
+            resampler: self.resampler,
+            resample_configs: self.resample_configs,
+            create_new: self.create_new,
+        }
+    }
+    /// # Warning
+    /// Ignore any existing header.
+    pub fn with_any_header(self) -> ByteSeriesBuilder<PAYLOAD_SET, false, R, ()> {
+        ByteSeriesBuilder {
+            payload_size: self.payload_size,
+            header: (),
+            ignore_header: true,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
             create_new: self.create_new,
@@ -80,6 +96,7 @@ where
         ByteSeriesBuilder {
             payload_size: self.payload_size,
             header: self.header,
+            ignore_header: self.ignore_header,
             resampler,
             resample_configs: configs,
             create_new: self.create_new,
@@ -193,7 +210,7 @@ where
                 self.resample_configs,
             )?;
 
-            if !header_bytes.is_empty() {
+            if !header_bytes.is_empty() && !self.ignore_header {
                 return Err(series::Error::Header(HeaderError::Unexpected));
             }
 

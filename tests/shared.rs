@@ -8,10 +8,10 @@ use rstest_reuse::template;
 pub type Timestamp = u64;
 
 pub fn setup_tracing() {
+    use tracing_error::ErrorLayer;
     use tracing_subscriber::filter;
     use tracing_subscriber::fmt;
     use tracing_subscriber::prelude::*;
-    use tracing_error::ErrorLayer;
 
     let filter = filter::EnvFilter::builder().from_env().unwrap();
     let fmt = fmt::layer()
@@ -90,6 +90,35 @@ impl byteseries::Encoder for FloatResampler {
 }
 
 impl byteseries::Resampler for FloatResampler {
+    type State = f32;
+
+    fn state(&self) -> Self::State {
+        0f32
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FakeFloatResampler {
+    pub(crate) payload_size: usize,
+}
+
+impl byteseries::Decoder for FakeFloatResampler {
+    type Item = f32;
+
+    fn decode_payload(&mut self, _: &[u8]) -> Self::Item {
+        0f32
+    }
+}
+
+impl byteseries::Encoder for FakeFloatResampler {
+    type Item = f32;
+
+    fn encode_item(&mut self, _: &Self::Item) -> Vec<u8> {
+        vec![0; self.payload_size]
+    }
+}
+
+impl byteseries::Resampler for FakeFloatResampler {
     type State = f32;
 
     fn state(&self) -> Self::State {
