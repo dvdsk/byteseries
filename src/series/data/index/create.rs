@@ -151,7 +151,8 @@ pub(crate) fn last_meta_timestamp(
             start > 0,
             "Should have found timestamp in data when its not empty. \
                 repair guarantees the file is either empty or \
-                contain at least one full timestamp metadata section."
+                contain at least one full timestamp metadata section.\
+                file has length: {data_len}, window: {window}"
         );
 
         start = (start + overlap as u64).saturating_sub(window);

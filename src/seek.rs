@@ -147,7 +147,8 @@ impl RoughPos {
         );
         assert!(
             end_time <= MAX_SMALL_TS,
-            "end time: {end_time}, MAX_SMALL_TS: {MAX_SMALL_TS}"
+            "end_time must be smaller then MAX_SMALL_TS. \
+            end time: {end_time}, MAX_SMALL_TS: {MAX_SMALL_TS}"
         );
         u16::try_from(end_time).expect("just asserted")
     }
