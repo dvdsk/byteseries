@@ -121,7 +121,7 @@ pub(crate) fn extract_entries_inner(
     Ok(entries)
 }
 
-#[instrument]
+#[instrument(level="debug", skip_all, ret)]
 pub(crate) fn last_meta_timestamp(
     file: &mut OffsetFile,
     payload_size: PayloadSize,

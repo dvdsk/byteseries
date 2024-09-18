@@ -209,7 +209,7 @@ impl Index {
         })
     }
 
-    /// `line_start` points to the start of the meta section in the dat file
+    /// `line_start` points to the start of the meta section in the data file
     #[instrument(level = "trace", skip(self), ret)]
     pub(crate) fn update(
         &mut self,
@@ -262,7 +262,7 @@ impl Index {
             );
         }
 
-        //end is not 0 or 1 thus data[end] and data[end-1] exist
+        // End is not 0 or 1 thus data[end] and data[end-1] exist
         if in_gap(start_ts, self.entries[end - 1].timestamp) {
             return (
                 StartArea::Gap {
@@ -284,11 +284,22 @@ impl Index {
             )
         }
     }
+
+    #[instrument(level = "debug", ret)]
     pub(crate) fn end_search_bounds(
         &self,
         end_ts: Timestamp,
         payload_size: PayloadSize,
     ) -> (EndArea, Timestamp) {
+        assert!(
+            end_ts - self.last_timestamp.unwrap_or(end_ts) < MAX_SMALL_TS,
+            "the requested end_ts ({end_ts}) should never be more then \
+            MAX_SMALL_TS ({MAX_SMALL_TS}) bigger then the last full timestamp {:?}. \
+            The difference is {} however",
+            self.last_timestamp,
+            end_ts - self.last_timestamp.unwrap_or(end_ts),
+        );
+
         let idx = self.entries.binary_search_by_key(&end_ts, |e| e.timestamp);
         let end = match idx {
             Ok(i) => {
@@ -314,7 +325,7 @@ impl Index {
             return (EndArea::TillEnd(start), last.timestamp);
         }
 
-        //end is not 0 or 1 thus data[end] and data[end-1] exist
+        // End is not 0 or 1 thus data[end] and data[end-1] exist
         if in_gap(end_ts, self.entries[end - 1].timestamp) {
             return (
                 EndArea::Gap {

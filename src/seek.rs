@@ -25,22 +25,23 @@ pub enum Error {
 pub struct RoughPos {
     /// Timestamp that the first line should ideally have
     start_ts: Timestamp,
-    /// area where to search for the start time
+    /// Area where to search for the start time
     start_search_area: StartArea,
-    /// Read lines up to and including this Timestamp
-    end_ts: Timestamp,
-    /// area where to search for the end time
-    end_search_area: EndArea,
     /// 64 bit timestamp that should be added to the small time
     /// for the search for the start timestamp.
     start_section_full_ts: Timestamp,
+    /// Read lines up to and including this Timestamp
+    end_ts: Timestamp,
+    /// Area where to search for the end time
+    end_search_area: EndArea,
     /// 64 bit timestamp that should be added to the small time
     /// during the search for the end timestamp.
     end_section_full_ts: Timestamp,
 }
 
 impl RoughPos {
-    /// # returns `None` if the data file is empty
+    /// # Returns `None` if the data file is empty
+    #[instrument(skip(data), ret)]
     pub(crate) fn new(
         data: &Data,
         start: Bound<Timestamp>,
@@ -55,12 +56,9 @@ impl RoughPos {
         let start_ts = start_ts.max(first_time_in_data);
 
         let (start_search_area, start_section_full_ts) = match start {
-            Bound::Included(ts) => {
-                data.index.start_search_bounds(ts, data.payload_size())
-            }
-            Bound::Excluded(ts) => {
-                data.index.start_search_bounds(ts - 1, data.payload_size())
-            }
+            Bound::Included(_) | Bound::Excluded(_) => data
+                .index
+                .start_search_bounds(start_ts, data.payload_size()),
             Bound::Unbounded => (
                 StartArea::Found(MetaPos::ZERO.line_start(data.payload_size())),
                 first_time_in_data,
@@ -74,15 +72,19 @@ impl RoughPos {
                 .last_time()
                 .expect("first time is set so last should be too"),
         };
+        let last_time_in_data = data
+            .last_time()
+            .expect("first time is set so last should be too");
+        let end_ts = end_ts.min(last_time_in_data);
+
         assert!(
             end_ts >= start_ts,
-            "end time ({end_ts})larger then start ({start_ts})"
+            "end time ({end_ts}) larger then start ({start_ts})"
         );
 
         let (end_search_area, end_section_full_ts) = match end {
-            Bound::Included(ts) => data.index.end_search_bounds(ts, data.payload_size()),
-            Bound::Excluded(ts) => {
-                data.index.end_search_bounds(ts - 1, data.payload_size())
+            Bound::Included(_) | Bound::Excluded(_) => {
+                data.index.end_search_bounds(end_ts, data.payload_size())
             }
             Bound::Unbounded => (
                 EndArea::Found(data.last_line_start()),

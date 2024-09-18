@@ -11,7 +11,7 @@ use shared::payload_sizes;
 use shared::EmptyDecoder;
 
 fn lines_per_metainfo(payload_size: usize) -> usize {
-    let base_lines = 2; // needed to recognise meta section
+    let base_lines = 2; // Needed to recognize meta section
     let extra_lines_needed = match payload_size {
         0 | 1 => 2,
         2 | 3 => 1,

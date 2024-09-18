@@ -20,9 +20,9 @@ pub fn setup_tracing() {
         .with_test_writer();
 
     let _ignore_err = tracing_subscriber::registry()
+        .with(ErrorLayer::default())
         .with(filter)
         .with(fmt)
-        .with(ErrorLayer::default())
         .try_init();
 }
 
