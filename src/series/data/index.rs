@@ -291,15 +291,6 @@ impl Index {
         end_ts: Timestamp,
         payload_size: PayloadSize,
     ) -> (EndArea, Timestamp) {
-        assert!(
-            end_ts - self.last_timestamp.unwrap_or(end_ts) < MAX_SMALL_TS,
-            "the requested end_ts ({end_ts}) should never be more then \
-            MAX_SMALL_TS ({MAX_SMALL_TS}) bigger then the last full timestamp {:?}. \
-            The difference is {} however",
-            self.last_timestamp,
-            end_ts - self.last_timestamp.unwrap_or(end_ts),
-        );
-
         let idx = self.entries.binary_search_by_key(&end_ts, |e| e.timestamp);
         let end = match idx {
             Ok(i) => {
@@ -309,12 +300,7 @@ impl Index {
             Err(end) => end,
         };
 
-        assert!(
-            end > 0,
-            "end lying before start of data should be caught
-                before calling search_bounds. We should never reach
-                this",
-        );
+        assert!(end > 0, "checked in check_range");
 
         if end == self.entries.len() {
             let last = self
