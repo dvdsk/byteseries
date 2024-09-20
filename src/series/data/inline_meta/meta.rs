@@ -49,20 +49,8 @@ pub(crate) fn write(
             3
         }
         3 => {
-            file_handle.write_all(&[
-                PREAMBLE[0],
-                PREAMBLE[1],
-                t[0],
-                t[1],
-                t[2],
-            ])?;
-            file_handle.write_all(&[
-                PREAMBLE[0],
-                PREAMBLE[1],
-                t[3],
-                t[4],
-                t[5],
-            ])?;
+            file_handle.write_all(&[PREAMBLE[0], PREAMBLE[1], t[0], t[1], t[2]])?;
+            file_handle.write_all(&[PREAMBLE[0], PREAMBLE[1], t[3], t[4], t[5]])?;
             file_handle.write_all(&[t[6], t[7], 0, 0, 0])?;
             3
         }
@@ -164,4 +152,3 @@ pub(crate) fn read<'a>(
         }
     }
 }
-

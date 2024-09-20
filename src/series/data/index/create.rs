@@ -121,7 +121,7 @@ pub(crate) fn extract_entries_inner(
     Ok(entries)
 }
 
-#[instrument(level="debug", skip_all, ret)]
+#[instrument(level = "debug", skip_all, ret)]
 pub(crate) fn last_meta_timestamp(
     file: &mut OffsetFile,
     payload_size: PayloadSize,
@@ -179,7 +179,8 @@ pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, 
         }
 
         let chunks = chunks.by_ref().map(|(_, chunk)| chunk);
-        let meta::Result::Meta { meta, .. } = meta::read(chunks, chunk, next_chunk) else {
+        let meta::Result::Meta { meta, .. } = meta::read(chunks, chunk, next_chunk)
+        else {
             return res;
         };
         let index_of_meta = idx * line_size - overlap;

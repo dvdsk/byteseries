@@ -22,7 +22,6 @@ pub(crate) trait SetLen {
     fn set_len(&mut self, len: u64) -> Result<(), std::io::Error>;
 }
 
-
 impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     /// Will
     ///  - truncate the file if it contains only metadata

@@ -98,11 +98,9 @@ impl Data {
         payload_size: PayloadSize,
         header: &[u8],
     ) -> Result<Self, CreateError> {
-        let file = FileWithHeader::new(
-            name.as_ref().with_extension("byteseries"),
-            header,
-        )
-        .map_err(CreateError::File)?;
+        let file =
+            FileWithHeader::new(name.as_ref().with_extension("byteseries"), header)
+                .map_err(CreateError::File)?;
         let (file_handle, _) = file.split_off_header();
         let data_len = file_handle.data_len().map_err(CreateError::GetLength)?;
         let file_handle = FileWithInlineMeta::new(file_handle, payload_size)

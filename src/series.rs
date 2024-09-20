@@ -418,7 +418,6 @@ impl ByteSeries {
         decoder: &mut D,
         range: impl RangeBounds<Timestamp>,
         timestamps: &mut Vec<Timestamp>,
-
         data: &mut Vec<D::Item>,
     ) -> Result<(), Error> {
         let start = range.start_bound().cloned();
