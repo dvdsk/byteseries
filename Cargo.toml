@@ -1,6 +1,6 @@
 [package]
 name = "byteseries"
-version = "0.6.1"
+version = "0.7.1"
 authors = ["David Kleingeld <dskleingeld@gmail.com>"]
 edition = "2021"
 resolver = "2"
