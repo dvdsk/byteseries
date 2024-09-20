@@ -12,7 +12,7 @@ pub mod index;
 use index::{Index, LinePos, PayloadSize};
 
 use self::index::create::{self, last_meta_timestamp, ExtractingTsError};
-use self::inline_meta::{write_meta, SetLen};
+use self::inline_meta::{meta, SetLen};
 
 pub(crate) const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
 
@@ -238,7 +238,7 @@ impl Data {
                 .update(ts, index::MetaPos(self.data_len))
                 .map_err(PushError::Index)?;
             let meta = ts.to_le_bytes();
-            let written = write_meta(&mut self.file_handle, meta, self.payload_size)
+            let written = meta::write(&mut self.file_handle, meta, self.payload_size)
                 .map_err(PushError::Meta)?;
             self.data_len += written;
             0 // value does not matter, full timestamp just ahead is used
@@ -274,6 +274,22 @@ impl Data {
     ) -> Result<(), ReadError> {
         self.file_handle
             .read(decoder, timestamps, data, seek)
+            .map_err(ReadError::Reading)
+    }
+
+    /// # Errors
+    ///
+    /// See the [`ReadError`] docs for an exhaustive list of everything that can go wrong.
+    pub(crate) fn read_first_n<D: Decoder>(
+        &mut self,
+        n: usize,
+        seek: Pos,
+        decoder: &mut D,
+        timestamps: &mut Vec<Timestamp>,
+        data: &mut Vec<D::Item>,
+    ) -> Result<(), ReadError> {
+        self.file_handle
+            .read_first_n(n, decoder, timestamps, data, seek)
             .map_err(ReadError::Reading)
     }
 

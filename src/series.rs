@@ -400,6 +400,52 @@ impl ByteSeries {
             .map_err(Error::Reading)
     }
 
+    /// Will return between zero and `n` samples
+    ///
+    /// This might read only part of the requested range.
+    /// No interpolation or resampling is performed.
+    ///
+    /// # Errors
+    ///
+    /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
+    /// Its mostly IO-issues.
+    #[allow(clippy::missing_panics_doc)] // is bug if panic
+    #[instrument(skip(self, decoder, timestamps, data),
+        fields(range = format!("{:?}..{:?}", range.start_bound(), range.end_bound())))]
+    pub fn read_first_n<D: Decoder>(
+        &mut self,
+        n: usize,
+        decoder: &mut D,
+        range: impl RangeBounds<Timestamp>,
+        timestamps: &mut Vec<Timestamp>,
+
+        data: &mut Vec<D::Item>,
+    ) -> Result<(), Error> {
+        let start = range.start_bound().cloned();
+        let end = range.end_bound().cloned();
+        self.check_range(start, end).map_err(Error::InvalidRange)?;
+
+        let Some(seek) = seek::RoughPos::new(
+            &self.data,
+            range.start_bound().cloned(),
+            range.end_bound().cloned(),
+        )
+        .expect("no data should be caught be check range")
+        .refine(&mut self.data)
+        .map_err(Error::Seeking)?
+        else {
+            tracing::debug!(
+                "No data to read within given range, probably due to \
+                a gap in the data."
+            );
+            return Ok(());
+        };
+
+        self.data
+            .read_first_n(n, seek, decoder, timestamps, data)
+            .map_err(Error::Reading)
+    }
+
     fn check_range(
         &self,
         start: Bound<Timestamp>,

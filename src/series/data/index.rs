@@ -63,7 +63,7 @@ pub(crate) struct PayloadSize(usize);
 
 impl PayloadSize {
     pub(crate) fn metainfo_size(&self) -> usize {
-        super::inline_meta::lines_per_metainfo(self.0) * (self.line_size())
+        super::inline_meta::meta::lines_per_metainfo(self.0) * (self.line_size())
     }
     pub(crate) fn line_size(&self) -> usize {
         self.0 + 2

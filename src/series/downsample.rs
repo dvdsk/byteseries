@@ -174,17 +174,19 @@ where
             end: source.data_len,
             first_full_ts: first_time,
         };
-        let mut process_res = Ok(());
-        source
+        let res = source
             .file_handle
-            .read_with_processor(seek, |ts, line| {
-                if let Err(e) = empty.process(ts, line) {
-                    process_res = Err(e);
-                }
-            })
-            .map_err(CreateError::ReadSource)?;
-        process_res.map_err(CreateError::WriteOut)?;
-        Ok(empty)
+            .read_with_processor(seek, |ts, line| empty.process(ts, line));
+
+        match res {
+            Ok(()) => Ok(empty),
+            Err(data::inline_meta::with_processor::Error::Io(e)) => {
+                Err(CreateError::ReadSource(e))
+            }
+            Err(data::inline_meta::with_processor::Error::Processor(e)) => {
+                Err(CreateError::WriteOut(e))
+            }
+        }
     }
 
     #[instrument(level = "debug", skip(source))]

@@ -5,7 +5,7 @@ use std::path::Path;
 use tracing::instrument;
 
 use crate::file::{FileWithHeader, OffsetFile, OpenError};
-use crate::series::data::inline_meta::{read_meta, MetaResult, META_PREAMBLE};
+use crate::series::data::inline_meta::meta;
 use crate::Timestamp;
 
 use super::{Entry, Index, PayloadSize};
@@ -167,19 +167,19 @@ pub(crate) fn meta(buf: &[u8], line_size: usize, overlap: usize) -> Vec<(usize, 
         let Some((idx, chunk)) = chunks.next() else {
             return res;
         };
-        if chunk[..2] != META_PREAMBLE {
+        if chunk[..2] != meta::PREAMBLE {
             continue;
         }
 
         let Some((_, next_chunk)) = chunks.next() else {
             return res;
         };
-        if next_chunk[..2] != META_PREAMBLE {
+        if next_chunk[..2] != meta::PREAMBLE {
             continue;
         }
 
         let chunks = chunks.by_ref().map(|(_, chunk)| chunk);
-        let MetaResult::Meta { meta, .. } = read_meta(chunks, chunk, next_chunk) else {
+        let meta::Result::Meta { meta, .. } = meta::read(chunks, chunk, next_chunk) else {
             return res;
         };
         let index_of_meta = idx * line_size - overlap;
