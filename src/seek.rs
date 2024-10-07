@@ -41,7 +41,7 @@ pub struct RoughPos {
 
 impl RoughPos {
     /// # Returns `None` if the data file is empty
-    #[instrument(skip(data), ret)]
+    #[instrument(level="debug", skip(data), ret)]
     pub(crate) fn new(
         data: &Data,
         start: Bound<Timestamp>,
