@@ -1,5 +1,6 @@
 use core::fmt;
 use std::io::Write;
+use std::ops::RangeInclusive;
 use std::path::Path;
 use tracing::{instrument, warn};
 
@@ -194,6 +195,11 @@ impl Data {
     #[instrument]
     pub(crate) fn last_time(&self) -> Option<Timestamp> {
         self.last_time
+    }
+
+    pub(crate) fn range(&self) -> Option<RangeInclusive<Timestamp>> {
+        self.first_time()
+            .map(|f| f..=self.last_time.expect("first time is Some"))
     }
 
     /// Append data to disk but do not flush, a crash can still lead to the data

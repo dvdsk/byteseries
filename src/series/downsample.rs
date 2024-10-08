@@ -242,13 +242,14 @@ where
         Ok(())
     }
 
+    /// returns an error if
     fn estimate_lines(
         &self,
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
     ) -> Option<crate::seek::Estimate> {
-        RoughPos::new(&self.data, start, end)
-            .map(|seek| seek.estimate_lines(self.data.payload_size(), self.data.data_len))
+        let seek = RoughPos::new(&self.data, start, end).ok()?;
+        Some(seek.estimate_lines(self.data.payload_size(), self.data.data_len))
     }
 
     fn data_mut(&mut self) -> &mut Data {

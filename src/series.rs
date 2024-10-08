@@ -37,18 +37,6 @@ pub enum TimeRange {
 }
 
 impl TimeRange {
-    fn first(&self) -> Option<Timestamp> {
-        match self {
-            Self::None => None,
-            Self::Some(range) => Some(*range.start()),
-        }
-    }
-    fn last(&self) -> Option<Timestamp> {
-        match self {
-            Self::None => None,
-            Self::Some(range) => Some(*range.end()),
-        }
-    }
     fn from_data(data: &mut Data) -> Self {
         if let Some(first) = data.first_time() {
             let last = data.last_time().expect(
@@ -266,15 +254,12 @@ impl ByteSeries {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), Error> {
-        let start = range.start_bound().cloned();
-        let end = range.end_bound().cloned();
-        self.check_range(start, end).map_err(Error::InvalidRange)?;
         let Some(seek) = seek::RoughPos::new(
             &self.data,
             range.start_bound().cloned(),
             range.end_bound().cloned(),
         )
-        .expect("no data should be caught be check range")
+        .map_err(Error::InvalidRange)?
         .refine(&mut self.data)
         .map_err(Error::Seeking)?
         else {
@@ -305,17 +290,13 @@ impl ByteSeries {
         let start = range.start_bound().cloned();
         let end = range.end_bound().cloned();
 
-        match self.check_range(start, end) {
-            Ok(()) => (),
+        let pos = match seek::RoughPos::new(&self.data, start, end) {
+            Ok(pos) => pos,
             Err(seek::Error::EmptyFile) => return Ok(0),
             Err(other) => return Err(Error::InvalidRange(other)),
         };
 
-        Ok(seek::RoughPos::new(&self.data, start, end)
-            .expect(
-                "check range catches the undownsampled file missing data \
-                and downsampled are not selected if their `estimate_lines` is None ",
-            )
+        Ok(pos
             .refine(&mut self.data)
             .map_err(Error::Seeking)?
             .map(|pos| pos.lines(&mut self.data))
@@ -341,16 +322,15 @@ impl ByteSeries {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<<R as Decoder>::Item>,
     ) -> Result<(), Error> {
-        let start = range.start_bound().cloned();
-        let end = range.end_bound().cloned();
-        self.check_range(start, end).map_err(Error::InvalidRange)?;
-
         assert!(
             self.downsampled
                 .windows(2)
                 .all(|w| w[0].data().data_len >= w[1].data().data_len),
             "downsampled must be sorted in descending resolution/numb lines"
         );
+
+        let start = range.start_bound().cloned();
+        let end = range.end_bound().cloned();
 
         let mut optimal_data = &mut self.data;
         for downsampled in &mut self.downsampled {
@@ -376,10 +356,7 @@ impl ByteSeries {
         }
 
         let Some(seek) = seek::RoughPos::new(optimal_data, start, end)
-            .expect(
-                "check range catches the undownsampled file missing data \
-                and downsampled are not selected if their `estimate_lines` is None ",
-            )
+            .map_err(Error::InvalidRange)?
             .refine(optimal_data)
             .map_err(Error::Seeking)?
         else {
@@ -420,16 +397,12 @@ impl ByteSeries {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), Error> {
-        let start = range.start_bound().cloned();
-        let end = range.end_bound().cloned();
-        self.check_range(start, end).map_err(Error::InvalidRange)?;
-
         let Some(seek) = seek::RoughPos::new(
             &self.data,
             range.start_bound().cloned(),
             range.end_bound().cloned(),
         )
-        .expect("no data should be caught be check range")
+        .map_err(Error::InvalidRange)?
         .refine(&mut self.data)
         .map_err(Error::Seeking)?
         else {
@@ -443,47 +416,6 @@ impl ByteSeries {
         self.data
             .read_first_n(n, seek, decoder, timestamps, data)
             .map_err(Error::Reading)
-    }
-
-    fn check_range(
-        &self,
-        start: Bound<Timestamp>,
-        end: Bound<Timestamp>,
-    ) -> Result<(), seek::Error> {
-        let inline_meta_size = self.data.payload_size().metainfo_size();
-        if self.data.data_len <= inline_meta_size as u64 {
-            return Err(seek::Error::EmptyFile);
-        }
-
-        match start {
-            Bound::Included(ts) => {
-                if ts > self.range.last().expect("data_len > 0") {
-                    return Err(seek::Error::StartAfterData);
-                }
-            }
-            Bound::Excluded(ts) => {
-                if ts >= self.range.last().expect("data_len > 0") {
-                    return Err(seek::Error::StartAfterData);
-                }
-            }
-            Bound::Unbounded => (),
-        };
-
-        match end {
-            Bound::Included(ts) => {
-                if ts < self.range.first().expect("data_len > 0") {
-                    return Err(seek::Error::StopBeforeData);
-                }
-            }
-            Bound::Excluded(ts) => {
-                if ts <= self.range.first().expect("data_len > 0") {
-                    return Err(seek::Error::StopBeforeData);
-                }
-            }
-            Bound::Unbounded => (),
-        };
-
-        Ok(())
     }
 
     /// # Errors

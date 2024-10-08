@@ -31,11 +31,12 @@ pub(super) fn repair_missing_data(
         Some(ts) => Bound::Excluded(ts),
         None => Bound::Unbounded,
     };
-    let Some(seek) = RoughPos::new(source, start_bound, Bound::Unbounded)
-        .map(|p| p.refine(source))
-        .transpose()?
-        .flatten()
-    else {
+    let seek = match RoughPos::new(source, start_bound, Bound::Unbounded) {
+        Ok(seek) => seek,
+        Err(seek::Error::EmptyFile) => return Ok(()),
+        Err(other) => return Err(Error::SeekingSource(other)),
+    };
+    let Some(seek) = seek.refine(source)? else {
         if !downsampled.is_empty() {
             warn!("Repairing downsampled data cache, it is not empty but the source is");
             downsampled.clear().map_err(Error::ClearingDownsampled)?;

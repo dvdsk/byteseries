@@ -3,9 +3,12 @@ use std::ops::Bound;
 
 use tracing::instrument;
 
-use crate::series::data::index::{EndArea, LinePos, MetaPos, PayloadSize, StartArea};
+use crate::series::data::index::{EndArea, LinePos, MetaPos, StartArea};
 use crate::series::data::{Data, MAX_SMALL_TS};
 use crate::Timestamp;
+
+mod estimate;
+pub(crate) use estimate::Estimate;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -19,6 +22,8 @@ pub enum Error {
     StopBeforeData,
     #[error("error while searching through data for precise end or start: {0}")]
     Io(#[from] std::io::Error),
+    #[error("start {start_ts} is smaller then stop {end_ts}")]
+    StartBeforeStop { start_ts: u64, end_ts: u64 },
 }
 
 #[derive(Debug)]
@@ -41,19 +46,17 @@ pub struct RoughPos {
 
 impl RoughPos {
     /// # Returns `None` if the data file is empty
-    #[instrument(level="debug", skip(data), ret)]
+    #[instrument(level = "debug", skip(data), ret)]
     pub(crate) fn new(
         data: &Data,
         start: Bound<Timestamp>,
         end: Bound<Timestamp>,
-    ) -> Option<Self> {
-        let first_time_in_data = data.index.first_meta_timestamp()?;
-        let start_ts = match start {
-            Bound::Included(ts) => ts,
-            Bound::Excluded(ts) => ts - 1,
-            Bound::Unbounded => first_time_in_data,
-        };
-        let start_ts = start_ts.max(first_time_in_data);
+    ) -> Result<Self, Error> {
+        let start_ts = checked_start_time(data, start)?;
+        let end_ts = checked_end_time(data, end)?;
+        if start_ts > end_ts {
+            return Err(Error::StartBeforeStop { start_ts, end_ts });
+        }
 
         let (start_search_area, start_section_full_ts) = match start {
             Bound::Included(_) | Bound::Excluded(_) => data
@@ -61,26 +64,11 @@ impl RoughPos {
                 .start_search_bounds(start_ts, data.payload_size()),
             Bound::Unbounded => (
                 StartArea::Found(MetaPos::ZERO.line_start(data.payload_size())),
-                first_time_in_data,
+                data.index
+                    .first_meta_timestamp()
+                    .expect("first_time() is Some"),
             ),
         };
-
-        let end_ts = match end {
-            Bound::Included(ts) => ts,
-            Bound::Excluded(ts) => ts - 1,
-            Bound::Unbounded => data
-                .last_time()
-                .expect("first time is set so last should be too"),
-        };
-        let last_time_in_data = data
-            .last_time()
-            .expect("first time is set so last should be too");
-        let end_ts = end_ts.min(last_time_in_data);
-
-        assert!(
-            end_ts >= start_ts,
-            "end time ({end_ts}) larger then start ({start_ts})"
-        );
 
         let (end_search_area, end_section_full_ts) = match end {
             Bound::Included(_) | Bound::Excluded(_) => {
@@ -94,7 +82,7 @@ impl RoughPos {
             ),
         };
 
-        Some(Self {
+        Ok(Self {
             start_ts,
             start_search_area,
             end_ts,
@@ -169,104 +157,34 @@ impl RoughPos {
         );
         u16::try_from(start_time).expect("just asserted")
     }
-
-    pub(crate) fn estimate_lines(
-        &self,
-        payload_size: PayloadSize,
-        data_len: u64,
-    ) -> Estimate {
-        use EndArea as End;
-        use StartArea::{Clipped, Found, Gap, TillEnd, Window};
-
-        let estimate_in_bytes =
-            match (self.start_search_area.clone(), self.end_search_area.clone()) {
-                (Found(start) | Gap { stops: start }, End::Found(end)) => Estimate {
-                    max: end - start,
-                    min: end - start,
-                },
-                (Found(start) | Gap { stops: start }, End::Gap { start: end }) => {
-                    Estimate {
-                        max: end.raw_offset() - start.raw_offset(),
-                        min: end.raw_offset() - start.raw_offset(),
-                    }
-                }
-                (Found(start) | Gap { stops: start }, End::TillEnd(end)) => Estimate {
-                    max: data_len - start.0,
-                    min: end - start,
-                },
-                (Found(start) | Gap { stops: start }, End::Window(end_min, end_max)) => {
-                    Estimate {
-                        max: end_max.raw_offset() - start.raw_offset(),
-                        min: end_min - start,
-                    }
-                }
-
-                (Clipped, End::Found(end)) => Estimate {
-                    max: end.raw_offset(),
-                    min: end.raw_offset(),
-                },
-                (Clipped, End::Gap { start: end }) => Estimate {
-                    max: end.raw_offset(),
-                    // incorrect, but we have no better guess for it
-                    min: end.raw_offset(),
-                },
-                (Clipped, End::TillEnd(end)) => Estimate {
-                    max: data_len,
-                    min: end.raw_offset(),
-                },
-                (Clipped, End::Window(end_min, end_max)) => Estimate {
-                    max: end_max.raw_offset(),
-                    min: end_min.raw_offset(),
-                },
-
-                (TillEnd(start), End::Found(end)) => Estimate {
-                    max: end - start,
-                    min: 1,
-                },
-                (TillEnd(start), End::Gap { start: end }) => Estimate {
-                    max: end.line_start(payload_size) - start,
-                    min: 1,
-                },
-                (TillEnd(start), End::TillEnd(_)) => Estimate {
-                    max: data_len - start.raw_offset(),
-                    min: 1,
-                },
-                (TillEnd(_), End::Window(_, _)) => unreachable!(
-                "The start has to lie before the end, if the end is a search area from \
-                min..max then start can not be an area from start..end_of_file"
-            ),
-
-                (Window(start_min, start_max), End::Found(end)) => Estimate {
-                    max: end - start_min,
-                    min: end - start_max.line_start(payload_size),
-                },
-                (Window(start_min, start_max), End::Gap { start: end }) => Estimate {
-                    max: end.raw_offset() - start_min.raw_offset(),
-                    min: end - start_max,
-                },
-                (Window(start_min, start_max), End::TillEnd(end)) => Estimate {
-                    max: data_len - start_min.raw_offset(),
-                    min: end - start_max.line_start(payload_size),
-                },
-                (Window(start_min, start_max), End::Window(end_min, end_max)) => {
-                    Estimate {
-                        max: end_max.raw_offset() - start_min.raw_offset(),
-                        min: end_min - start_max.line_start(payload_size),
-                    }
-                }
-            };
-
-        Estimate {
-            max: estimate_in_bytes.max / payload_size.line_size() as u64,
-            min: estimate_in_bytes.min / payload_size.line_size() as u64,
-        }
-    }
 }
 
-#[derive(Debug)]
-pub(crate) struct Estimate {
-    pub(crate) max: u64,
-    pub(crate) min: u64,
+fn checked_start_time(data: &Data, start: Bound<u64>) -> Result<Timestamp, Error> {
+    let range = data.range().ok_or(Error::EmptyFile)?;
+    let start_ts = match start {
+        Bound::Included(ts) => ts,
+        Bound::Excluded(ts) => ts - 1,
+        Bound::Unbounded => *range.start(),
+    };
+    let start_ts = start_ts.max(*range.start());
+    if start_ts > *range.end() {
+        return Err(Error::StartAfterData);
+    }
+    Ok(start_ts)
+}
+
+fn checked_end_time(data: &Data, end: Bound<u64>) -> Result<Timestamp, Error> {
+    let range = data.range().ok_or(Error::EmptyFile)?;
+    let end_ts = match end {
+        Bound::Included(ts) => ts,
+        Bound::Excluded(ts) => ts - 1,
+        Bound::Unbounded => *range.end(),
+    };
+    let end_ts = end_ts.min(*range.end());
+    if end_ts < *range.start() {
+        return Err(Error::StopBeforeData);
+    }
+    Ok(end_ts)
 }
 
 #[derive(Debug)]
