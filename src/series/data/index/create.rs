@@ -18,9 +18,9 @@ pub enum Error {
     Open(#[from] OpenError),
     #[error("could not extract timestamps from byteseries data: {0}")]
     ExtractingTimestamps(#[from] ExtractingTsError),
-    #[error("appending of a index element failed")]
+    #[error("appending of a index element failed: {0}")]
     Appending(std::io::Error),
-    #[error("could not remove the temporary `.part` extension to the now fully recoverd `byteseries_index` file")]
+    #[error("could not remove the temporary `.part` extension to the now fully recoverd `byteseries_index` file: {0}")]
     Moving(std::io::Error),
 }
 

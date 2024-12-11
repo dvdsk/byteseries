@@ -10,13 +10,13 @@ use crate::Resampler;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Could not seek in source")]
+    #[error("Could not seek in source: {0}")]
     SeekingSource(#[from] seek::Error),
-    #[error("Could not empty (clear) downsampled data")]
+    #[error("Could not empty (clear) downsampled data: {0}")]
     ClearingDownsampled(std::io::Error),
-    #[error("Could not read from source")]
+    #[error("Could not read from source: {0}")]
     ReadingSource(data::ReadError),
-    #[error("Could not add new items to downsampled data")]
+    #[error("Could not add new items to downsampled data: {0}")]
     AppendingToDownsampled(data::PushError),
 }
 
