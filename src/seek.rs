@@ -1,5 +1,5 @@
 use std::io::{Read, Seek, SeekFrom};
-use std::ops::Bound;
+use std::ops::{Bound, RangeInclusive};
 
 use tracing::instrument;
 
@@ -16,8 +16,11 @@ pub enum Error {
     NotFound,
     #[error("data file is empty")]
     EmptyFile,
-    #[error("no data to return as the start time is after the last time in the data")]
-    StartAfterData,
+    #[error("no data, requested start time ({requested}) is later then last time in the data, data range: {}..={}", data_range.start(), data_range.end())]
+    StartAfterData {
+        requested: u64,
+        data_range: RangeInclusive<u64>,
+    },
     #[error("no data to return as the stop time is before the data")]
     StopBeforeData,
     #[error("error while searching through data for precise end or start: {0}")]
@@ -168,7 +171,10 @@ fn checked_start_time(data: &Data, start: Bound<u64>) -> Result<Timestamp, Error
     };
     let start_ts = start_ts.max(*range.start());
     if start_ts > *range.end() {
-        return Err(Error::StartAfterData);
+        return Err(Error::StartAfterData {
+            requested: start_ts,
+            data_range: range,
+        });
     }
     Ok(start_ts)
 }

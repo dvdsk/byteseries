@@ -10,14 +10,39 @@ use crate::Resampler;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Could not seek in source: {0}")]
-    SeekingSource(#[from] seek::Error),
-    #[error("Could not empty (clear) downsampled data: {0}")]
+    #[error("Could not seek in corrosponding undownsampled data")]
+    SeekingSource(
+        #[from]
+        #[source]
+        seek::Error,
+    ),
+    #[error("Could not empty (clear) downsampled data")]
     ClearingDownsampled(std::io::Error),
-    #[error("Could not read from source: {0}")]
-    ReadingSource(data::ReadError),
-    #[error("Could not add new items to downsampled data: {0}")]
-    AppendingToDownsampled(data::PushError),
+    #[error("Could not read from source")]
+    ReadingSource(#[source] data::ReadError),
+    #[error("Could not add new items to downsampled data")]
+    AppendingToDownsampled(#[source] data::PushError),
+}
+
+#[instrument]
+pub(super) fn remove_missing_in_source(
+    source: &mut Data,
+    downsampled: &mut Data,
+    config: &Config,
+    resampler: &mut impl Resampler,
+) -> Result<(), Error> {
+
+    let Some(source_range) = source.range() else {
+        return Ok(())
+    };
+    let Some(last_time) = downsampled.last_time() else {
+        return Ok(())
+    };
+
+    if last_time > *source_range.end() {
+    }
+
+    Ok(())
 }
 
 #[instrument]

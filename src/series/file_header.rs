@@ -109,7 +109,11 @@ pub enum ParseError {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Could not parse info: {0}")]
-    Parsing(#[from] ParseError),
+    Parsing(
+        #[from]
+        #[source]
+        ParseError,
+    ),
     #[error(
         "The library version ({needed}) is incompatible with the version \
         of the file ({file})."

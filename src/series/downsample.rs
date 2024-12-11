@@ -66,35 +66,33 @@ pub enum CreateError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
-    #[error("Failed to open data file: {0}")]
+    #[error("Failed to open data file")]
     Data(data::OpenError),
-    #[error(
-        "Can not check last downsampled item by comparing to source, read error: {0}"
-    )]
+    #[error("Can not check last downsampled item by comparing to source, read error")]
     CanNotCompareToSource(data::ReadError),
     #[error(
         "There should not be a downsampled item since there are not \
         enough items in the source to form one"
     )]
     ShouldBeEmpty,
-    #[error("Could not repair downsampled data cache: {0}")]
-    Repair(repair::Error),
+    #[error("Could not repair downsampled data cache")]
+    Repair(#[source] repair::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenOrCreateError {
-    #[error("Could not open existing file: {0}")]
-    Open(OpenError),
-    #[error("Could not create new file: {0}")]
-    Create(CreateError),
+    #[error("Could not open existing file")]
+    Open(#[source] OpenError),
+    #[error("Could not create new file")]
+    Create(#[source] CreateError),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Could not create new data file: {0}")]
-    Creating(CreateError),
-    #[error("While creating or opening: {0}")]
-    OpenOrCreate(OpenOrCreateError),
+    #[error("Could not create new data file")]
+    Creating(#[source] CreateError),
+    #[error("While creating or opening")]
+    OpenOrCreate(#[source] OpenOrCreateError),
 }
 
 impl<R> DownSampledData<R>
@@ -142,6 +140,8 @@ where
         let mut data = Data::open_existing(path, payload_size)
             .map_err(OpenError::Data)?
             .0;
+        repair::remove_missing_in_source(source, &mut data, &config, &mut resampler)
+            .map_err(OpenError::Repair)?;
         repair::repair_missing_data(source, &mut data, &config, &mut resampler)
             .map_err(OpenError::Repair)?;
 
@@ -234,6 +234,13 @@ where
             let resampled_item = self.resample_state.finish(self.config.bucket_size);
             let resampled_line = self.resampler.encode_item(&resampled_item);
             let resampled_time = self.ts_sum / self.config.bucket_size as u64;
+            assert!(
+                resampled_time <= ts,
+                "resampled_time should never be larger then last timestamp put into bin. \
+                Info, samples_in_bin: {}, bucket_size: {}, last timestamp: {}, \
+                resampled_time: {}", self.samples_in_bin, self.config.bucket_size, 
+                ts, resampled_time
+            );
             self.data.push_data(resampled_time, &resampled_line)?;
             self.samples_in_bin = 0;
             self.ts_sum = 0;

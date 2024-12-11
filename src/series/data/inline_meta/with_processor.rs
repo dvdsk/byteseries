@@ -38,7 +38,10 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     ) -> Result<(), Error<E>> {
         let mut to_read = seek.end - seek.start.raw_offset();
         let chunk_size = 16384usize.next_multiple_of(self.payload_size.line_size());
-        let mut buf = vec![0; chunk_size];
+        // meta section decoding can read at most 3 lines, reading a 4th will always
+        // conclude with a successful decode
+        let max_needed_overlap = 3 * self.payload_size.line_size();
+        let mut buf = vec![0; chunk_size + max_needed_overlap];
 
         self.file_handle
             .seek(SeekFrom::Start(seek.start.raw_offset()))?;

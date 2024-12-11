@@ -84,30 +84,30 @@ pub struct ByteSeries {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("Parameter check failed: {0}")]
+    #[error("Parameter check failed")]
     Parameters(#[from] file_header::Error),
-    #[error("Could not open byteseries: {0}")]
-    Open(data::OpenError),
-    #[error("Failed to create new byteseries: {0}")]
-    Create(data::CreateError),
-    #[error("Error with cached downsampled data: {0}")]
-    Downsampled(downsample::Error),
+    #[error("Could not open byteseries")]
+    Open(#[source] data::OpenError),
+    #[error("Failed to create new byteseries")]
+    Create(#[source] data::CreateError),
+    #[error("Error with cached downsampled data")]
+    Downsampled(#[source] downsample::Error),
     #[error("Could not push, new timestamp: {new} lies before last in data: {prev}")]
     NewLineBeforePrevious { new: u64, prev: u64 },
-    #[error("Could not push to data file: {0}")]
-    Pushing(data::PushError),
-    #[error("Could not updated downsampled data file's metadata: {0}")]
-    Downampling(data::PushError),
-    #[error("Timestamps do not exist in Data: {0}")]
-    InvalidRange(seek::Error),
-    #[error("Error while finding start and end point in data: {0}")]
-    Seeking(seek::Error),
-    #[error("Could not read data: {0}")]
-    Reading(data::ReadError),
+    #[error("Could not push to data file")]
+    Pushing(#[source] data::PushError),
+    #[error("Could not updated downsampled data file's metadata")]
+    Downampling(#[source] data::PushError),
+    #[error("Timestamps do not exist in Data")]
+    InvalidRange(#[source] seek::Error),
+    #[error("Error while finding start and end point in data")]
+    Seeking(#[source] seek::Error),
+    #[error("Could not read data")]
+    Reading(#[source] data::ReadError),
     #[error("Would need to collect more then usize::MAX samples to resample.")]
     TooMuchToResample,
-    #[error("There was an issue checking the passed in header: {0}")]
-    Header(builder::HeaderError),
+    #[error("There was an issue checking the passed in header")]
+    Header(#[source] builder::HeaderError),
     #[error("The line should be exactly: {required} bytes long, it was: {got}")]
     WrongLineLength { required: usize, got: usize },
 }
