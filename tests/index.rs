@@ -20,9 +20,10 @@ fn reconstructed_index_works() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append");
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .create_new(true)
         .payload_size(PAYLOAD_SIZE)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
 
@@ -32,8 +33,9 @@ fn reconstructed_index_works() {
     let created_index = fs::read(&index_path).unwrap();
     fs::remove_file(&index_path).unwrap();
 
-    let _ = ByteSeries::builder()
+    let (_, _) = ByteSeries::builder()
         .payload_size(PAYLOAD_SIZE)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     let reconstructed_index = fs::read(&index_path).unwrap();

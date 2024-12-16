@@ -34,7 +34,7 @@ fn reported_crash1() {
     ];
 
     let test_path = test_dir.child("reported_crash1").join("mhz14");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(2)
         .with_downsampled_cache(FakeFloatResampler { payload_size: 2 }, resample_configs)
         .with_any_header()

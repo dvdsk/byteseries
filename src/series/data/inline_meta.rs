@@ -24,6 +24,7 @@ pub(crate) trait SetLen {
 
 impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     /// Will
+    ///  - remove partial line write at the end of the file
     ///  - truncate the file if it contains only metadata
     ///  - remove a (partial) trailing metadata sections if there is one
     pub(crate) fn new(
@@ -34,6 +35,8 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
             if file.len()? == 0 {
                 break 'check_and_repair;
             }
+
+            repair_incomplete_last_write(&mut file, payload_size)?;
             if repaired_is_only_meta(&mut file, payload_size)? {
                 warn!("repaired file only consisting of a meta section");
                 break 'check_and_repair;
@@ -86,6 +89,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         data: &mut Vec<D::Item>,
         seek: Pos,
     ) -> Result<(), std::io::Error> {
+        #[derive(Debug)]
         struct ReachedN;
 
         let mut n_read = 0;
@@ -95,7 +99,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
             timestamps.push(ts);
             n_read += 1;
 
-            if n_read <= n {
+            if n_read >= n {
                 return Err(ReachedN);
             } else {
                 Ok(())
@@ -174,6 +178,19 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     } else {
         Ok(false)
     }
+}
+fn repair_incomplete_last_write(
+    file: &mut impl SetLen,
+    payload_size: PayloadSize,
+) -> Result<(), std::io::Error> {
+    let rest = file.len()? % (payload_size.line_size() as u64);
+    if rest > 0 {
+        tracing::warn!(
+            "Last write incomplete, truncating to largest multiple of the line size"
+        );
+        file.set_len(file.len()? - rest)?;
+    }
+    Ok(())
 }
 
 fn repaired_is_only_meta<F: fmt::Debug + Read + Seek + SetLen>(

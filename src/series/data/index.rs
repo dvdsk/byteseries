@@ -131,26 +131,27 @@ pub(crate) enum EndArea {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
-    #[error("Could not open index: {0}")]
-    File(file::OpenError),
+    #[error("Could not open index")]
+    File(#[source] file::OpenError),
     #[error("The header in the index and byteseries are different")]
     IndexAndDataHeaderDifferent,
     #[error("reading in index: {0}")]
     Reading(std::io::Error),
-    #[error("Could not check or repair the index: {0}")]
-    CheckOrRepair(#[from] CheckAndRepairError),
+    #[error("Could not check or repair the index")]
+    CheckOrRepair(
+        #[source]
+        #[from]
+        CheckAndRepairError,
+    ),
 }
 
 impl Index {
     #[instrument]
     pub(crate) fn new(
         name: impl AsRef<Path> + fmt::Debug,
-        user_header: &[u8],
     ) -> Result<Index, file::OpenError> {
-        let file = FileWithHeader::new(
-            name.as_ref().with_extension("byteseries_index"),
-            user_header,
-        )?;
+        let file =
+            FileWithHeader::new(name.as_ref().with_extension("byteseries_index"), &[])?;
 
         Ok(Index {
             file: file.split_off_header().0,
@@ -162,21 +163,15 @@ impl Index {
     #[instrument]
     pub(crate) fn open_existing(
         name: impl AsRef<Path> + fmt::Debug,
-        user_header: &[u8],
         last_line_in_data_start: Option<u64>,
         last_full_ts_in_data: Option<Timestamp>,
     ) -> Result<Index, OpenError> {
         let file = FileWithHeader::open_existing(
             name.as_ref().with_extension("byteseries_index"),
-            16,
         )
         .map_err(OpenError::File)?;
 
-        let (mut file, header) = file.split_off_header();
-        if *user_header != header {
-            return Err(OpenError::IndexAndDataHeaderDifferent);
-        }
-
+        let (mut file, _) = file.split_off_header();
         check_and_repair(&mut file, last_line_in_data_start, last_full_ts_in_data)?;
         let mut bytes = Vec::new();
         file.seek(std::io::SeekFrom::Start(0))

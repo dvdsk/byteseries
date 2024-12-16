@@ -2,53 +2,136 @@ use core::fmt;
 use std::path::Path;
 use std::str::Utf8Error;
 
-use ron::ser::PrettyConfig;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-
 use crate::downsample::resample::EmptyResampler;
 use crate::{downsample, series, ByteSeries, Resampler};
 
-pub struct ByteSeriesBuilder<const PAYLOAD_SET: bool, const HEADER_SET: bool, R, H> {
-    payload_size: Option<usize>,
+#[derive(Debug)]
+enum HeaderOption {
+    MustMatch(Vec<u8>),
+    Ignore,
+}
+
+impl HeaderOption {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            HeaderOption::MustMatch(vec) => &vec,
+            HeaderOption::Ignore => &[],
+        }
+    }
+    fn into_bytes(self) -> Vec<u8> {
+        match self {
+            HeaderOption::MustMatch(vec) => vec,
+            HeaderOption::Ignore => Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum PayloadSizeOption {
+    MustMatch(usize),
+    Ignore,
+}
+impl PayloadSizeOption {
+    fn expect(&self, panic_msg: &str) -> usize {
+        match self {
+            PayloadSizeOption::MustMatch(bytes) => *bytes,
+            PayloadSizeOption::Ignore => panic!("{}", panic_msg),
+        }
+    }
+}
+
+pub struct ByteSeriesBuilder<
+    const PAYLOAD_SET: bool,
+    const HEADER_SET: bool,
+    const CAN_CREATE_NEW: bool,
+    const CAN_IGNORE_PAYLOADSIZE: bool,
+    R,
+> {
+    payload_size: PayloadSizeOption,
     create_new: bool,
-    header: H,
+    header: HeaderOption,
     ignore_header: bool,
     resampler: R,
     resample_configs: Vec<downsample::Config>,
 }
 
-impl<const PAYLOAD_SET: bool, const HEADER_SET: bool, R, H>
-    ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, R, H>
+impl<
+        const PAYLOAD_SET: bool,
+        const HEADER_SET: bool,
+        const CAN_IGNORE_PAYLOADSIZE: bool,
+        R,
+    > ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, true, CAN_IGNORE_PAYLOADSIZE, R>
 where
-    H: Serialize + DeserializeOwned + PartialEq + fmt::Debug,
     R: Resampler + Clone + Send + 'static,
     R::State: Send + 'static,
 {
-    pub(crate) fn new() -> ByteSeriesBuilder<false, false, EmptyResampler, ()> {
+    /// Create a new file, fail if it already exists.
+    ///
+    /// Default is false. In which case if no file exists we return
+    /// an error if one does we open it.
+    pub fn create_new(
+        self,
+        create_new: bool,
+    ) -> ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, true, false, R> {
         ByteSeriesBuilder {
-            payload_size: None,
-            header: (),
+            payload_size: self.payload_size,
+            header: self.header,
+            ignore_header: self.ignore_header,
+            resampler: self.resampler,
+            resample_configs: self.resample_configs,
+            create_new,
+        }
+    }
+}
+
+impl<const PAYLOAD_SET: bool, const HEADER_SET: bool, const CAN_CREATE_NEW: bool, R>
+    ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, CAN_CREATE_NEW, true, R>
+where
+    R: Resampler + Clone + Send + 'static,
+    R::State: Send + 'static,
+{
+    pub fn retrieve_payload_size(
+        self,
+    ) -> ByteSeriesBuilder<true, HEADER_SET, false, true, R> {
+        ByteSeriesBuilder {
+            payload_size: PayloadSizeOption::Ignore,
+            header: self.header,
+            ignore_header: self.ignore_header,
+            resampler: self.resampler,
+            resample_configs: self.resample_configs,
+            create_new: self.create_new,
+        }
+    }
+}
+
+impl<
+        const PAYLOAD_SET: bool,
+        const HEADER_SET: bool,
+        const CAN_CREATE_NEW: bool,
+        const CAN_IGNORE_PAYLOADSIZE: bool,
+        R,
+    >
+    ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, CAN_CREATE_NEW, CAN_IGNORE_PAYLOADSIZE, R>
+where
+    R: Resampler + Clone + Send + 'static,
+    R::State: Send + 'static,
+{
+    pub(crate) fn new() -> ByteSeriesBuilder<false, false, true, true, EmptyResampler> {
+        ByteSeriesBuilder {
+            payload_size: PayloadSizeOption::Ignore,
+            header: HeaderOption::Ignore,
             ignore_header: false,
             resampler: EmptyResampler,
             resample_configs: Vec::new(),
             create_new: false,
         }
     }
-    /// Create a new file, fail if it already exists.
-    ///
-    /// Default is false. In which case if no file exists we return
-    /// an error if one does we open it.
-    pub fn create_new(
-        mut self,
-        create_new: bool,
-    ) -> ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, R, H> {
-        self.create_new = create_new;
-        self
-    }
-    pub fn payload_size(self, bytes: usize) -> ByteSeriesBuilder<true, HEADER_SET, R, H> {
+    pub fn payload_size(
+        self,
+        bytes: usize,
+    ) -> ByteSeriesBuilder<true, HEADER_SET, true, true, R> {
         ByteSeriesBuilder {
-            payload_size: Some(bytes),
+            payload_size: PayloadSizeOption::MustMatch(bytes),
             header: self.header,
             ignore_header: self.ignore_header,
             resampler: self.resampler,
@@ -61,15 +144,16 @@ where
     /// one in the file.
     ///
     /// # Warning
-    /// You must pass in a header when opening a file that was created
-    /// with one. If you do not you will get a de-serialization error.
-    pub fn with_header<NewH: Serialize + DeserializeOwned + PartialEq + fmt::Debug>(
+    /// If you use this option you must pass in a header when opening a file
+    /// that was created with one.
+    pub fn with_header(
         self,
-        header: NewH,
-    ) -> ByteSeriesBuilder<PAYLOAD_SET, true, R, NewH> {
+        header: Vec<u8>,
+    ) -> ByteSeriesBuilder<PAYLOAD_SET, true, CAN_CREATE_NEW, CAN_IGNORE_PAYLOADSIZE, R>
+    {
         ByteSeriesBuilder {
             payload_size: self.payload_size,
-            header,
+            header: HeaderOption::MustMatch(header),
             ignore_header: false,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
@@ -78,10 +162,13 @@ where
     }
     /// # Warning
     /// Ignore any existing header.
-    pub fn with_any_header(self) -> ByteSeriesBuilder<PAYLOAD_SET, false, R, ()> {
+    pub fn with_any_header(
+        self,
+    ) -> ByteSeriesBuilder<PAYLOAD_SET, true, CAN_CREATE_NEW, CAN_IGNORE_PAYLOADSIZE, R>
+    {
         ByteSeriesBuilder {
             payload_size: self.payload_size,
-            header: (),
+            header: HeaderOption::Ignore,
             ignore_header: true,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
@@ -92,7 +179,13 @@ where
         self,
         resampler: NewR,
         configs: Vec<downsample::Config>,
-    ) -> ByteSeriesBuilder<PAYLOAD_SET, HEADER_SET, NewR, H> {
+    ) -> ByteSeriesBuilder<
+        PAYLOAD_SET,
+        HEADER_SET,
+        CAN_CREATE_NEW,
+        CAN_IGNORE_PAYLOADSIZE,
+        NewR,
+    > {
         ByteSeriesBuilder {
             payload_size: self.payload_size,
             header: self.header,
@@ -106,10 +199,6 @@ where
 
 #[derive(Debug, thiserror::Error)]
 pub enum HeaderError {
-    #[error("Failed to serialize the header")]
-    Serialize(ron::Error),
-    #[error("Failed to deserialize header, maybe you passed the wrong type header?")]
-    Deserialize(ron::de::SpannedError),
     #[error("Header is not valid utf8, maybe you are working with a binary header?")]
     NotUtf8(Utf8Error),
     #[error(
@@ -129,63 +218,25 @@ pub enum HeaderError {
     Unexpected,
 }
 
-impl<R, H> ByteSeriesBuilder<true, true, R, H>
-where
-    H: Serialize + DeserializeOwned + PartialEq + fmt::Debug,
-    R: Resampler + Clone + Send + 'static,
-    R::State: Send + 'static,
-{
-    pub fn open(
-        self,
-        name: impl AsRef<Path> + fmt::Debug,
-    ) -> Result<(ByteSeries, H), series::Error> {
-        let (bs, header) = if self.create_new {
-            let config = PrettyConfig::new();
-            let serialized = ron::ser::to_string_pretty(&self.header, config)
-                .map_err(HeaderError::Serialize)
-                .map_err(series::Error::Header)?;
-            let bytes = serialized.as_bytes();
-
-            (
-                ByteSeries::new_with_resamplers(
-                    name,
-                    self.payload_size.unwrap(),
-                    bytes,
-                    self.resampler,
-                    self.resample_configs,
-                )?,
-                self.header,
-            )
-        } else {
-            let (bs, header_bytes) = ByteSeries::open_existing_with_resampler(
-                name,
-                self.payload_size.unwrap(),
-                self.resampler,
-                self.resample_configs,
-            )?;
-
-            let header_text = std::str::from_utf8(&header_bytes)
-                .map_err(HeaderError::NotUtf8)
-                .map_err(series::Error::Header)?;
-            let header = ron::from_str(header_text)
-                .map_err(HeaderError::Deserialize)
-                .map_err(series::Error::Header)?;
-
-            if header != self.header {
-                return Err(series::Error::Header(HeaderError::Mismatch {
-                    passed_in: format!("{:?}", self.header),
-                    in_opened: format!("{:?}", self.header),
-                }));
+impl HeaderError {
+    fn mismatch(expected: Vec<u8>, in_file: Vec<u8>) -> Self {
+        if let Ok(expected) = String::from_utf8(expected.clone()) {
+            Self::Mismatch {
+                passed_in: expected,
+                in_opened: String::from_utf8_lossy(&in_file).to_string(),
             }
-
-            (bs, header)
-        };
-
-        Ok((bs, header))
+        } else {
+            Self::Mismatch {
+                passed_in: format!("{expected:?}"),
+                in_opened: format!("{in_file:?}"),
+            }
+        }
     }
 }
 
-impl<R> ByteSeriesBuilder<true, false, R, ()>
+/// payload is set we can thus both create and open new series
+impl<const CAN_IGNORE_PAYLOADSIZE: bool, R>
+    ByteSeriesBuilder<true, true, true, CAN_IGNORE_PAYLOADSIZE, R>
 where
     R: Resampler + Clone + Send + 'static,
     R::State: Send + 'static,
@@ -193,30 +244,65 @@ where
     pub fn open(
         self,
         name: impl AsRef<Path> + fmt::Debug,
-    ) -> Result<ByteSeries, series::Error> {
+    ) -> Result<(ByteSeries, Vec<u8>), series::Error> {
         let bs = if self.create_new {
             ByteSeries::new_with_resamplers(
                 name,
-                self.payload_size.unwrap(),
-                &[],
+                self.payload_size.expect("CAN_CREATE_NEW is true"),
+                &self.header.as_bytes(),
                 self.resampler,
                 self.resample_configs,
             )?
         } else {
-            let (bs, header_bytes) = ByteSeries::open_existing_with_resampler(
+            let (bs, in_file) = ByteSeries::open_existing_with_resampler(
                 name,
-                self.payload_size.unwrap(),
+                self.payload_size,
                 self.resampler,
                 self.resample_configs,
             )?;
 
-            if !header_bytes.is_empty() && !self.ignore_header {
-                return Err(series::Error::Header(HeaderError::Unexpected));
-            }
-
+            match self.header {
+                HeaderOption::MustMatch(expected) if in_file != expected => {
+                    return Err(series::Error::Header(HeaderError::mismatch(
+                        expected, in_file,
+                    )))
+                }
+                HeaderOption::MustMatch(_) | HeaderOption::Ignore => (),
+            };
             bs
         };
 
-        Ok(bs)
+        Ok((bs, self.header.into_bytes()))
+    }
+}
+
+/// payload is not set and thus we an only try and open a file
+impl<const CAN_IGNORE_PAYLOADSIZE: bool, R>
+    ByteSeriesBuilder<true, true, false, CAN_IGNORE_PAYLOADSIZE, R>
+where
+    R: Resampler + Clone + Send + 'static,
+    R::State: Send + 'static,
+{
+    pub fn open(
+        self,
+        name: impl AsRef<Path> + fmt::Debug,
+    ) -> Result<(ByteSeries, Vec<u8>), series::Error> {
+        let (bs, in_file) = ByteSeries::open_existing_with_resampler(
+            name,
+            self.payload_size,
+            self.resampler,
+            self.resample_configs,
+        )?;
+
+        match self.header {
+            HeaderOption::MustMatch(expected) if in_file != expected => {
+                return Err(series::Error::Header(HeaderError::mismatch(
+                    expected, in_file,
+                )))
+            }
+            HeaderOption::MustMatch(_) | HeaderOption::Ignore => (),
+        };
+
+        Ok((bs, self.header.into_bytes()))
     }
 }

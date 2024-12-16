@@ -29,9 +29,10 @@ fn no_downsampled_cache(
 ) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_no_downsample_cache");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .create_new(true)
         .payload_size(4)
+        .with_any_header()
         .open(test_path)
         .unwrap();
     insert_lines(&mut bs, n_lines, T1, T2);
@@ -53,7 +54,7 @@ fn no_downsampled_cache(
 fn ideal_downsampled_cache() {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("downsampled_cache_present");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(4)
         .create_new(true)
         .with_downsampled_cache(
@@ -63,6 +64,7 @@ fn ideal_downsampled_cache() {
                 bucket_size: 10,
             }],
         )
+        .with_any_header()
         .open(test_path)
         .unwrap();
     insert_lines(&mut bs, 1000, T1, T2);
@@ -83,10 +85,11 @@ fn with_cache_same_as_without() {
     let mut timestamps_without_cache = Vec::new();
     let mut data_without_cache = Vec::new();
     {
-        let mut bs = ByteSeries::builder()
+        let (mut bs, _) = ByteSeries::builder()
             .payload_size(4)
             .create_new(true)
             .with_downsampled_cache(FloatResampler, Vec::new())
+            .with_any_header()
             .open(&test_path)
             .unwrap();
         insert_lines(&mut bs, 1000, T1, T2);
@@ -104,7 +107,7 @@ fn with_cache_same_as_without() {
     let mut timestamps_with_cache = Vec::new();
     let mut data_with_cache = Vec::new();
     {
-        let mut bs = ByteSeries::builder()
+        let (mut bs, _) = ByteSeries::builder()
             .payload_size(4)
             .with_downsampled_cache(
                 FloatResampler,
@@ -113,6 +116,7 @@ fn with_cache_same_as_without() {
                     bucket_size: 10,
                 }],
             )
+            .with_any_header()
             .open(test_path)
             .unwrap();
         bs.range().unwrap();
@@ -152,19 +156,21 @@ fn undamaged_downsampled_passes_checks(#[case] lines_more_then_bucket_size: u64)
         bucket_size: 10,
     }];
     {
-        let mut bs = ByteSeries::builder()
+        let (mut bs, _) = ByteSeries::builder()
             .payload_size(4)
             .create_new(true)
             .with_downsampled_cache(FloatResampler, resample_configs.clone())
+            .with_any_header()
             .open(&test_path)
             .unwrap();
 
         insert_lines(&mut bs, 10 + lines_more_then_bucket_size, T1, T2);
     }
 
-    let mut _bs = ByteSeries::builder()
+    let (mut _bs, _) = ByteSeries::builder()
         .payload_size(4)
         .with_downsampled_cache(FloatResampler, resample_configs)
+        .with_any_header()
         .open(test_path)
         .unwrap();
 }

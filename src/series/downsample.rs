@@ -48,6 +48,7 @@ pub(crate) struct DownSampledData<R: Resampler> {
 
     config: Config,
     samples_in_bin: usize,
+    debug_tss: Vec<Timestamp>,
 
     resampler: R,
     ts_sum: Timestamp,
@@ -57,19 +58,19 @@ pub(crate) struct DownSampledData<R: Resampler> {
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
     #[error("{0}")]
-    CreateData(data::CreateError),
+    CreateData(#[source] data::CreateError),
     #[error("Could not read existing data to downsample: {0}")]
     ReadSource(std::io::Error),
     #[error("Could not write out downsampled pre existing data: {0}")]
-    WriteOut(data::PushError),
+    WriteOut(#[source] data::PushError),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
     #[error("Failed to open data file")]
-    Data(data::OpenError),
+    Data(#[source] data::OpenError),
     #[error("Can not check last downsampled item by comparing to source, read error")]
-    CanNotCompareToSource(data::ReadError),
+    CanNotCompareToSource(#[source] data::ReadError),
     #[error(
         "There should not be a downsampled item since there are not \
         enough items in the source to form one"
@@ -119,6 +120,7 @@ where
             config,
             ts_sum: 0,
             samples_in_bin: 0,
+            debug_tss: Vec::new(),
         })
     }
 
@@ -137,12 +139,14 @@ where
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
 
-        let mut data = Data::open_existing(path, payload_size)
-            .map_err(OpenError::Data)?
-            .0;
+        let file = crate::file::FileWithHeader::open_existing(path.clone()).unwrap();
+        let (file, _) = file.split_off_header();
+        let mut data =
+            Data::open_existing(path, file, payload_size).map_err(OpenError::Data)?;
+
         repair::remove_missing_in_source(source, &mut data, &config, &mut resampler)
             .map_err(OpenError::Repair)?;
-        repair::repair_missing_data(source, &mut data, &config, &mut resampler)
+        repair::add_missing_data(source, &mut data, &config, &mut resampler)
             .map_err(OpenError::Repair)?;
 
         Ok(Self {
@@ -152,6 +156,7 @@ where
             config,
             ts_sum: 0,
             samples_in_bin: 0,
+            debug_tss: Vec::new(),
         })
     }
 
@@ -205,9 +210,10 @@ where
             payload_size,
         ) {
             Ok(downsampled) => return Ok(downsampled),
-            Err(OpenError::Data(data::OpenError::File(file::OpenError::Io(
-                io_error,
-            )))) if io_error.kind() == io::ErrorKind::NotFound => {
+            Err(OpenError::Data(data::OpenError::File {
+                source: file::OpenError::Io(io_error),
+                ..
+            })) if io_error.kind() == io::ErrorKind::NotFound => {
                 tracing::info!("No downsampled data cache, creating one now");
             }
             Err(e) => return Err(OpenOrCreateError::Open(e)),
@@ -228,6 +234,7 @@ where
         let data = self.resampler.decode_payload(line);
         self.resample_state.add(data);
         self.ts_sum += ts;
+        self.debug_tss.push(ts);
 
         self.samples_in_bin += 1;
         if self.samples_in_bin >= self.config.bucket_size {
@@ -238,12 +245,13 @@ where
                 resampled_time <= ts,
                 "resampled_time should never be larger then last timestamp put into bin. \
                 Info, samples_in_bin: {}, bucket_size: {}, last timestamp: {}, \
-                resampled_time: {}", self.samples_in_bin, self.config.bucket_size, 
-                ts, resampled_time
+                resampled_time: {}, ts's in bin: {:?}", self.samples_in_bin, self.config.bucket_size, 
+                ts, resampled_time, self.debug_tss
             );
             self.data.push_data(resampled_time, &resampled_line)?;
             self.samples_in_bin = 0;
             self.ts_sum = 0;
+            self.debug_tss.clear();
         }
 
         Ok(())

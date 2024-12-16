@@ -33,9 +33,10 @@ fn before_matches_after_repair() {
 
     shorten_downsampled(&test_path, config.clone());
 
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(4)
         .with_downsampled_cache(FloatResampler, vec![config])
+        .with_any_header()
         .open(&test_path)
         .unwrap();
 
@@ -63,9 +64,10 @@ fn downsampled_has_more_items() {
 
     shorten_source_data(&test_path, 4);
 
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(4)
         .with_downsampled_cache(FloatResampler, vec![config])
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     let range_after = bs.range();
@@ -89,17 +91,19 @@ fn repair_empty() {
     };
 
     {
-        let _ = ByteSeries::builder()
+        let (_, _) = ByteSeries::builder()
             .payload_size(4)
             .create_new(true)
             .with_downsampled_cache(FloatResampler, vec![config.clone()])
+            .with_any_header()
             .open(&test_path)
             .unwrap();
     }
 
-    let _ = ByteSeries::builder()
+    let (_, _) = ByteSeries::builder()
         .payload_size(4)
         .with_downsampled_cache(FloatResampler, vec![config])
+        .with_any_header()
         .open(&test_path)
         .unwrap();
 }
@@ -140,10 +144,11 @@ fn read(bs: &mut ByteSeries) -> (Vec<Timestamp>, Vec<f32>) {
 }
 
 fn create_and_fill(test_path: &Path, config: downsample::Config) -> ByteSeries {
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(4)
         .create_new(true)
         .with_downsampled_cache(FloatResampler, vec![config])
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     insert_lines(&mut bs, 1000, T1, T2);

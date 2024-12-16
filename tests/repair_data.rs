@@ -34,17 +34,19 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
     let series_path = test_path.clone().with_extension("byteseries");
     {
         // creates the preamble etc
-        let _ = ByteSeries::builder()
+        let (_, _) = ByteSeries::builder()
             .create_new(true)
             .payload_size(payload_size)
+            .with_any_header()
             .open(&test_path)
             .unwrap();
     }
     let len_without_data = std::fs::metadata(&series_path).unwrap().len();
 
     {
-        let mut series = ByteSeries::builder()
+        let (mut series, _) = ByteSeries::builder()
             .payload_size(payload_size)
+            .with_any_header()
             .open(&test_path)
             .unwrap();
         series.push_line(42, vec![12; payload_size]).unwrap();
@@ -60,8 +62,9 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
         .set_len(only_preamble_and_metadata_left)
         .unwrap();
 
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .payload_size(payload_size)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     let mut timestamps = Vec::new();
@@ -85,9 +88,10 @@ fn partial_meta_at_end(#[case] payload_size: usize) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("partial_meta_at_end");
     {
-        let mut series = ByteSeries::builder()
+        let (mut series, _) = ByteSeries::builder()
             .create_new(true)
             .payload_size(payload_size)
+            .with_any_header()
             .open(&test_path)
             .unwrap();
         series.push_line(42, vec![15; payload_size]).unwrap();
@@ -102,8 +106,9 @@ fn partial_meta_at_end(#[case] payload_size: usize) {
     let len = series_file.metadata().unwrap().len();
     series_file.set_len(len - 4).unwrap();
 
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .payload_size(payload_size)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     let mut timestamps = Vec::new();
@@ -121,9 +126,10 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("meta_start_as_last_line");
     {
-        let mut series = ByteSeries::builder()
+        let (mut series, _) = ByteSeries::builder()
             .create_new(true)
             .payload_size(payload_size)
+            .with_any_header()
             .open(&test_path)
             .unwrap();
         series.push_line(42, vec![15; payload_size]).unwrap();
@@ -146,8 +152,9 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
         .set_len(len - meta_section_without_last_line_size - line_size as u64)
         .unwrap();
 
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .payload_size(payload_size)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     let mut timestamps = Vec::new();

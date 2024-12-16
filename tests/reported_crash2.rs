@@ -18,7 +18,7 @@ fn reported_crash2() {
     .unwrap();
 
     let test_path = test_dir.child("reported_crash2").join("sps30");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(204)
         .with_any_header()
         .open(&test_path)

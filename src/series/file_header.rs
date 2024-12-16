@@ -1,6 +1,8 @@
 use std::num::ParseIntError;
 use std::str::Utf8Error;
 
+use crate::builder::PayloadSizeOption;
+
 use super::data::index::PayloadSize;
 
 const VERSION: u16 = 1;
@@ -132,8 +134,8 @@ pub enum Error {
 
 pub(crate) fn check_and_split_off_user_header(
     mut header: Vec<u8>,
-    payload_size: PayloadSize,
-) -> Result<Vec<u8>, Error> {
+    payload_size_option: PayloadSizeOption,
+) -> Result<(PayloadSize, Vec<u8>), Error> {
     let text_len = header[0..4].try_into().map_err(|_| Error::TooShort)?;
     let text_len = u32::from_le_bytes(text_len) as usize;
 
@@ -148,13 +150,17 @@ pub(crate) fn check_and_split_off_user_header(
         });
     }
 
-    if params.payload_size != payload_size.raw() {
-        return Err(Error::PayloadSizeChanged {
-            given: payload_size.raw(),
-            file: params.payload_size,
-        });
+    match payload_size_option {
+        PayloadSizeOption::MustMatch(configured) if params.payload_size != configured => {
+            return Err(Error::PayloadSizeChanged {
+                given: configured,
+                file: params.payload_size,
+            });
+        }
+        PayloadSizeOption::MustMatch(_) | PayloadSizeOption::Ignore => (),
     }
 
     header.drain(0..text_len + core::mem::size_of::<u32>());
-    Ok(header)
+    let payload_size = PayloadSize::from_raw(params.payload_size);
+    Ok((payload_size, header))
 }

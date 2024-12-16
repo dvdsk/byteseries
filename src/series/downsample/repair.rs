@@ -46,7 +46,7 @@ pub(super) fn remove_missing_in_source(
 }
 
 #[instrument]
-pub(super) fn repair_missing_data(
+pub(super) fn add_missing_data(
     source: &mut Data,
     downsampled: &mut Data,
     config: &Config,

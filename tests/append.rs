@@ -29,9 +29,10 @@ fn compare_written_to_read() {
     let timestamp = 1719330938;
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append_hashes_then_verify");
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .payload_size(8)
         .create_new(true)
+        .with_any_header()
         .open(test_path)
         .unwrap();
     insert_timestamps(&mut series, NUMBER_TO_INSERT as u32, PERIOD, timestamp);
@@ -59,9 +60,10 @@ fn append_refused_if_time_old() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("append_refused_if_time_old");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(0)
         .create_new(true)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     bs.push_line(1, &[]).unwrap();
@@ -76,8 +78,9 @@ fn append_refused_if_time_old() {
 
     drop(bs);
 
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(0)
+        .with_any_header()
         .open(test_path)
         .unwrap();
     assert_eq!(bs.range(), Some(1..=3));
@@ -95,9 +98,10 @@ fn append_after_reopen_empty_works() {
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("append_after_reopen_empty");
     {
-        let mut bs = ByteSeries::builder()
+        let (mut bs, _) = ByteSeries::builder()
             .payload_size(0)
             .create_new(true)
+            .with_any_header()
             .open(&test_path)
             .unwrap();
         assert!(matches!(
@@ -106,8 +110,9 @@ fn append_after_reopen_empty_works() {
         ));
     }
 
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(0)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     bs.push_line(1700000000, &[]).unwrap();

@@ -6,6 +6,7 @@ use crate::Pos;
 
 use super::{meta, FileWithInlineMeta, SetLen, Timestamp};
 
+#[derive(Debug)]
 pub(crate) enum Error<E> {
     Io(std::io::Error),
     Processor(E),
@@ -31,7 +32,7 @@ impl<E: fmt::Debug> Error<E> {
 
 impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     #[instrument(level = "debug", skip(processor))]
-    pub(crate) fn read_with_processor<E>(
+    pub(crate) fn read_with_processor<E: std::fmt::Debug>(
         &mut self,
         seek: Pos,
         mut processor: impl FnMut(Timestamp, &[u8]) -> Result<(), E>,

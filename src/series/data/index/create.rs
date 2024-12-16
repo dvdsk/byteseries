@@ -38,10 +38,9 @@ impl Index {
         byteseries: &mut OffsetFile,
         payload_size: PayloadSize,
         name: impl AsRef<Path> + fmt::Debug,
-        header: &[u8],
     ) -> Result<Self, Error> {
         let temp_path = name.as_ref().with_extension("byteseries_index.part");
-        let index_file = FileWithHeader::new(&temp_path, &header)?;
+        let index_file = FileWithHeader::new(&temp_path, &[])?;
         let entries = extract_entries(byteseries, payload_size)?;
 
         let mut index = Self {

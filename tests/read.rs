@@ -27,9 +27,10 @@ fn last_line_is_correct() {
     let timestamp = 1719330938;
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append_hashes_then_verify");
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .create_new(true)
         .payload_size(8)
+        .with_any_header()
         .open(&test_path)
         .unwrap();
     insert_timestamps(&mut series, NUMBER_TO_INSERT as u32, PERIOD, timestamp);
@@ -88,9 +89,10 @@ fn read_a_single_item() {
     let timestamp = 1700000000;
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_append_hashes_then_verify");
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .create_new(true)
         .payload_size(5)
+        .with_any_header()
         .open(test_path)
         .unwrap();
     series.push_line(timestamp, &[1u8; 5]).unwrap();

@@ -32,9 +32,10 @@ fn beyond_range(#[case] step: u64) {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut series = ByteSeries::builder()
+    let (mut series, _) = ByteSeries::builder()
         .payload_size(PAYLOAD_SIZE)
         .create_new(true)
+        .with_any_header()
         .open(test_path)
         .unwrap();
 
@@ -47,10 +48,9 @@ fn beyond_range(#[case] step: u64) {
 
     match read_res {
         Err(e) => match e {
-            byteseries::series::Error::InvalidRange(e) => assert!(
-                std::mem::discriminant(&e)
-                    == std::mem::discriminant(&Error::StartAfterData)
-            ),
+            byteseries::series::Error::InvalidRange(e) => {
+                assert!(matches!(e, Error::StartAfterData { .. }))
+            }
             _ => panic!("sampler should be error StartAfterData"),
         },
         Ok(_) => {
@@ -79,9 +79,10 @@ fn within_range(#[case] step: u64) {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(PAYLOAD_SIZE)
         .create_new(true)
+        .with_any_header()
         .open(test_path)
         .unwrap();
 
@@ -109,9 +110,10 @@ fn before_range() {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(PAYLOAD_SIZE)
         .create_new(true)
+        .with_any_header()
         .open(test_path)
         .unwrap();
     bs.push_line(100, &vec![0u8; 8]).unwrap();
@@ -142,9 +144,10 @@ fn into_gap(#[case] read_start: Timestamp, #[case] read_end: Timestamp) {
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("test_beyond_range");
-    let mut bs = ByteSeries::builder()
+    let (mut bs, _) = ByteSeries::builder()
         .payload_size(PAYLOAD_SIZE)
         .create_new(true)
+        .with_any_header()
         .open(test_path)
         .unwrap();
     bs.push_line(0, &vec![0u8; 8]).unwrap();

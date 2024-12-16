@@ -13,6 +13,7 @@ mod file_header;
 use data::index::PayloadSize;
 use data::Data;
 
+use crate::builder::PayloadSizeOption;
 use crate::seek::{self, Estimate};
 use crate::{builder, Decoder, Resampler, Timestamp};
 
@@ -110,11 +111,20 @@ pub enum Error {
     Header(#[source] builder::HeaderError),
     #[error("The line should be exactly: {required} bytes long, it was: {got}")]
     WrongLineLength { required: usize, got: usize },
+    #[error(
+        "New line timestamp ({got}) is earlier then the last time in \
+        the series ({last_time})"
+    )]
+    TimeOutOfOrder {
+        last_time: Timestamp,
+        got: Timestamp,
+    },
 }
 
 impl ByteSeries {
-    pub fn builder() -> builder::ByteSeriesBuilder<false, false, EmptyResampler, ()> {
-        builder::ByteSeriesBuilder::<false, false, EmptyResampler, ()>::new()
+    pub fn builder(
+    ) -> builder::ByteSeriesBuilder<false, false, true, true, EmptyResampler> {
+        builder::ByteSeriesBuilder::<false, false, true, true, EmptyResampler>::new()
     }
 
     #[instrument]
@@ -172,7 +182,7 @@ impl ByteSeries {
     #[instrument]
     pub(crate) fn open_existing_with_resampler<R>(
         name: impl AsRef<Path> + fmt::Debug,
-        payload_size: usize,
+        payload_size: PayloadSizeOption,
         resampler: R,
         resample_configs: Vec<downsample::Config>,
     ) -> Result<(ByteSeries, Vec<u8>), Error>
@@ -180,11 +190,14 @@ impl ByteSeries {
         R: Resampler + Clone + Send + 'static,
         R::State: Send + 'static,
     {
-        let payload_size = PayloadSize::from_raw(payload_size);
-        let (mut data, header) =
-            Data::open_existing(&name, payload_size).map_err(Error::Open)?;
-        let user_header =
-            file_header::check_and_split_off_user_header(header, payload_size)?;
+        let path = name.as_ref().with_extension("byteseries");
+        let file = crate::file::FileWithHeader::open_existing(path.clone()).unwrap();
+        let (file, header) = file.split_off_header();
+        let (payload_size, user_header) =
+            file_header::check_and_split_off_user_header(header.clone(), payload_size)?;
+
+        let mut data = Data::open_existing(&name, file, payload_size)
+            .map_err(Error::Open)?;
         Ok((
             ByteSeries {
                 range: TimeRange::from_data(&mut data),
@@ -221,6 +234,15 @@ impl ByteSeries {
                 required: self.data.payload_size().raw(),
                 got: line.as_ref().len(),
             });
+        }
+
+        if let Some(range) = self.range() {
+            if ts <= *range.end() {
+                return Err(Error::TimeOutOfOrder {
+                    last_time: *range.end(),
+                    got: ts,
+                });
+            }
         }
 
         //write 16 bit timestamp and then the line to file
@@ -443,5 +465,16 @@ impl ByteSeries {
     #[allow(clippy::missing_panics_doc)] // is bug if panic
     pub fn range(&self) -> Option<core::ops::RangeInclusive<Timestamp>> {
         self.range.clone().into()
+    }
+
+    /// Returns the length of the series data file. The data may be bigger
+    /// if it is stored in some compressed method. The byteseries file is larger
+    /// since it also includes a header.
+    pub fn len(&self) -> u64 {
+        self.data.data_len
+    }
+
+    pub fn payload_size(&self) -> usize {
+        self.data.payload_size().raw()
     }
 }

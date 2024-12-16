@@ -80,10 +80,7 @@ impl FileWithHeader {
     }
 
     #[instrument(fields(file_len, user_header_len, header_len))]
-    pub(crate) fn open_existing(
-        path: PathBuf,
-        line_size: usize,
-    ) -> Result<FileWithHeader, OpenError> {
+    pub(crate) fn open_existing(path: PathBuf) -> Result<FileWithHeader, OpenError> {
         let mut file = OpenOptions::new()
             .read(true)
             .append(true)
@@ -97,11 +94,6 @@ impl FileWithHeader {
         let mut user_header = vec![0; user_header_len as usize];
         file.seek(std::io::SeekFrom::Start(USER_HEADER_STARTS as u64))?;
         file.read_exact(&mut user_header)?;
-        // let user_header =
-        //     ron::de::from_bytes(&user_header).map_err(|error| HeaderDeserErr {
-        //         error,
-        //         header: user_header,
-        //     });
         let header_len = user_header_len as usize
             + LINE_ENDS.len()
             + mem::size_of_val(&user_header_len);
@@ -110,15 +102,6 @@ impl FileWithHeader {
             .record("file_len", metadata.len())
             .record("user_header_len", user_header_len)
             .record("header_len", header_len);
-
-        let len_without_header = metadata.len() - header_len as u64;
-        let rest = len_without_header % (line_size as u64);
-        if rest > 0 {
-            tracing::warn!(
-                "Last write incomplete, truncating to largest multiple of the line size"
-            );
-            file.set_len(metadata.len() - rest)?;
-        }
 
         Ok(FileWithHeader {
             handle: file,

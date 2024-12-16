@@ -1,7 +1,7 @@
 use core::fmt;
 use std::io::Write;
 use std::ops::RangeInclusive;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{instrument, warn};
 
 use crate::file::{self, FileWithHeader, OffsetFile};
@@ -38,20 +38,28 @@ impl Decoder for EmptyDecoder {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
-    #[error("Could not create the data file: {0}")]
-    File(file::OpenError),
+    #[error("Could not create the data file at path: {path:?}")]
+    File {
+        #[source]
+        source: file::OpenError,
+        path: PathBuf,
+    },
     #[error("Could not check file for integrity or repair it: {0}")]
     CheckOrRepair(std::io::Error),
-    #[error("Could not create the index file: {0}")]
-    Index(file::OpenError),
+    #[error("Could not create the index file")]
+    Index(#[source] file::OpenError),
     #[error("Failed to get the length of the data: {0}")]
     GetLength(std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
-    #[error("{0}")]
-    File(file::OpenError),
+    #[error("Can not open, path: {path}")]
+    File {
+        #[source]
+        source: file::OpenError,
+        path: PathBuf,
+    },
     #[error("Could not check file for integrity or repair it: {0}")]
     CheckOrRepair(std::io::Error),
     #[error("{0}")]
@@ -60,17 +68,17 @@ pub enum OpenError {
     GetLength(std::io::Error),
     #[error(
         "Could not find last full time in data, needed to check\
-        index integrity: {0}"
+        index integrity"
     )]
-    GetLastMeta(ExtractingTsError),
-    #[error("Could not read the last line to get the last time in Data: {0}")]
-    ReadLastTime(ReadError),
+    GetLastMeta(#[source] ExtractingTsError),
+    #[error("Could not read the last line to get the last time in Data")]
+    ReadLastTime(#[source] ReadError),
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum PushError {
-    #[error("{0}")]
-    File(file::OpenError),
+    #[error("Error opening file")]
+    File(#[source] file::OpenError),
     #[error("Could not insert meta section {0}")]
     Meta(std::io::Error),
     #[error("Failed to update index {0}")]
@@ -99,14 +107,14 @@ impl Data {
         payload_size: PayloadSize,
         header: &[u8],
     ) -> Result<Self, CreateError> {
-        let file =
-            FileWithHeader::new(name.as_ref().with_extension("byteseries"), header)
-                .map_err(CreateError::File)?;
+        let path = name.as_ref().with_extension("byteseries");
+        let file = FileWithHeader::new(&path, header)
+            .map_err(|source| CreateError::File { source, path })?;
         let (file_handle, _) = file.split_off_header();
         let data_len = file_handle.data_len().map_err(CreateError::GetLength)?;
         let file_handle = FileWithInlineMeta::new(file_handle, payload_size)
             .map_err(CreateError::CheckOrRepair)?;
-        let index = Index::new(name, header).map_err(CreateError::Index)?;
+        let index = Index::new(name).map_err(CreateError::Index)?;
         Ok(Self {
             file_handle,
             index,
@@ -119,38 +127,23 @@ impl Data {
     #[instrument]
     pub(crate) fn open_existing(
         name: impl AsRef<Path> + fmt::Debug,
+        file: OffsetFile,
         payload_size: PayloadSize,
-    ) -> Result<(Data, Vec<u8>), OpenError> {
-        let file = FileWithHeader::open_existing(
-            name.as_ref().with_extension("byteseries"),
-            payload_size.line_size(),
-        )
-        .map_err(OpenError::File)?;
-        let (file, header) = file.split_off_header();
-
+    ) -> Result<Data, OpenError> {
         let mut file = FileWithInlineMeta::new(file, payload_size)
             .map_err(OpenError::CheckOrRepair)?;
         let data_len = file.file_handle.data_len().map_err(OpenError::GetLength)?;
         let last_line_starts = data_len.checked_sub((payload_size.line_size()) as u64);
         let last_full_ts_in_data = last_meta_timestamp(file.inner_mut(), payload_size)
             .map_err(OpenError::GetLastMeta)?;
-        let index = match Index::open_existing(
-            &name,
-            &header,
-            last_line_starts,
-            last_full_ts_in_data,
-        ) {
-            Ok(index) => index,
-            Err(e) => {
-                warn!("Creating new index, existing is broken: {e}");
-                Index::create_from_byteseries(
-                    file.inner_mut(),
-                    payload_size,
-                    name,
-                    &header,
-                )?
-            }
-        };
+        let index =
+            match Index::open_existing(&name, last_line_starts, last_full_ts_in_data) {
+                Ok(index) => index,
+                Err(e) => {
+                    warn!("Creating new index, existing is broken: {e}");
+                    Index::create_from_byteseries(file.inner_mut(), payload_size, name)?
+                }
+            };
 
         let last_time =
             match last_line(&index, data_len, payload_size, &mut file, &mut EmptyDecoder)
@@ -167,7 +160,7 @@ impl Data {
             data_len,
             last_time,
         };
-        Ok((data, header))
+        Ok(data)
     }
 
     /// # Errors
@@ -259,7 +252,7 @@ impl Data {
         Ok(())
     }
 
-    /// asks the os to write its buffers and block till its done
+    /// asks the OS to write its buffers and block till its done
     pub(crate) fn flush_to_disk(&mut self) -> std::io::Result<()> {
         self.file_handle.inner_mut().sync_data()?;
         self.index.file.sync_data()?;
