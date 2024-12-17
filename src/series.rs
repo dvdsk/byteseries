@@ -52,7 +52,7 @@ impl TimeRange {
     fn update(&mut self, new_ts: Timestamp) -> Result<(), Error> {
         let new = match self {
             Self::Some(range) if *range.end() >= new_ts => {
-                return Err(Error::NewLineBeforePrevious {
+                return Err(Error::TimeNotAfterLast {
                     new: new_ts,
                     prev: *range.end(),
                 })
@@ -97,7 +97,7 @@ pub enum Error {
         "Could not push, new timestamp: {new} is the same or lies \
         before last in data: {prev}"
     )]
-    NewLineBeforePrevious { new: u64, prev: u64 },
+    TimeNotAfterLast { new: u64, prev: u64 },
     #[error("Could not push to data file")]
     Pushing(#[source] data::PushError),
     #[error("Could not updated downsampled data file's metadata")]
@@ -453,11 +453,9 @@ impl ByteSeries {
         self.range.clone().into()
     }
 
-    /// Returns the length of the series data file. The data may be bigger
-    /// if it is stored in some compressed method. The byteseries file is larger
-    /// since it also includes a header.
+    /// Returns the number of lines in the file. 
     pub fn len(&self) -> u64 {
-        self.data.data_len
+        self.data.len()
     }
 
     pub fn payload_size(&self) -> usize {

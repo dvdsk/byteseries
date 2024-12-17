@@ -108,7 +108,6 @@ impl Data {
         header: &[u8],
     ) -> Result<Self, CreateError> {
         let path = name.as_ref().with_extension("byteseries");
-        dbg!(&path);
         let file = FileWithHeader::new(&path, header)
             .map_err(|source| CreateError::File { source, path })?;
         let (file_handle, _) = file.split_off_header();
@@ -324,6 +323,10 @@ impl Data {
         self.index.clear()?;
         self.data_len = 0;
         Ok(())
+    }
+
+    pub(crate) fn len(&self) -> u64 {
+        self.data_len / self.payload_size().line_size() as u64
     }
 }
 

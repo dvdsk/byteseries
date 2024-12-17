@@ -17,7 +17,8 @@ impl Decoder for CopyDecoder {
 }
 
 fn main() {
-    let (_, path) = parse_args();
+    color_eyre::install().unwrap();
+    let path = parse_args();
 
     let backup_path = make_backup(&path);
     let (input_series, header) = ByteSeries::builder()
@@ -57,14 +58,7 @@ fn copy_over_content(
 ) -> Report {
     let mut report = Report::default();
 
-    let len = input_series
-        .range()
-        .expect("checked in main")
-        .size_hint()
-        .1
-        .expect("upper bound is known");
-
-    let bar = ProgressBar::new(len as u64);
+    let bar = ProgressBar::new(input_series.len());
     bar.set_style(
         ProgressStyle::with_template(
             "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg} [{eta}]",
@@ -72,18 +66,22 @@ fn copy_over_content(
         .unwrap()
         .progress_chars("##-"),
     );
+
     loop {
         let mut timestamps = Vec::new();
         let mut data = Vec::new();
-        input_series
-            .read_first_n(
-                100_000,
-                &mut CopyDecoder,
-                read_start..,
-                &mut timestamps,
-                &mut data,
-            )
-            .expect("Read should not fail");
+
+        if let Err(Error::InvalidRange(byteseries::seek::Error::StartAfterData {
+            ..
+        })) = input_series.read_first_n(
+            100_000,
+            &mut CopyDecoder,
+            read_start..,
+            &mut timestamps,
+            &mut data,
+        ) {
+            break report;
+        }
 
         let Some(last_ts) = timestamps.last() else {
             bar.finish();
@@ -96,15 +94,15 @@ fn copy_over_content(
             break report;
         }
 
-        read_start = *last_ts;
+        read_start = *last_ts + 1;
         for (ts, line) in timestamps.into_iter().zip(data.into_iter()) {
             bar.inc(1);
             match output_series.push_line(ts, line) {
                 Ok(_) => (),
-                Err(Error::NewLineBeforePrevious { prev, new }) if new == prev => {
+                Err(Error::TimeNotAfterLast { prev, new }) if new == prev => {
                     report.same_time += 1;
                 }
-                Err(Error::NewLineBeforePrevious { .. }) => {
+                Err(Error::TimeNotAfterLast { .. }) => {
                     report.earlier_time += 1;
                 }
                 Err(other) => panic!("No error should happen during copy, got: {other}"),
@@ -113,16 +111,11 @@ fn copy_over_content(
     }
 }
 
-fn parse_args() -> (usize, PathBuf) {
+fn parse_args() -> PathBuf {
     let mut args = args().skip(1);
-    let payload_size: usize = args
-        .next()
-        .expect("should get two arguments (payload size, path)")
-        .parse()
-        .expect("first argument (payload size) should be number");
     let path: PathBuf = args
         .next()
-        .expect("should get two arguments (payload size, path)")
+        .expect("needs one argument: the path to the byteseries")
         .into();
 
     assert!(
@@ -133,7 +126,7 @@ fn parse_args() -> (usize, PathBuf) {
         path.with_extension("byteseries").exists(),
         "Path must exist"
     );
-    (payload_size, path)
+    path
 }
 
 fn make_backup(path: &PathBuf) -> PathBuf {

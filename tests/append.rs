@@ -106,7 +106,7 @@ mod refuses_old_time {
         let error = bs.push_line(2, &[]).unwrap_err();
         assert!(matches!(
             error,
-            byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
+            byteseries::series::Error::TimeNotAfterLast { new: 2, prev: 3 }
         ));
 
         drop(bs);
@@ -120,7 +120,7 @@ mod refuses_old_time {
         let error = bs.push_line(2, &[]).unwrap_err();
         assert!(matches!(
             error,
-            byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
+            byteseries::series::Error::TimeNotAfterLast { new: 2, prev: 3 }
         ));
     }
 
@@ -144,7 +144,7 @@ mod refuses_old_time {
             let error = bs.push_line(i - 1, &[]).unwrap_err();
             assert!(matches!(
                 error,
-                byteseries::series::Error::NewLineBeforePrevious { .. }
+                byteseries::series::Error::TimeNotAfterLast { .. }
             ))
         }
 
@@ -160,7 +160,7 @@ mod refuses_old_time {
         let error = bs.push_line(2, &[]).unwrap_err();
         assert!(matches!(
             error,
-            byteseries::series::Error::NewLineBeforePrevious { .. }
+            byteseries::series::Error::TimeNotAfterLast { .. }
         ));
     }
 
@@ -191,7 +191,7 @@ mod refuses_old_time {
                 .unwrap_err();
             assert!(matches!(
                 error,
-                byteseries::series::Error::NewLineBeforePrevious { .. }
+                byteseries::series::Error::TimeNotAfterLast { .. }
             ))
         }
     }
