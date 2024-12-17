@@ -101,10 +101,10 @@ fn copy_over_content(
             bar.inc(1);
             match output_series.push_line(ts, line) {
                 Ok(_) => (),
-                Err(Error::TimeOutOfOrder { last_time, got }) if last_time == got => {
+                Err(Error::NewLineBeforePrevious { prev, new }) if new == prev => {
                     report.same_time += 1;
                 }
-                Err(Error::TimeOutOfOrder { .. }) => {
+                Err(Error::NewLineBeforePrevious { .. }) => {
                     report.earlier_time += 1;
                 }
                 Err(other) => panic!("No error should happen during copy, got: {other}"),

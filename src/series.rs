@@ -93,7 +93,10 @@ pub enum Error {
     Create(#[source] data::CreateError),
     #[error("Error with cached downsampled data")]
     Downsampled(#[source] downsample::Error),
-    #[error("Could not push, new timestamp: {new} lies before last in data: {prev}")]
+    #[error(
+        "Could not push, new timestamp: {new} is the same or lies \
+        before last in data: {prev}"
+    )]
     NewLineBeforePrevious { new: u64, prev: u64 },
     #[error("Could not push to data file")]
     Pushing(#[source] data::PushError),
@@ -111,14 +114,6 @@ pub enum Error {
     Header(#[source] builder::HeaderError),
     #[error("The line should be exactly: {required} bytes long, it was: {got}")]
     WrongLineLength { required: usize, got: usize },
-    #[error(
-        "New line timestamp ({got}) is earlier then the last time in \
-        the series ({last_time})"
-    )]
-    TimeOutOfOrder {
-        last_time: Timestamp,
-        got: Timestamp,
-    },
 }
 
 impl ByteSeries {
@@ -196,8 +191,8 @@ impl ByteSeries {
         let (payload_size, user_header) =
             file_header::check_and_split_off_user_header(header.clone(), payload_size)?;
 
-        let mut data = Data::open_existing(&name, file, payload_size)
-            .map_err(Error::Open)?;
+        let mut data =
+            Data::open_existing(&name, file, payload_size).map_err(Error::Open)?;
         Ok((
             ByteSeries {
                 range: TimeRange::from_data(&mut data),
@@ -234,15 +229,6 @@ impl ByteSeries {
                 required: self.data.payload_size().raw(),
                 got: line.as_ref().len(),
             });
-        }
-
-        if let Some(range) = self.range() {
-            if ts <= *range.end() {
-                return Err(Error::TimeOutOfOrder {
-                    last_time: *range.end(),
-                    got: ts,
-                });
-            }
         }
 
         //write 16 bit timestamp and then the line to file

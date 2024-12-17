@@ -57,7 +57,7 @@ pub(crate) struct DownSampledData<R: Resampler> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CreateError {
-    #[error("{0}")]
+    #[error("Failed to create data file for downsampled data")]
     CreateData(#[source] data::CreateError),
     #[error("Could not read existing data to downsample: {0}")]
     ReadSource(std::io::Error),
@@ -113,6 +113,7 @@ where
         resampled_name.push(config.file_name_suffix());
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
+        dbg!(&path);
         Ok(Self {
             data: Data::new(path, payload_size, config.header(source_name).as_bytes())?,
             resample_state: resampler.state(),
@@ -139,7 +140,13 @@ where
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
 
-        let file = crate::file::FileWithHeader::open_existing(path.clone()).unwrap();
+        dbg!(&path);
+        let file = file::FileWithHeader::open_existing(path.with_extension("byteseries"))
+            .map_err(|source| data::OpenError::File {
+                source,
+                path: path.clone(),
+            })
+            .map_err(OpenError::Data)?;
         let (file, _) = file.split_off_header();
         let mut data =
             Data::open_existing(path, file, payload_size).map_err(OpenError::Data)?;
@@ -202,13 +209,13 @@ where
         payload_size: PayloadSize,
         source: &mut Data,
     ) -> Result<Self, OpenOrCreateError> {
-        match Self::open(
+        match dbg!(Self::open(
             resampler.clone(),
             config.clone(),
             source_path,
             source,
             payload_size,
-        ) {
+        )) {
             Ok(downsampled) => return Ok(downsampled),
             Err(OpenError::Data(data::OpenError::File {
                 source: file::OpenError::Io(io_error),

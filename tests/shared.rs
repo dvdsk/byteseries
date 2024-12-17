@@ -8,22 +8,29 @@ use rstest_reuse::template;
 pub type Timestamp = u64;
 
 pub fn setup_tracing() {
+    use std::sync::Once;
     use tracing_error::ErrorLayer;
     use tracing_subscriber::filter;
     use tracing_subscriber::fmt;
     use tracing_subscriber::prelude::*;
 
-    let filter = filter::EnvFilter::builder().from_env().unwrap();
-    let fmt = fmt::layer()
-        .pretty()
-        .with_line_number(true)
-        .with_test_writer();
+    static INIT: Once = Once::new();
 
-    let _ignore_err = tracing_subscriber::registry()
-        .with(ErrorLayer::default())
-        .with(filter)
-        .with(fmt)
-        .try_init();
+    INIT.call_once(|| {
+        color_eyre::install().unwrap();
+
+        let filter = filter::EnvFilter::builder().from_env().unwrap();
+        let fmt = fmt::layer()
+            .pretty()
+            .with_line_number(true)
+            .with_test_writer();
+
+        let _ignore_err = tracing_subscriber::registry()
+            .with(ErrorLayer::default())
+            .with(filter)
+            .with(fmt)
+            .try_init();
+    })
 }
 
 #[template]

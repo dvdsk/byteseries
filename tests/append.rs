@@ -1,9 +1,10 @@
+use std::u32;
+
 use byteseries::ByteSeries;
 use pretty_assertions::assert_eq;
 use temp_dir::TempDir;
 
 mod shared;
-use shared::setup_tracing;
 use shared::{insert_timestamps, Timestamp};
 
 use crate::shared::EmptyDecoder;
@@ -21,7 +22,7 @@ impl byteseries::Decoder for TsDecoder {
 
 #[test]
 fn compare_written_to_read() {
-    setup_tracing();
+    shared::setup_tracing();
 
     const NUMBER_TO_INSERT: u64 = 1_000;
     const PERIOD: Timestamp = 24 * 3600 / NUMBER_TO_INSERT;
@@ -55,45 +56,8 @@ fn compare_written_to_read() {
 }
 
 #[test]
-fn append_refused_if_time_old() {
-    setup_tracing();
-
-    let test_dir = TempDir::new().unwrap();
-    let test_path = test_dir.child("append_refused_if_time_old");
-    let (mut bs, _) = ByteSeries::builder()
-        .payload_size(0)
-        .create_new(true)
-        .with_any_header()
-        .open(&test_path)
-        .unwrap();
-    bs.push_line(1, &[]).unwrap();
-    bs.push_line(2, &[]).unwrap();
-    bs.push_line(3, &[]).unwrap();
-    // duplicate
-    let error = bs.push_line(2, &[]).unwrap_err();
-    assert!(matches!(
-        error,
-        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
-    ));
-
-    drop(bs);
-
-    let (mut bs, _) = ByteSeries::builder()
-        .payload_size(0)
-        .with_any_header()
-        .open(test_path)
-        .unwrap();
-    assert_eq!(bs.range(), Some(1..=3));
-    let error = bs.push_line(2, &[]).unwrap_err();
-    assert!(matches!(
-        error,
-        byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
-    ));
-}
-
-#[test]
 fn append_after_reopen_empty_works() {
-    setup_tracing();
+    shared::setup_tracing();
 
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("append_after_reopen_empty");
@@ -116,4 +80,119 @@ fn append_after_reopen_empty_works() {
         .open(&test_path)
         .unwrap();
     bs.push_line(1700000000, &[]).unwrap();
+}
+
+mod refuses_old_time {
+    use std::u16;
+
+    use super::{shared, ByteSeries, TempDir};
+
+    #[test]
+    fn simple() {
+        shared::setup_tracing();
+
+        let test_dir = TempDir::new().unwrap();
+        let test_path = test_dir.child("append_refused_if_time_old_simple");
+        let (mut bs, _) = ByteSeries::builder()
+            .payload_size(0)
+            .create_new(true)
+            .with_any_header()
+            .open(&test_path)
+            .unwrap();
+        bs.push_line(1, &[]).unwrap();
+        bs.push_line(2, &[]).unwrap();
+        bs.push_line(3, &[]).unwrap();
+        // duplicate
+        let error = bs.push_line(2, &[]).unwrap_err();
+        assert!(matches!(
+            error,
+            byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
+        ));
+
+        drop(bs);
+
+        let (mut bs, _) = ByteSeries::builder()
+            .payload_size(0)
+            .with_any_header()
+            .open(test_path)
+            .unwrap();
+        assert_eq!(bs.range(), Some(1..=3));
+        let error = bs.push_line(2, &[]).unwrap_err();
+        assert!(matches!(
+            error,
+            byteseries::series::Error::NewLineBeforePrevious { new: 2, prev: 3 }
+        ));
+    }
+
+    #[test]
+    fn large_range() {
+        const TOTAL_LINES: u64 = u16::MAX as u64 * 2;
+
+        shared::setup_tracing();
+
+        let test_dir = TempDir::new().unwrap();
+        let test_path = test_dir.child("append_refused_if_time_old_range");
+        let (mut bs, _) = ByteSeries::builder()
+            .payload_size(0)
+            .create_new(true)
+            .with_any_header()
+            .open(&test_path)
+            .unwrap();
+
+        for i in 1..=TOTAL_LINES {
+            bs.push_line(i, &[]).unwrap();
+            let error = bs.push_line(i - 1, &[]).unwrap_err();
+            assert!(matches!(
+                error,
+                byteseries::series::Error::NewLineBeforePrevious { .. }
+            ))
+        }
+
+        drop(bs);
+
+        let (mut bs, _) = ByteSeries::builder()
+            .payload_size(0)
+            .with_any_header()
+            .open(test_path)
+            .unwrap();
+        assert_eq!(bs.range(), Some(1..=TOTAL_LINES));
+
+        let error = bs.push_line(2, &[]).unwrap_err();
+        assert!(matches!(
+            error,
+            byteseries::series::Error::NewLineBeforePrevious { .. }
+        ));
+    }
+
+    #[test]
+    fn around_meta_section() {
+        const JUST_BEFORE_FIRST_META_SECTION: u64 = 1 * u16::MAX as u64 - 20;
+        const JUST_BEFORE_SECOND_META_SECTION: u64 = 2 * u16::MAX as u64 - 20;
+
+        shared::setup_tracing();
+
+        let test_dir = TempDir::new().unwrap();
+
+        for i in 0..40 {
+            let path = format!("append_refused_if_time_old_around_meta_{i}");
+            let test_path = test_dir.child(path);
+
+            let (mut bs, _) = ByteSeries::builder()
+                .payload_size(0)
+                .create_new(true)
+                .with_any_header()
+                .open(&test_path)
+                .unwrap();
+
+            bs.push_line(0, &[]).unwrap();
+            bs.push_line(JUST_BEFORE_SECOND_META_SECTION, &[]).unwrap();
+            let error = bs
+                .push_line(JUST_BEFORE_FIRST_META_SECTION + i, &[])
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                byteseries::series::Error::NewLineBeforePrevious { .. }
+            ))
+        }
+    }
 }

@@ -146,6 +146,8 @@ fn with_cache_same_as_without() {
 #[case(1)]
 #[case(9)]
 fn undamaged_downsampled_passes_checks(#[case] lines_more_then_bucket_size: u64) {
+    use color_eyre::eyre::Context;
+
     shared::setup_tracing();
 
     let test_dir = TempDir::new().unwrap();
@@ -167,10 +169,13 @@ fn undamaged_downsampled_passes_checks(#[case] lines_more_then_bucket_size: u64)
         insert_lines(&mut bs, 10 + lines_more_then_bucket_size, T1, T2);
     }
 
+    tracing::info!("now re-opening just created series");
+
     let (mut _bs, _) = ByteSeries::builder()
         .payload_size(4)
         .with_downsampled_cache(FloatResampler, resample_configs)
         .with_any_header()
         .open(test_path)
+        .wrap_err("failed to open previously created series")
         .unwrap();
 }

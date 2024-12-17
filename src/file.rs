@@ -11,12 +11,12 @@ use crate::series::data::inline_meta::SetLen;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
-    #[error("Could not open file on disk io error: {0}")]
+    #[error("Os returned IO-error")]
     Io(#[from] std::io::Error),
     #[error("Can not create new file, one already exists")]
     AlreadyExists,
-    #[error("Could not serialize the header to a ron encoded string: {0}")]
-    SerializingHeader(ron::Error),
+    #[error("Could not serialize the header to a ron encoded string")]
+    SerializingHeader(#[source] ron::Error),
     #[error("Max size for a header is around 2^16, the provided header is too large")]
     HeaderTooLarge,
 }
@@ -79,8 +79,16 @@ impl FileWithHeader {
         })
     }
 
+    /// # Panics
+    /// If the path does not have the extension byteseries or byteseries_index.
     #[instrument(fields(file_len, user_header_len, header_len))]
     pub(crate) fn open_existing(path: PathBuf) -> Result<FileWithHeader, OpenError> {
+        assert!(
+            path.extension().is_some_and(|e| e == "byteseries")
+                || path.extension().is_some_and(|e| e == "byteseries_index"),
+            "Path extension ({:?}) must be 'byteseries' or 'byteseries_index'",
+            path.extension()
+        );
         let mut file = OpenOptions::new()
             .read(true)
             .append(true)

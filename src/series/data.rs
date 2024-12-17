@@ -108,6 +108,7 @@ impl Data {
         header: &[u8],
     ) -> Result<Self, CreateError> {
         let path = name.as_ref().with_extension("byteseries");
+        dbg!(&path);
         let file = FileWithHeader::new(&path, header)
             .map_err(|source| CreateError::File { source, path })?;
         let (file_handle, _) = file.split_off_header();
