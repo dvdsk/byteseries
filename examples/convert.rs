@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use byteseries::series::Error;
 use byteseries::{ByteSeries, Decoder};
-use color_eyre::eyre::{Context, OptionExt, Result};
+use color_eyre::eyre::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Debug)]
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     let (input_series, header) = ByteSeries::builder()
         .retrieve_payload_size()
         .with_any_header()
-        .open(backup_path)
+        .open(&backup_path)
         .wrap_err("Could not open backup input")?;
 
     std::fs::remove_file(path.with_extension("byteseries_index"))
@@ -48,7 +48,7 @@ fn main() -> Result<()> {
 
     let Some(read_start) = input_series.range().map(|range| *range.start()) else {
         println!("Input series is empty, replaced with fresh empty series");
-        return Ok(())
+        return Ok(());
     };
 
     let report = copy_over_content(input_series, read_start, output_series);
@@ -78,6 +78,7 @@ fn copy_over_content(
         .progress_chars("##-"),
     );
 
+    let mut largest_ts = 0;
     loop {
         let mut timestamps = Vec::new();
         let mut data = Vec::new();
@@ -104,7 +105,13 @@ fn copy_over_content(
             bar.inc(1);
             let res = output_series.push_line(ts, line);
             match res {
-                Ok(_) => (),
+                Ok(_) => {
+                    assert!(
+                        ts > largest_ts,
+                        "timeseries must be monotonically increasing"
+                    );
+                    largest_ts = ts;
+                }
                 Err(Error::TimeNotAfterLast { prev, new }) if new == prev => {
                     report.same_time += 1;
                 }

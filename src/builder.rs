@@ -254,14 +254,15 @@ where
             path.as_ref().to_owned()
         };
 
-        let bs = if self.create_new {
-            ByteSeries::new_with_resamplers(
+        if self.create_new {
+            let bs = ByteSeries::new_with_resamplers(
                 path,
                 self.payload_size.expect("CAN_CREATE_NEW is true"),
                 self.header.as_bytes(),
                 self.resampler,
                 self.resample_configs,
-            )?
+            )?;
+            Ok((bs, self.header.into_bytes()))
         } else {
             let (bs, in_file) = ByteSeries::open_existing_with_resampler(
                 path,
@@ -270,18 +271,17 @@ where
                 self.resample_configs,
             )?;
 
-            match self.header {
+            let header = match self.header {
                 HeaderOption::MustMatch(expected) if in_file != expected => {
                     return Err(series::Error::Header(HeaderError::mismatch(
                         expected, in_file,
                     )))
                 }
-                HeaderOption::MustMatch(_) | HeaderOption::Ignore => (),
+                HeaderOption::MustMatch(_) => self.header.into_bytes(),
+                HeaderOption::Ignore => in_file,
             };
-            bs
-        };
-
-        Ok((bs, self.header.into_bytes()))
+            Ok((bs, header))
+        }
     }
 }
 
@@ -313,15 +313,16 @@ where
             self.resample_configs,
         )?;
 
-        match self.header {
+        let header = match self.header {
             HeaderOption::MustMatch(expected) if in_file != expected => {
                 return Err(series::Error::Header(HeaderError::mismatch(
                     expected, in_file,
                 )))
             }
-            HeaderOption::MustMatch(_) | HeaderOption::Ignore => (),
+            HeaderOption::MustMatch(_) => self.header.into_bytes(),
+            HeaderOption::Ignore => in_file,
         };
 
-        Ok((bs, self.header.into_bytes()))
+        Ok((bs, header))
     }
 }
