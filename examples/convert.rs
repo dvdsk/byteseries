@@ -32,8 +32,11 @@ fn main() -> Result<()> {
         .open(&backup_path)
         .wrap_err("Could not open backup input")?;
 
-    std::fs::remove_file(path.with_extension("byteseries_index"))
-        .wrap_err("Could not remove index")?;
+    let res = std::fs::remove_file(&path.with_extension("byteseries_index"));
+    if res.as_ref().map_err(io::Error::kind) != Err(ErrorKind::NotFound) {
+        res.wrap_err("Could not remove index")?;
+    }
+
     let res = std::fs::remove_file(&path);
     if res.as_ref().map_err(io::Error::kind) != Err(ErrorKind::NotFound) {
         res.wrap_err("Could not remove file taking up the place of the output")?;
