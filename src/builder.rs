@@ -1,4 +1,3 @@
-use core::fmt;
 use std::path::Path;
 use std::str::Utf8Error;
 
@@ -243,11 +242,21 @@ where
 {
     pub fn open(
         self,
-        name: impl AsRef<Path> + fmt::Debug,
+        path: impl AsRef<Path>,
     ) -> Result<(ByteSeries, Vec<u8>), series::Error> {
+        let path = if path
+            .as_ref()
+            .extension()
+            .is_some_and(|ext| ext == "byteseries")
+        {
+            path.as_ref().with_extension("")
+        } else {
+            path.as_ref().to_owned()
+        };
+
         let bs = if self.create_new {
             ByteSeries::new_with_resamplers(
-                name,
+                path,
                 self.payload_size.expect("CAN_CREATE_NEW is true"),
                 &self.header.as_bytes(),
                 self.resampler,
@@ -255,7 +264,7 @@ where
             )?
         } else {
             let (bs, in_file) = ByteSeries::open_existing_with_resampler(
-                name,
+                path,
                 self.payload_size,
                 self.resampler,
                 self.resample_configs,
@@ -285,10 +294,20 @@ where
 {
     pub fn open(
         self,
-        name: impl AsRef<Path> + fmt::Debug,
+        path: impl AsRef<Path>,
     ) -> Result<(ByteSeries, Vec<u8>), series::Error> {
+        let path = if path
+            .as_ref()
+            .extension()
+            .is_some_and(|ext| ext == "byteseries")
+        {
+            path.as_ref().with_extension("")
+        } else {
+            path.as_ref().to_owned()
+        };
+
         let (bs, in_file) = ByteSeries::open_existing_with_resampler(
-            name,
+            path,
             self.payload_size,
             self.resampler,
             self.resample_configs,

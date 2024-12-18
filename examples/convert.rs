@@ -1,8 +1,13 @@
+/// Converts between an earlier version of byteseries
+/// that erroneously allowed timestamps before the last
+/// timestamp to be appended.
 use std::env::args;
+use std::io::{self, ErrorKind};
 use std::path::PathBuf;
 
 use byteseries::series::Error;
 use byteseries::{ByteSeries, Decoder};
+use color_eyre::eyre::{Context, OptionExt, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Debug)]
@@ -16,33 +21,39 @@ impl Decoder for CopyDecoder {
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     color_eyre::install().unwrap();
     let path = parse_args();
 
-    let backup_path = make_backup(&path);
+    let backup_path = make_backup(&path)?;
     let (input_series, header) = ByteSeries::builder()
         .retrieve_payload_size()
         .with_any_header()
         .open(backup_path)
-        .expect("Open should work");
+        .wrap_err("Could not open backup input")?;
 
     std::fs::remove_file(path.with_extension("byteseries_index"))
-        .expect("should be able to remove index");
+        .wrap_err("Could not remove index")?;
+    let res = std::fs::remove_file(&path);
+    if res.as_ref().map_err(io::Error::kind) != Err(ErrorKind::NotFound) {
+        res.wrap_err("Could not remove file taking up the place of the output")?;
+    }
+
     let (output_series, _) = ByteSeries::builder()
         .payload_size(input_series.payload_size())
         .create_new(true)
         .with_header(header)
         .open(path)
-        .expect("Open should work");
+        .wrap_err("Could not create new output series")?;
 
-    let read_start = *input_series
-        .range()
-        .expect("series must not be empty")
-        .start();
+    let Some(read_start) = input_series.range().map(|range| *range.start()) else {
+        println!("Input series is empty, replaced with fresh empty series");
+        return Ok(())
+    };
 
     let report = copy_over_content(input_series, read_start, output_series);
-    println!("copy report: {report:?}")
+    println!("copy report: {report:?}");
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -55,7 +66,7 @@ fn copy_over_content(
     mut input_series: ByteSeries,
     mut read_start: u64,
     mut output_series: ByteSeries,
-) -> Report {
+) -> Result<Report> {
     let mut report = Report::default();
 
     let bar = ProgressBar::new(input_series.len());
@@ -80,24 +91,19 @@ fn copy_over_content(
             &mut timestamps,
             &mut data,
         ) {
-            break report;
+            bar.finish();
+            break Ok(report);
         }
 
         let Some(last_ts) = timestamps.last() else {
-            bar.finish();
-            break report; // all data consumed
+            break Ok(report); // all data consumed
         };
-
-        if read_start == *last_ts {
-            report.same_time += 1;
-            bar.finish();
-            break report;
-        }
 
         read_start = *last_ts + 1;
         for (ts, line) in timestamps.into_iter().zip(data.into_iter()) {
             bar.inc(1);
-            match output_series.push_line(ts, line) {
+            let res = output_series.push_line(ts, line);
+            match res {
                 Ok(_) => (),
                 Err(Error::TimeNotAfterLast { prev, new }) if new == prev => {
                     report.same_time += 1;
@@ -105,7 +111,7 @@ fn copy_over_content(
                 Err(Error::TimeNotAfterLast { .. }) => {
                     report.earlier_time += 1;
                 }
-                Err(other) => panic!("No error should happen during copy, got: {other}"),
+                Err(_) => res.wrap_err("Could not push line to output")?,
             }
         }
     }
@@ -119,17 +125,13 @@ fn parse_args() -> PathBuf {
         .into();
 
     assert!(
-        path.extension().is_none(),
-        "Give the path without the .byteseries extension"
-    );
-    assert!(
         path.with_extension("byteseries").exists(),
         "Path must exist"
     );
     path
 }
 
-fn make_backup(path: &PathBuf) -> PathBuf {
+fn make_backup(path: &PathBuf) -> Result<PathBuf> {
     let backup = path.with_file_name(
         path.file_name()
             .expect("file should have name")
@@ -138,17 +140,23 @@ fn make_backup(path: &PathBuf) -> PathBuf {
             + "_backup",
     );
     if backup.exists()
-        && backup.metadata().expect("file exists").len()
-            >= path.metadata().expect("verified exist in parse args").len()
+        && backup
+            .metadata()
+            .wrap_err("could not check metadata for existing backup")?
+            .len()
+            >= path
+                .metadata()
+                .wrap_err("could not check metadata for input")?
+                .len()
     {
         eprintln!("Backup seems to already exist, not overwriting");
-        return backup;
+        return Ok(backup);
     }
 
     std::fs::rename(
         path.with_extension("byteseries"),
         backup.with_extension("byteseries"),
     )
-    .expect("Copy should succeed");
-    backup
+    .wrap_err("could not turn origional input into backup")?;
+    Ok(backup)
 }

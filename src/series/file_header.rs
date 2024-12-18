@@ -139,6 +139,10 @@ pub(crate) fn check_and_split_off_user_header(
     let text_len = header[0..4].try_into().map_err(|_| Error::TooShort)?;
     let text_len = u32::from_le_bytes(text_len) as usize;
 
+    assert!(
+        text_len <= header.len(),
+        "byteseries header length is corrupt or there is not header at all"
+    );
     let text = &header[4..text_len];
     let text = core::str::from_utf8(text).map_err(Error::NotText)?;
     let params = SeriesParams::from_text(text)?;
