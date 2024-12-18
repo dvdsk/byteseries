@@ -307,7 +307,7 @@ impl ByteSeries {
         Ok(pos
             .refine(&mut self.data)
             .map_err(Error::Seeking)?
-            .map(|pos| pos.lines(&mut self.data))
+            .map(|pos| pos.lines(&self.data))
             .unwrap_or(0))
     }
     /// Will return between zero and two times `n` samples
@@ -441,7 +441,7 @@ impl ByteSeries {
     }
 
     /// # Errors
-    /// When the os fails to flush files to disk the underlying
+    /// When the OS fails to flush files to disk the underlying
     /// io error is returned
     pub fn flush_to_disk(&mut self) -> std::io::Result<()> {
         self.data.flush_to_disk()
@@ -453,9 +453,13 @@ impl ByteSeries {
         self.range.clone().into()
     }
 
-    /// Returns the number of lines in the file. 
+    /// Returns the number of lines in the file.
     pub fn len(&self) -> u64 {
         self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.len() == 0
     }
 
     pub fn payload_size(&self) -> usize {

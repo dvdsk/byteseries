@@ -7,6 +7,7 @@ use super::data::index::PayloadSize;
 
 const VERSION: u16 = 1;
 
+#[derive(Copy, Clone)]
 pub(crate) struct SeriesParams {
     pub(crate) payload_size: usize,
     pub(crate) version: u16,
@@ -69,24 +70,24 @@ impl SeriesParams {
 }
 
 fn parse_version(text: &str) -> Result<u16, ParseError> {
-    const START_PAT: &'static str = "This is a byteseries ";
+    const START_PAT: &str = "This is a byteseries ";
     let start = text
         .find(START_PAT)
         .ok_or(ParseError::MissingVersionStart)?
         + START_PAT.len();
-    const END_PAT: &'static str = " file,";
+    const END_PAT: &str = " file,";
     let end = text.find(END_PAT).ok_or(ParseError::MissingVersionEnd)?;
     let version = &text[start..end];
     version.parse().map_err(ParseError::ParseVersion)
 }
 
 fn parse_payload_size(text: &str) -> Result<usize, ParseError> {
-    const START_PAT: &'static str = "For this file that is: ";
+    const START_PAT: &str = "For this file that is: ";
     let start = text
         .find(START_PAT)
         .ok_or(ParseError::MissingPayloadStart)?
         + START_PAT.len();
-    const END_PAT: &'static str = " bytes.";
+    const END_PAT: &str = " bytes.";
     let end = text.find(END_PAT).ok_or(ParseError::MissingPayloadEnd)?;
     let payload_size = &text[start..end];
     payload_size.parse().map_err(ParseError::ParsePayload)

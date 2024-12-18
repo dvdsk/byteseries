@@ -45,7 +45,6 @@ pub(crate) const USER_HEADER_STARTS: usize = LINE_ENDS.len() + mem::size_of::<u1
 /// has not warn and repair by truncating to a multiple
 ///
 /// takes care to disregard the header for this
-
 impl FileWithHeader {
     /// Will return an error if the file already exists
     pub(crate) fn new(

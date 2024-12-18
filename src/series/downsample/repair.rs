@@ -25,27 +25,6 @@ pub enum Error {
 }
 
 #[instrument]
-pub(super) fn remove_missing_in_source(
-    source: &mut Data,
-    downsampled: &mut Data,
-    config: &Config,
-    resampler: &mut impl Resampler,
-) -> Result<(), Error> {
-
-    let Some(source_range) = source.range() else {
-        return Ok(())
-    };
-    let Some(last_time) = downsampled.last_time() else {
-        return Ok(())
-    };
-
-    if last_time > *source_range.end() {
-    }
-
-    Ok(())
-}
-
-#[instrument]
 pub(super) fn add_missing_data(
     source: &mut Data,
     downsampled: &mut Data,

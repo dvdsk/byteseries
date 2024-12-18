@@ -100,7 +100,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
             n_read += 1;
 
             if n_read >= n {
-                return Err(ReachedN);
+                Err(ReachedN)
             } else {
                 Ok(())
             }

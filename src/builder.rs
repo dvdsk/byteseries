@@ -13,7 +13,7 @@ enum HeaderOption {
 impl HeaderOption {
     fn as_bytes(&self) -> &[u8] {
         match self {
-            HeaderOption::MustMatch(vec) => &vec,
+            HeaderOption::MustMatch(vec) => vec,
             HeaderOption::Ignore => &[],
         }
     }
@@ -258,7 +258,7 @@ where
             ByteSeries::new_with_resamplers(
                 path,
                 self.payload_size.expect("CAN_CREATE_NEW is true"),
-                &self.header.as_bytes(),
+                self.header.as_bytes(),
                 self.resampler,
                 self.resample_configs,
             )?

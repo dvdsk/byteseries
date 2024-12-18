@@ -151,8 +151,6 @@ where
         let mut data =
             Data::open_existing(path, file, payload_size).map_err(OpenError::Data)?;
 
-        repair::remove_missing_in_source(source, &mut data, &config, &mut resampler)
-            .map_err(OpenError::Repair)?;
         repair::add_missing_data(source, &mut data, &config, &mut resampler)
             .map_err(OpenError::Repair)?;
 
