@@ -113,7 +113,6 @@ where
         resampled_name.push(config.file_name_suffix());
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
-        dbg!(&path);
         Ok(Self {
             data: Data::new(path, payload_size, config.header(source_name).as_bytes())?,
             resample_state: resampler.state(),
@@ -140,7 +139,6 @@ where
         let mut path = source_path.to_path_buf();
         path.set_file_name(resampled_name);
 
-        dbg!(&path);
         let file = file::FileWithHeader::open_existing(path.with_extension("byteseries"))
             .map_err(|source| data::OpenError::File {
                 source,
@@ -207,13 +205,13 @@ where
         payload_size: PayloadSize,
         source: &mut Data,
     ) -> Result<Self, OpenOrCreateError> {
-        match dbg!(Self::open(
+        match Self::open(
             resampler.clone(),
             config.clone(),
             source_path,
             source,
             payload_size,
-        )) {
+        ) {
             Ok(downsampled) => return Ok(downsampled),
             Err(OpenError::Data(data::OpenError::File {
                 source: file::OpenError::Io(io_error),

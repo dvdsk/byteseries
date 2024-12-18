@@ -30,7 +30,7 @@ pub struct HeaderDeserErr {
 
 pub(crate) struct FileWithHeader {
     pub(crate) handle: File,
-    pub(crate) user_header: Vec<u8>,
+    pub(crate) header: Vec<u8>,
     /// data starts at this offset from the start
     pub(crate) data_offset: u64,
 }
@@ -73,7 +73,7 @@ impl FileWithHeader {
             + u64::from(user_header_len);
         Ok(FileWithHeader {
             handle: file,
-            user_header: user_header.to_vec(),
+            header: user_header.to_vec(),
             data_offset: len,
         })
     }
@@ -95,27 +95,24 @@ impl FileWithHeader {
             .open(path)?;
         let metadata = file.metadata()?;
 
-        let mut user_header_len = [0u8, 2];
-        file.read_exact(&mut user_header_len)?;
-        let user_header_len = u16::from_le_bytes(user_header_len);
-        let mut user_header = vec![0; user_header_len as usize];
+        let mut header_len = [0u8, 2];
+        file.read_exact(&mut header_len)?;
+        let header_len = u16::from_le_bytes(header_len);
+        let mut header = vec![0; header_len as usize];
         file.seek(std::io::SeekFrom::Start(USER_HEADER_STARTS as u64))?;
-        file.read_exact(&mut user_header)?;
-        let header_len = user_header_len as usize
-            + LINE_ENDS.len()
-            + mem::size_of_val(&user_header_len);
+        file.read_exact(&mut header)?;
+        let header_len =
+            header_len as usize + LINE_ENDS.len() + mem::size_of_val(&header_len);
 
         tracing::Span::current()
             .record("file_len", metadata.len())
-            .record("user_header_len", user_header_len)
+            .record("user_header_len", header_len)
             .record("header_len", header_len);
 
         Ok(FileWithHeader {
             handle: file,
-            data_offset: LINE_ENDS.len() as u64
-                + mem::size_of_val(&user_header_len) as u64
-                + u64::from(user_header_len),
-            user_header,
+            data_offset: header_len as u64,
+            header,
         })
     }
 
@@ -125,7 +122,7 @@ impl FileWithHeader {
                 handle: self.handle,
                 offset: self.data_offset,
             },
-            self.user_header,
+            self.header,
         )
     }
 }
