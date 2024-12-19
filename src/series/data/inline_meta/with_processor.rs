@@ -30,6 +30,11 @@ impl<E: fmt::Debug> Error<E> {
     }
 }
 
+fn small_ts(line: &[u8]) -> u64 {
+    let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
+    u16::from_le_bytes(small_ts).into()
+}
+
 impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     #[instrument(level = "debug", skip(processor))]
     pub(crate) fn read_with_processor<E: std::fmt::Debug>(
@@ -62,11 +67,9 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 let Some(line) = lines.next() else {
                     break 0;
                 };
+
                 if line[..2] != meta::PREAMBLE {
-                    let small_ts: [u8; 2] =
-                        line[0..2].try_into().expect("slice len is 2");
-                    let small_ts: u64 = u16::from_le_bytes(small_ts).into();
-                    processor(small_ts + full_ts, &line[2..])
+                    processor(small_ts(line) + full_ts, &line[2..])
                         .map_err(Error::Processor)?;
                     continue;
                 }
@@ -74,27 +77,20 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 let Some(next_line) = lines.next() else {
                     if to_read == 0 {
                         // take care of the last item
-                        let small_ts: [u8; 2] =
-                            line[0..2].try_into().expect("slice len is 2");
-                        let small_ts: u64 = u16::from_le_bytes(small_ts).into();
-                        processor(small_ts + full_ts, &line[2..])
+                        processor(small_ts(line) + full_ts, &line[2..])
                             .map_err(Error::Processor)?;
                     }
                     break self.payload_size.line_size();
                 };
+
                 if next_line[..2] != meta::PREAMBLE {
-                    let small_ts: [u8; 2] = line[0..2].try_into().expect("len is 2");
-                    let small_ts: u64 = u16::from_le_bytes(small_ts).into();
-                    processor(small_ts + full_ts, &line[2..])
+                    processor(small_ts(line) + full_ts, &line[2..])
                         .map_err(Error::Processor)?;
-                    let small_ts: [u8; 2] = next_line[0..2].try_into().expect("len is 2");
-                    let small_ts: u64 = u16::from_le_bytes(small_ts).into();
-                    processor(small_ts + full_ts, &next_line[2..])
+                    processor(small_ts(next_line) + full_ts, &next_line[2..])
                         .map_err(Error::Processor)?;
                     continue;
                 }
 
-                // mod so it returns needed overlap
                 match meta::read(lines.by_ref(), line, next_line) {
                     meta::Result::Meta {
                         meta,
