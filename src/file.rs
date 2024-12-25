@@ -148,14 +148,14 @@ impl OffsetFile {
     ///
     /// # Errors
     /// Returns an error if the underlying file returned an io error.
-    pub(crate) fn data_len(&self) -> std::io::Result<u64> {
+    pub(crate) fn data_len_bytes(&self) -> std::io::Result<u64> {
         self.handle.metadata().map(|m| m.len() - self.offset)
     }
 }
 
 impl SetLen for OffsetFile {
     fn len(&self) -> Result<u64, std::io::Error> {
-        self.data_len()
+        self.data_len_bytes()
     }
 
     fn set_len(&mut self, len: u64) -> Result<(), std::io::Error> {

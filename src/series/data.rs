@@ -1,5 +1,6 @@
 use core::fmt;
-use std::io::Write;
+use inline_meta::meta::lines_per_metainfo;
+use std::io::{Read, Seek, Write};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use tracing::{instrument, warn};
@@ -15,6 +16,8 @@ use index::{Index, LinePos, PayloadSize};
 use self::index::create::{self, last_meta_timestamp, ExtractingTsError};
 use self::inline_meta::{meta, SetLen};
 
+/// largest small timestamp that can be stored. This corresponds to
+/// [254, 255] (little endian). The pattern [255, 255] indicates a meta timestamp.
 pub(crate) const MAX_SMALL_TS: u64 = (u16::MAX - 1) as u64;
 
 #[derive(Debug)]
@@ -111,7 +114,7 @@ impl Data {
         let file = FileWithHeader::new(&path, header)
             .map_err(|source| CreateError::File { source, path })?;
         let (file_handle, _) = file.split_off_header();
-        let data_len = file_handle.data_len().map_err(CreateError::GetLength)?;
+        let data_len = file_handle.data_len_bytes().map_err(CreateError::GetLength)?;
         let file_handle = FileWithInlineMeta::new(file_handle, payload_size)
             .map_err(CreateError::CheckOrRepair)?;
         let index = Index::new(name).map_err(CreateError::Index)?;
@@ -132,7 +135,7 @@ impl Data {
     ) -> Result<Data, OpenError> {
         let mut file = FileWithInlineMeta::new(file, payload_size)
             .map_err(OpenError::CheckOrRepair)?;
-        let data_len = file.file_handle.data_len().map_err(OpenError::GetLength)?;
+        let data_len = file.file_handle.data_len_bytes().map_err(OpenError::GetLength)?;
         let last_line_starts = data_len.checked_sub((payload_size.line_size()) as u64);
         let last_full_ts_in_data = last_meta_timestamp(file.inner_mut(), payload_size)
             .map_err(OpenError::GetLastMeta)?;
@@ -181,7 +184,7 @@ impl Data {
     }
 
     #[instrument]
-    pub(crate) fn first_time(&self) -> Option<Timestamp> {
+    pub(crate) fn first_meta_timestamp(&self) -> Option<Timestamp> {
         self.index.first_meta_timestamp()
     }
 
@@ -191,7 +194,7 @@ impl Data {
     }
 
     pub(crate) fn range(&self) -> Option<RangeInclusive<Timestamp>> {
-        self.first_time()
+        self.first_meta_timestamp()
             .map(|f| f..=self.last_time.expect("first time is Some"))
     }
 
@@ -325,8 +328,13 @@ impl Data {
         Ok(())
     }
 
+    /// number of entries/samples/pushed lines in the file.
     pub(crate) fn len(&self) -> u64 {
-        self.data_len / self.payload_size().line_size() as u64
+        let lines = self.data_len / self.payload_size().line_size() as u64;
+        let meta_sections = self.index.len() as u64;
+        let meta_lines =
+            meta_sections * lines_per_metainfo(self.payload_size().raw()) as u64;
+        lines - meta_lines
     }
 }
 
@@ -347,6 +355,10 @@ fn last_line<T>(
         start: LinePos(data_len - payload_size.line_size() as u64),
         end: data_len,
     };
+    let file = &mut file_handle.inner_mut();
+    let mut buf = Vec::new();
+    file.seek(std::io::SeekFrom::Start(seek.start.raw_offset())).unwrap();
+    file.read_to_end(&mut buf).unwrap();
     file_handle
         .read(decoder, &mut timestamps, &mut data, seek)
         .map_err(ReadError::Reading)?;

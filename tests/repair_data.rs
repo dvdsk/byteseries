@@ -1,5 +1,6 @@
 use byteseries::seek::Error;
 use byteseries::ByteSeries;
+use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rstest_reuse::apply;
 use temp_dir::TempDir;
@@ -120,7 +121,7 @@ fn partial_meta_at_end(#[case] payload_size: usize) {
 
 #[apply(payload_sizes)]
 #[trace]
-fn meta_start_as_last_line(#[case] payload_size: usize) {
+fn data_end_in_partial_meta(#[case] payload_size: usize) {
     setup_tracing();
 
     let test_dir = TempDir::new().unwrap();
@@ -146,7 +147,8 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
     let line_size = payload_size + 2;
     let meta_section_without_last_line_size =
         ((lines_per_metainfo(payload_size) - 1) * line_size) as u64;
-    // file is: <first_ts_meta> <ts=42> <last_ts_meta> <ts=100_000>;
+    // file is:           <first_ts_meta> <ts=42> <last_ts_meta> <ts=100_000>;
+    // at payload size 2:     12              3          12           3
     // this is cut to <first_ts_meta> <ts=42> <one line of last_ts_meta>
     series_file
         .set_len(len - meta_section_without_last_line_size - line_size as u64)
@@ -162,4 +164,43 @@ fn meta_start_as_last_line(#[case] payload_size: usize) {
         .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
         .unwrap();
     assert_eq!(&timestamps, &[42]);
+}
+
+#[apply(payload_sizes)]
+#[trace]
+fn data_end_in_meta(payload_size: usize) {
+    setup_tracing();
+
+    let test_dir = TempDir::new().unwrap();
+    let test_path = test_dir.child("meta_start_as_last_line");
+    {
+        let (mut series, _) = ByteSeries::builder()
+            .create_new(true)
+            .payload_size(payload_size)
+            .with_any_header()
+            .open(&test_path)
+            .unwrap();
+        series.push_line(42, vec![15; payload_size]).unwrap();
+        series.push_line(100_000, vec![16; payload_size]).unwrap();
+    }
+
+    let series_path = test_path.clone().with_extension("byteseries");
+    let series_file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(series_path)
+        .unwrap();
+    let len = series_file.metadata().unwrap().len();
+
+    // file is: <first_ts_meta> <ts=42> <last_ts_meta> <ts=100_000>;
+    // this is cut to <first_ts_meta> <ts=42> <last_ts_meta>
+    let line_size = payload_size + 2;
+    series_file.set_len(len - line_size as u64).unwrap();
+
+    let (series, _) = ByteSeries::builder()
+        .payload_size(payload_size)
+        .with_any_header()
+        .open(&test_path)
+        .unwrap();
+
+    assert_eq!(series.range(), Some(42..=42));
 }

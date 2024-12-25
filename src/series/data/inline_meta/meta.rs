@@ -69,14 +69,9 @@ pub(crate) fn write(
 }
 
 #[derive(Debug)]
-pub(crate) enum Result<'a> {
-    OutOfLines {
-        consumed_lines: usize,
-    },
-    Meta {
-        meta: [u8; 8],
-        line_after_meta: &'a [u8],
-    },
+pub(crate) enum Result {
+    OutOfLines { consumed_lines: usize },
+    Meta { meta: [u8; 8] },
 }
 /// returns None if not enough data was left to decode a u64
 #[instrument(level = "trace", skip(chunks))]
@@ -84,7 +79,7 @@ pub(crate) fn read<'a>(
     mut chunks: impl Iterator<Item = &'a [u8]>,
     first_chunk: &'a [u8],
     next_chunk: &'a [u8],
-) -> Result<'a> {
+) -> Result {
     let mut result = [0u8; 8];
     let payload_size = first_chunk.len() - 2;
     match payload_size {
@@ -141,14 +136,5 @@ pub(crate) fn read<'a>(
         }
     }
 
-    if let Some(line_after_meta) = chunks.next() {
-        Result::Meta {
-            meta: result,
-            line_after_meta,
-        }
-    } else {
-        Result::OutOfLines {
-            consumed_lines: lines_per_metainfo(payload_size),
-        }
-    }
+    Result::Meta { meta: result }
 }

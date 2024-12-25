@@ -79,7 +79,7 @@ pub(crate) fn extract_entries(
     file: &mut OffsetFile,
     payload_size: PayloadSize,
 ) -> Result<Vec<Entry>, ExtractingTsError> {
-    let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
+    let data_len = file.data_len_bytes().map_err(ExtractingTsError::GetDataLength)?;
     extract_entries_inner(file, payload_size, 0, data_len)
 }
 
@@ -133,7 +133,7 @@ pub(crate) fn last_meta_timestamp(
     file: &mut OffsetFile,
     payload_size: PayloadSize,
 ) -> Result<Option<Timestamp>, ExtractingTsError> {
-    let data_len = file.data_len().map_err(ExtractingTsError::GetDataLength)?;
+    let data_bytes = file.data_len_bytes().map_err(ExtractingTsError::GetDataLength)?;
 
     let mut buf = Vec::new();
     file.seek(std::io::SeekFrom::Start(0)).unwrap();
@@ -141,10 +141,10 @@ pub(crate) fn last_meta_timestamp(
 
     let window = 10_000u64.next_multiple_of(payload_size.line_size() as u64);
     let overlap = payload_size.metainfo_size();
-    let mut start = data_len.saturating_sub(window);
+    let mut start = data_bytes.saturating_sub(window);
 
     loop {
-        let end = (start + window).min(data_len);
+        let end = (start + window).min(data_bytes);
         if start == end {
             return Ok(None);
         };
@@ -156,10 +156,10 @@ pub(crate) fn last_meta_timestamp(
 
         assert!(
             start > 0,
-            "Should have found timestamp in data when its not empty. \
+            "Should have found meta timestamp in data when its not empty. \
                 repair guarantees the file is either empty or \
                 contain at least one full timestamp metadata section.\
-                file has length: {data_len}, window: {window}"
+                file is: {data_bytes} bytes, window: {window}"
         );
 
         start = (start + overlap as u64).saturating_sub(window);

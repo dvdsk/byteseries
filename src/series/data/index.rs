@@ -350,6 +350,11 @@ impl Index {
         self.last_timestamp = None;
         Ok(())
     }
+
+    /// number of metadata entries
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 fn in_gap(val: Timestamp, gap_start: Timestamp) -> bool {

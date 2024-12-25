@@ -2,6 +2,7 @@ use crate::series::data::PayloadSize;
 use core::fmt;
 use itertools::Itertools;
 use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::iter;
 use tracing::{instrument, warn};
 use with_processor::Error;
 
@@ -71,10 +72,14 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         data: &mut Vec<D::Item>,
         seek: Pos,
     ) -> Result<(), std::io::Error> {
+        let mut last = 0;
         self.read_with_processor::<()>(seek, |ts, payload| {
             let item = decoder.decode_payload(payload);
             data.push(item);
             timestamps.push(ts);
+
+            assert!(ts > last || ts == 0, "last: {last}, ts: {ts}");
+            last = ts;
             Ok(())
         })
         .map_err(Error::unwrap_io)
@@ -93,7 +98,9 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         struct ReachedN;
 
         let mut n_read = 0;
+        let mut prev_ts = 0;
         let res = self.read_with_processor(seek, |ts, payload| {
+            prev_ts = ts;
             let item = decoder.decode_payload(payload);
             data.push(item);
             timestamps.push(ts);
@@ -159,21 +166,25 @@ fn removed_partial_meta_at_end<F: fmt::Debug + Read + Seek + SetLen>(
     file: &mut F,
     payload_size: PayloadSize,
 ) -> Result<bool, io::Error> {
-    file.seek(SeekFrom::Start(
-        file.len()? - payload_size.metainfo_size() as u64,
-    ))?;
+    let check_start = file.len()? - payload_size.metainfo_size() as u64;
+    file.seek(SeekFrom::Start(check_start))?;
+
     let mut to_check = vec![0u8; payload_size.metainfo_size()];
     file.read_exact(&mut to_check)?;
-    let lines = to_check.chunks_exact(payload_size.line_size());
-    let meta_section_start = lines
-        .tuple_windows()
-        .position(|(a, b)| (a[0..2] == meta::PREAMBLE && b[0..2] == meta::PREAMBLE));
 
-    if let Some(pos) = meta_section_start {
-        file.set_len(
-            file.len()? - payload_size.metainfo_size() as u64
-                + pos as u64 * payload_size.line_size() as u64,
-        )?;
+    // otherwise the check below does not match a partial meta section
+    // that is only one line
+    to_check.extend(meta::PREAMBLE);
+    to_check.extend(iter::repeat_n(0, payload_size.raw()));
+
+    let partial_meta_start = to_check
+        .chunks_exact(payload_size.line_size())
+        .tuple_windows()
+        .position(|(a, b)| a[0..2] == meta::PREAMBLE && b[0..2] == meta::PREAMBLE)
+        .map(|line| line * payload_size.line_size());
+
+    if let Some(partial_meta_start) = partial_meta_start {
+        file.set_len(check_start + partial_meta_start as u64)?;
         Ok(true)
     } else {
         Ok(false)

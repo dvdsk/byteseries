@@ -173,18 +173,21 @@ where
     ) -> Result<Self, CreateError> {
         let mut empty = Self::new(resampler, config, source_path, payload_size)
             .map_err(CreateError::CreateData)?;
-        let Some(first_time) = source.first_time() else {
+        let Some(first_full_ts) = source.first_meta_timestamp() else {
             return Ok(empty);
         };
 
         let seek = Pos {
             start: MetaPos::ZERO.line_start(payload_size),
             end: source.data_len,
-            first_full_ts: first_time,
+            first_full_ts,
         };
-        let res = source
-            .file_handle
-            .read_with_processor(seek, |ts, line| empty.process(ts, line));
+        let mut prev_ts = 0;
+        let res = source.file_handle.read_with_processor(seek, |ts, line| {
+            assert!(ts > prev_ts || prev_ts == 0, "ts: {ts}, prev_ts: {prev_ts}");
+            prev_ts = ts;
+            empty.process(ts, line)
+        });
 
         match res {
             Ok(()) => Ok(empty),

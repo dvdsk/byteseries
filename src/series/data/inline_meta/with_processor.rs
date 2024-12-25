@@ -1,5 +1,6 @@
 use core::fmt;
 use std::io::{Read, Seek, SeekFrom};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{instrument, warn};
 
 use crate::Pos;
@@ -30,9 +31,36 @@ impl<E: fmt::Debug> Error<E> {
     }
 }
 
-fn small_ts(line: &[u8]) -> u64 {
+static DEBUG_PRINT_ON: AtomicBool = AtomicBool::new(false);
+macro_rules! sdbg {
+    ($val:expr) => {
+        if DEBUG_PRINT_ON.load(std::sync::atomic::Ordering::Relaxed) {
+            dbg!($val)
+        } else {
+            $val
+        }
+    };
+    ($($val:expr),+) => {
+        if DEBUG_PRINT_ON.load(std::sync::atomic::Ordering::Relaxed) {
+            dbg!($($val),+);
+        }
+    };
+}
+
+fn ts_from(line: &[u8], full_ts: u64) -> u64 {
+    static LINES_BEYOND_TARGET: AtomicU64 = AtomicU64::new(0);
+
     let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
-    u16::from_le_bytes(small_ts).into()
+    let small_ts: u64 = u16::from_le_bytes(small_ts).into();
+
+    if full_ts + small_ts >= 1730177212 - 20 {
+        if LINES_BEYOND_TARGET.fetch_add(1, Ordering::Relaxed) > 2 {
+            DEBUG_PRINT_ON.store(true, Ordering::Relaxed);
+        }
+    }
+
+    sdbg!(full_ts, small_ts);
+    full_ts + small_ts
 }
 
 impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
@@ -53,7 +81,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
             .seek(SeekFrom::Start(seek.start.raw_offset()))?;
 
         let mut needed_overlap = 0;
-        let mut full_ts = seek.first_full_ts;
+        let mut meta_ts = seek.first_full_ts;
         while to_read > 0 {
             let read_size =
                 chunk_size.min(usize::try_from(to_read).unwrap_or(usize::MAX));
@@ -69,36 +97,30 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 };
 
                 if line[..2] != meta::PREAMBLE {
-                    processor(small_ts(line) + full_ts, &line[2..])
-                        .map_err(Error::Processor)?;
+                    let debug_res = processor(ts_from(line, meta_ts), &line[2..])
+                        .map_err(Error::Processor);
+                    debug_res?;
+
                     continue;
                 }
 
+                sdbg!(&line[..2]);
                 let Some(next_line) = lines.next() else {
-                    if to_read == 0 {
-                        // take care of the last item
-                        processor(small_ts(line) + full_ts, &line[2..])
-                            .map_err(Error::Processor)?;
-                    }
                     break self.payload_size.line_size();
                 };
+                sdbg!(&next_line[..2]);
 
+                // the break with needed_overlap ensures a new read always starts
+                // before a meta section and never in between.
                 if next_line[..2] != meta::PREAMBLE {
-                    processor(small_ts(line) + full_ts, &line[2..])
-                        .map_err(Error::Processor)?;
-                    processor(small_ts(next_line) + full_ts, &next_line[2..])
-                        .map_err(Error::Processor)?;
-                    continue;
+                    panic!("File must be corrupt, second line MUST also be meta");
                 }
 
-                match meta::read(lines.by_ref(), line, next_line) {
-                    meta::Result::Meta {
-                        meta,
-                        line_after_meta,
-                    } => {
-                        full_ts = u64::from_le_bytes(meta);
-                        processor(full_ts, &line_after_meta[2..])
-                            .map_err(Error::Processor)?;
+                match sdbg!(meta::read(lines.by_ref(), line, next_line)) {
+                    meta::Result::Meta { meta } => {
+                        meta_ts = u64::from_le_bytes(meta);
+                        // processor(meta_ts, &line_after_meta[2..])
+                        //     .map_err(Error::Processor)?;
                     }
                     meta::Result::OutOfLines { consumed_lines } => {
                         break consumed_lines * self.payload_size.line_size();

@@ -39,7 +39,7 @@ pub enum TimeRange {
 
 impl TimeRange {
     fn from_data(data: &mut Data) -> Self {
-        if let Some(first) = data.first_time() {
+        if let Some(first) = data.first_meta_timestamp() {
             let last = data.last_time().expect(
                 "if there is a first time there is a last (can be equal to first)",
             );
