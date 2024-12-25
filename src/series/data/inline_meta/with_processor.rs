@@ -1,6 +1,5 @@
 use core::fmt;
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tracing::{instrument, warn};
 
 use crate::Pos;
@@ -31,35 +30,10 @@ impl<E: fmt::Debug> Error<E> {
     }
 }
 
-static DEBUG_PRINT_ON: AtomicBool = AtomicBool::new(false);
-macro_rules! sdbg {
-    ($val:expr) => {
-        if DEBUG_PRINT_ON.load(std::sync::atomic::Ordering::Relaxed) {
-            dbg!($val)
-        } else {
-            $val
-        }
-    };
-    ($($val:expr),+) => {
-        if DEBUG_PRINT_ON.load(std::sync::atomic::Ordering::Relaxed) {
-            dbg!($($val),+);
-        }
-    };
-}
-
 fn ts_from(line: &[u8], full_ts: u64) -> u64 {
-    static LINES_BEYOND_TARGET: AtomicU64 = AtomicU64::new(0);
-
     let small_ts: [u8; 2] = line[0..2].try_into().expect("slice len is 2");
     let small_ts: u64 = u16::from_le_bytes(small_ts).into();
 
-    if full_ts + small_ts >= 1730177212 - 20 {
-        if LINES_BEYOND_TARGET.fetch_add(1, Ordering::Relaxed) > 2 {
-            DEBUG_PRINT_ON.store(true, Ordering::Relaxed);
-        }
-    }
-
-    sdbg!(full_ts, small_ts);
     full_ts + small_ts
 }
 
@@ -104,11 +78,9 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                     continue;
                 }
 
-                sdbg!(&line[..2]);
                 let Some(next_line) = lines.next() else {
                     break self.payload_size.line_size();
                 };
-                sdbg!(&next_line[..2]);
 
                 // the break with needed_overlap ensures a new read always starts
                 // before a meta section and never in between.
@@ -116,11 +88,9 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                     panic!("File must be corrupt, second line MUST also be meta");
                 }
 
-                match sdbg!(meta::read(lines.by_ref(), line, next_line)) {
+                match meta::read(lines.by_ref(), line, next_line) {
                     meta::Result::Meta { meta } => {
                         meta_ts = u64::from_le_bytes(meta);
-                        // processor(meta_ts, &line_after_meta[2..])
-                        //     .map_err(Error::Processor)?;
                     }
                     meta::Result::OutOfLines { consumed_lines } => {
                         break consumed_lines * self.payload_size.line_size();

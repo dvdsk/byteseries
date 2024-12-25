@@ -17,15 +17,15 @@ fn main() -> Result<()> {
     color_eyre::install().unwrap();
     let path = parse_args();
 
-    // let (input_series, _) = ByteSeries::builder()
-    //     .retrieve_payload_size()
-    //     .with_any_header()
-    //     .open(&path)
-    //     .wrap_err("Could not open backup input")?;
-    // let ts1 = read_in_chunks(input_series)?;
-    // validate_ts(&ts1);
-    // eprintln!("read in chuncks timestamps validated");
-    // assert!(ts1.contains(&1730173323));
+    let (input_series, _) = ByteSeries::builder()
+        .retrieve_payload_size()
+        .with_any_header()
+        .open(&path)
+        .wrap_err("Could not open backup input")?;
+    let ts1 = read_in_chunks(input_series)?;
+    validate_ts(&ts1);
+    eprintln!("read in chuncks timestamps validated");
+    assert!(ts1.contains(&1730173323));
 
     let (input_series, _) = ByteSeries::builder()
         .retrieve_payload_size()
@@ -37,7 +37,7 @@ fn main() -> Result<()> {
     validate_ts(&ts2);
     eprintln!("read all timestamps validated");
 
-    // assert_eq!(ts1, ts2);
+    assert_eq!(ts1, ts2);
 
     Ok(())
 }
