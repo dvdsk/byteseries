@@ -248,12 +248,15 @@ impl Index {
             let next_line_start = self
                 .entries
                 .last()
-                .unwrap()
+                .expect("if there is data there is a header entry")
                 .meta_start
                 .line_start(payload_size);
             return (
                 StartArea::TillEnd(next_line_start),
-                self.entries.last().unwrap().timestamp,
+                self.entries
+                    .last()
+                    .expect("if there is data there is a header entry")
+                    .timestamp,
             );
         }
 

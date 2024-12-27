@@ -186,7 +186,9 @@ impl ByteSeries {
         R::State: Send + 'static,
     {
         let path = name.as_ref().with_extension("byteseries");
-        let file = crate::file::FileWithHeader::open_existing(path.clone()).unwrap();
+        let file = crate::file::FileWithHeader::open_existing(path.clone())
+            .map_err(|source| data::OpenError::File { source, path })
+            .map_err(Error::Open)?;
         let (file, header) = file.split_off_header();
         let (payload_size, user_header) =
             file_header::check_and_split_off_user_header(header.clone(), payload_size)?;
