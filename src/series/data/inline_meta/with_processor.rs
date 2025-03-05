@@ -42,6 +42,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     pub(crate) fn read_with_processor<E: std::fmt::Debug>(
         &mut self,
         seek: Pos,
+        skip_corrupt_meta: bool,
         mut processor: impl FnMut(Timestamp, &[u8]) -> Result<(), E>,
     ) -> Result<(), Error<E>> {
         let mut to_read = seek.end - seek.start.raw_offset();
@@ -54,6 +55,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         self.file_handle
             .seek(SeekFrom::Start(seek.start.raw_offset()))?;
 
+        let mut skipping_over_corrupted_data = false;
         let mut needed_overlap = 0;
         let mut meta_ts = seek.first_full_ts;
         while to_read > 0 {
@@ -70,7 +72,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                     break 0;
                 };
 
-                if line[..2] != meta::PREAMBLE {
+                if line[..2] != meta::PREAMBLE && !skipping_over_corrupted_data {
                     let debug_res = processor(ts_from(line, meta_ts), &line[2..])
                         .map_err(Error::Processor);
                     debug_res?;
@@ -85,9 +87,19 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 // the break with needed_overlap ensures a new read always starts
                 // before a meta section and never in between.
                 if next_line[..2] != meta::PREAMBLE {
-                    panic!("File must be corrupt, second line MUST also be meta");
+                    if skip_corrupt_meta {
+                        skipping_over_corrupted_data = true;
+                        continue;
+                    } else {
+                        panic!(
+                            "File must be corrupt, second line MUST also be meta. 
+                            You can try to skip data until the next uncorrupted meta 
+                            timestamp to do so enable `skipping_over_corrupted_data`"
+                        );
+                    }
                 }
 
+                skipping_over_corrupted_data = false;
                 match meta::read(lines.by_ref(), line, next_line) {
                     meta::Result::Meta { meta } => {
                         meta_ts = u64::from_le_bytes(meta);

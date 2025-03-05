@@ -53,6 +53,7 @@ pub(super) fn add_missing_data(
     source
         .read_resampling(
             seek,
+            true,
             resampler,
             config.bucket_size,
             &mut timestamps,

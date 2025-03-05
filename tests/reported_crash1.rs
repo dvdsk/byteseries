@@ -49,6 +49,7 @@ fn reported_crash1() {
         &mut resampler,
         &mut Vec::new(),
         &mut Vec::new(),
+        false,
     )
     .unwrap();
 }

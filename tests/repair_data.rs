@@ -70,7 +70,7 @@ fn only_meta_section_in_file(#[case] payload_size: usize) {
         .unwrap();
     let mut timestamps = Vec::new();
     let res = series
-        .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
+        .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new(), false)
         .unwrap_err();
     assert!(
         matches!(
@@ -114,7 +114,7 @@ fn partial_meta_at_end(#[case] payload_size: usize) {
         .unwrap();
     let mut timestamps = Vec::new();
     series
-        .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
+        .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new(), false)
         .unwrap();
     assert_eq!(&timestamps, &[42]);
 }
@@ -161,7 +161,7 @@ fn data_end_in_partial_meta(#[case] payload_size: usize) {
         .unwrap();
     let mut timestamps = Vec::new();
     series
-        .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new())
+        .read_all(40..44, &mut EmptyDecoder, &mut timestamps, &mut Vec::new(), false)
         .unwrap();
     assert_eq!(&timestamps, &[42]);
 }

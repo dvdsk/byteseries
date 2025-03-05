@@ -106,6 +106,7 @@ fn read_a_single_item() {
             &mut RawLineDecoder,
             &mut timestamps,
             &mut data,
+            false,
         )
         .unwrap();
     assert_eq!(timestamps.pop(), Some(timestamp));

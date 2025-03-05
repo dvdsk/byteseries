@@ -45,6 +45,7 @@ fn no_downsampled_cache(
         &mut FloatResampler,
         &mut timestamps,
         &mut data,
+        false,
     )
     .unwrap();
     assert_slope_ok(&timestamps, &data)
@@ -71,7 +72,7 @@ fn ideal_downsampled_cache() {
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_n(10, T1..T2, &mut FloatResampler, &mut timestamps, &mut data)
+    bs.read_n(10, T1..T2, &mut FloatResampler, &mut timestamps, &mut data, false)
         .unwrap();
     assert_slope_ok(&timestamps, &data)
 }
@@ -100,6 +101,7 @@ fn with_cache_same_as_without() {
             &mut FloatResampler,
             &mut timestamps_without_cache,
             &mut data_without_cache,
+            false,
         )
         .unwrap();
     }
@@ -127,6 +129,7 @@ fn with_cache_same_as_without() {
             &mut FloatResampler,
             &mut timestamps_with_cache,
             &mut data_with_cache,
+            false,
         )
         .unwrap();
     }

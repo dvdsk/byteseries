@@ -273,12 +273,13 @@ impl Data {
     pub(crate) fn read_all<D: Decoder>(
         &mut self,
         seek: Pos,
+        skip_corrupt_meta: bool,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read(decoder, timestamps, data, seek)
+            .read(decoder, timestamps, data, seek, skip_corrupt_meta)
             .map_err(ReadError::Reading)
     }
 
@@ -289,12 +290,13 @@ impl Data {
         &mut self,
         n: usize,
         seek: Pos,
+        skip_corrupt_meta: bool,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read_first_n(n, decoder, timestamps, data, seek)
+            .read_first_n(n, decoder, timestamps, data, seek, skip_corrupt_meta)
             .map_err(ReadError::Reading)
     }
 
@@ -302,13 +304,14 @@ impl Data {
     pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
         seek: Pos,
+        skip_corrupt_meta: bool,
         resampler: &mut R,
         bucket_size: usize,
         timestamps: &mut Vec<u64>,
         data: &mut Vec<<R as Decoder>::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read_resampling(resampler, bucket_size, timestamps, data, seek)
+            .read_resampling(resampler, bucket_size, timestamps, data, seek, skip_corrupt_meta)
             .map_err(ReadError::Reading)
     }
 
@@ -361,7 +364,7 @@ fn last_line<T>(
         end: data_len,
     };
     file_handle
-        .read(decoder, &mut timestamps, &mut data, seek)
+        .read(decoder, &mut timestamps, &mut data, seek, true)
         .map_err(ReadError::Reading)?;
 
     let ts = timestamps.pop().ok_or(ReadError::NoData)?;

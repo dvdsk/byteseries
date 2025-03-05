@@ -43,8 +43,13 @@ fn beyond_range(#[case] step: u64) {
 
     let t1 = timestamp + start_read_inlines * step;
     let t2 = timestamp + (start_read_inlines + read_length_inlines) * step;
-    let read_res =
-        series.read_all(t1..t2, &mut EmptyDecoder, &mut Vec::new(), &mut Vec::new());
+    let read_res = series.read_all(
+        t1..t2,
+        &mut EmptyDecoder,
+        &mut Vec::new(),
+        &mut Vec::new(),
+        false,
+    );
 
     match read_res {
         Err(e) => match e {
@@ -95,7 +100,7 @@ fn within_range(#[case] step: u64) {
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_all(t1..=t2, &mut EmptyDecoder, &mut timestamps, &mut data)
+    bs.read_all(t1..=t2, &mut EmptyDecoder, &mut timestamps, &mut data, false)
         .unwrap();
 
     let first = timestamps.first().unwrap();
@@ -122,8 +127,14 @@ fn before_range() {
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_all(90..=120, &mut EmptyDecoder, &mut timestamps, &mut data)
-        .unwrap();
+    bs.read_all(
+        90..=120,
+        &mut EmptyDecoder,
+        &mut timestamps,
+        &mut data,
+        false,
+    )
+    .unwrap();
 
     let first = timestamps.first().unwrap();
     let last = timestamps.last().unwrap();
@@ -161,6 +172,7 @@ fn into_gap(#[case] read_start: Timestamp, #[case] read_end: Timestamp) {
         &mut EmptyDecoder,
         &mut timestamps,
         &mut data,
+        false,
     )
     .unwrap();
 

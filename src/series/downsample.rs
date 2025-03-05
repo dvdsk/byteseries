@@ -183,11 +183,13 @@ where
             first_full_ts,
         };
         let mut prev_ts = 0;
-        let res = source.file_handle.read_with_processor(seek, |ts, line| {
-            assert!(ts > prev_ts || prev_ts == 0, "ts: {ts}, prev_ts: {prev_ts}");
-            prev_ts = ts;
-            empty.process(ts, line)
-        });
+        let res = source
+            .file_handle
+            .read_with_processor(seek, true, |ts, line| {
+                assert!(ts > prev_ts || prev_ts == 0, "ts: {ts}, prev_ts: {prev_ts}");
+                prev_ts = ts;
+                empty.process(ts, line)
+            });
 
         match res {
             Ok(()) => Ok(empty),

@@ -137,8 +137,15 @@ fn downsampled_path(path: &Path, config: downsample::Config) -> std::path::PathB
 fn read(bs: &mut ByteSeries) -> (Vec<Timestamp>, Vec<f32>) {
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_n(10, T1..T2, &mut FloatResampler, &mut timestamps, &mut data)
-        .unwrap();
+    bs.read_n(
+        10,
+        T1..T2,
+        &mut FloatResampler,
+        &mut timestamps,
+        &mut data,
+        false,
+    )
+    .unwrap();
 
     (timestamps, data)
 }

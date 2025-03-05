@@ -44,7 +44,7 @@ fn compare_written_to_read() {
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
     series
-        .read_all(t1..t2, &mut TsDecoder, &mut timestamps, &mut data)
+        .read_all(t1..t2, &mut TsDecoder, &mut timestamps, &mut data, false)
         .unwrap();
 
     for (timestamp, data) in timestamps.into_iter().zip(data) {

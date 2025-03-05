@@ -249,7 +249,8 @@ impl ByteSeries {
         Ok(())
     }
 
-    /// Will return zero samples if there is nothing to read.
+    /// Will return zero samples if there is nothing to read. If `skip_corrupt_meta` is true this
+    /// will skip data between a corrupt meta section and the next meta section.
     ///
     /// # Errors
     ///
@@ -263,6 +264,7 @@ impl ByteSeries {
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
+        skip_corrupt_meta: bool,
     ) -> Result<(), Error> {
         let Some(seek) = seek::RoughPos::new(
             &self.data,
@@ -281,7 +283,7 @@ impl ByteSeries {
         };
 
         self.data
-            .read_all(seek, decoder, timestamps, data)
+            .read_all(seek, skip_corrupt_meta, decoder, timestamps, data)
             .map_err(Error::Reading)
     }
 
@@ -317,6 +319,9 @@ impl ByteSeries {
     /// This might read more but will resample down using averages.
     /// No interpolation is performed.
     ///
+    /// If `skip_corrupt_meta` is true a corrupt meta section is not an error but skipped
+    /// beyond.
+    ///
     /// # Errors
     ///
     /// See the [`Error`] docs for an exhaustive list of everything that can go wrong.
@@ -331,6 +336,7 @@ impl ByteSeries {
         resampler: &mut R,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<<R as Decoder>::Item>,
+        skip_corrupt_meta: bool,
     ) -> Result<(), Error> {
         assert!(
             self.downsampled
@@ -383,7 +389,14 @@ impl ByteSeries {
             usize::try_from(bucket_size).map_err(|_| Error::TooMuchToResample)?;
 
         optimal_data
-            .read_resampling(seek, resampler, bucket_size, timestamps, data)
+            .read_resampling(
+                seek,
+                skip_corrupt_meta,
+                resampler,
+                bucket_size,
+                timestamps,
+                data,
+            )
             .map_err(Error::Reading)
     }
 
@@ -406,6 +419,7 @@ impl ByteSeries {
         range: impl RangeBounds<Timestamp>,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
+        skip_corrupt_meta: bool,
     ) -> Result<(), Error> {
         let Some(seek) = seek::RoughPos::new(
             &self.data,
@@ -424,7 +438,7 @@ impl ByteSeries {
         };
 
         self.data
-            .read_first_n(n, seek, decoder, timestamps, data)
+            .read_first_n(n, seek, skip_corrupt_meta, decoder, timestamps, data)
             .map_err(Error::Reading)
     }
 

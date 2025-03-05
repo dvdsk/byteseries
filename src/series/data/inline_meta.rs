@@ -71,9 +71,10 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
         seek: Pos,
+        skip_corrupt_meta: bool,
     ) -> Result<(), std::io::Error> {
         let mut last = 0;
-        self.read_with_processor::<()>(seek, |ts, payload| {
+        self.read_with_processor::<()>(seek, skip_corrupt_meta, |ts, payload| {
             let item = decoder.decode_payload(payload);
             data.push(item);
             timestamps.push(ts);
@@ -93,13 +94,14 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
         seek: Pos,
+        skip_corrupt_meta: bool,
     ) -> Result<(), std::io::Error> {
         #[derive(Debug)]
         struct ReachedN;
 
         let mut n_read = 0;
         let mut prev_ts = 0;
-        let res = self.read_with_processor(seek, |ts, payload| {
+        let res = self.read_with_processor(seek, skip_corrupt_meta, |ts, payload| {
             prev_ts = ts;
             let item = decoder.decode_payload(payload);
             data.push(item);
@@ -127,9 +129,10 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<u64>,
         data: &mut Vec<<R as Decoder>::Item>,
         seek: Pos,
+        skip_corrupt_meta: bool,
     ) -> Result<(), std::io::Error> {
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
-        self.read_with_processor::<()>(seek, |ts, payload| {
+        self.read_with_processor::<()>(seek, skip_corrupt_meta, |ts, payload| {
             sampler.process(ts, payload);
             Ok(())
         })
