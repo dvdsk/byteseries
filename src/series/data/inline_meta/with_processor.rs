@@ -33,7 +33,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     pub(crate) fn read_with_processor<E: std::fmt::Debug>(
         &mut self,
         seek: Pos,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
         mut processor: impl FnMut(Timestamp, &[u8]) -> Result<(), E>,
     ) -> Result<(), Error<E>> {
         let mut to_read = seek.end - seek.start.raw_offset();

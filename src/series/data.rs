@@ -140,7 +140,7 @@ impl Data {
         name: impl AsRef<Path> + fmt::Debug,
         file: OffsetFile,
         payload_size: PayloadSize,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<Data, OpenError> {
         let mut file = FileWithInlineMeta::new(file, payload_size)
             .map_err(OpenError::CheckOrRepair)?;
@@ -190,7 +190,7 @@ impl Data {
     pub(crate) fn last_line<T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<(Timestamp, T), ReadError> {
         last_line(
             &self.index,
@@ -287,7 +287,7 @@ impl Data {
     pub(crate) fn read_all<D: Decoder>(
         &mut self,
         seek: Pos,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
@@ -303,7 +303,7 @@ impl Data {
         &mut self,
         n: usize,
         seek: Pos,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
@@ -322,7 +322,7 @@ impl Data {
     pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
         seek: Pos,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
         resampler: &mut R,
         bucket_size: usize,
         timestamps: &mut Vec<u64>,
@@ -376,7 +376,7 @@ fn last_line<T>(
     payload_size: PayloadSize,
     file_handle: &mut FileWithInlineMeta<OffsetFile>,
     decoder: &mut impl Decoder<Item = T>,
-    corruption_callback: &Option<CorruptionCallback>,
+    corruption_callback: &mut Option<CorruptionCallback>,
 ) -> Result<(Timestamp, T), ReadError> {
     let mut timestamps = Vec::new();
     let mut data = Vec::new();

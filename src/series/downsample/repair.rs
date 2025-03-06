@@ -30,7 +30,7 @@ pub(super) fn add_missing_data(
     downsampled: &mut Data,
     config: &Config,
     resampler: &mut impl Resampler,
-    corruption_callback: &Option<CorruptionCallback>,
+    corruption_callback: &mut Option<CorruptionCallback>,
 ) -> Result<(), Error> {
     let start_bound = match downsampled.last_time() {
         Some(ts) => Bound::Excluded(ts),

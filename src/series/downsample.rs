@@ -141,7 +141,7 @@ where
         source_path: &Path,
         source: &mut Data,
         payload_size: PayloadSize,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<Self, OpenError> {
         let source_name = source_path.file_name().unwrap_or_default();
         let mut resampled_name = source_name.to_owned();
@@ -158,7 +158,7 @@ where
             .map_err(OpenError::Data)?;
         let (file, _) = file.split_off_header();
         let mut data =
-            Data::open_existing(path, file, payload_size, &corruption_callback)
+            Data::open_existing(path, file, payload_size, corruption_callback)
                 .map_err(OpenError::Data)?;
 
         repair::add_missing_data(
@@ -166,7 +166,7 @@ where
             &mut data,
             &config,
             &mut resampler,
-            &corruption_callback,
+            corruption_callback,
         )
         .map_err(OpenError::Repair)?;
 
@@ -188,7 +188,7 @@ where
         source_path: &Path,
         payload_size: PayloadSize,
         source: &mut Data,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<Self, CreateError> {
         let mut empty = Self::new(resampler, config, source_path, payload_size)
             .map_err(CreateError::CreateData)?;
@@ -233,7 +233,7 @@ where
         source_path: &Path,
         payload_size: PayloadSize,
         source: &mut Data,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<Self, OpenOrCreateError> {
         match Self::open(
             resampler.clone(),

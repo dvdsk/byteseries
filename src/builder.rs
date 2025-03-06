@@ -2,7 +2,7 @@ use std::path::Path;
 use std::str::Utf8Error;
 
 use crate::downsample::resample::EmptyResampler;
-use crate::{downsample, series, ByteSeries, Resampler};
+use crate::{downsample, series, ByteSeries, CorruptionCallback, Resampler};
 
 #[derive(Debug)]
 enum HeaderOption {
@@ -52,7 +52,7 @@ pub struct ByteSeriesBuilder<
     ignore_header: bool,
     resampler: R,
     resample_configs: Vec<downsample::Config>,
-    corruption_callback: Option<Box<dyn Fn() -> bool + Send>>,
+    corruption_callback: Option<CorruptionCallback>,
 }
 
 impl<
@@ -215,7 +215,7 @@ where
     /// errors above is returned. 
     pub fn with_callback_on_recoverable_corruption(
         mut self,
-        callback: Box<dyn Fn() -> bool + Send>,
+        callback: CorruptionCallback,
     ) -> Self {
         self.corruption_callback = Some(callback);
         self

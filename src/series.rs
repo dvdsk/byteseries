@@ -141,7 +141,7 @@ impl ByteSeries {
         user_header: &[u8],
         resampler: R,
         resample_configs: Vec<downsample::Config>,
-        corruption_callback: Option<CorruptionCallback>,
+        mut corruption_callback: Option<CorruptionCallback>,
     ) -> Result<ByteSeries, Error>
     where
         R: Resampler + Clone + Send + 'static,
@@ -168,7 +168,7 @@ impl ByteSeries {
                         name.as_ref(),
                         payload_size,
                         &mut data,
-                        &corruption_callback,
+                        &mut corruption_callback,
                     )
                     .map_err(downsample::Error::Creating)
                 })
@@ -195,7 +195,7 @@ impl ByteSeries {
         payload_size: PayloadSizeOption,
         resampler: R,
         resample_configs: Vec<downsample::Config>,
-        corruption_callback: Option<CorruptionCallback>,
+        mut corruption_callback: Option<CorruptionCallback>,
     ) -> Result<(ByteSeries, Vec<u8>), Error>
     where
         R: Resampler + Clone + Send + 'static,
@@ -210,7 +210,7 @@ impl ByteSeries {
             file_header::check_and_split_off_user_header(header.clone(), payload_size)?;
 
         let mut data =
-            Data::open_existing(&name, file, payload_size, &corruption_callback)
+            Data::open_existing(&name, file, payload_size, &mut corruption_callback)
                 .map_err(Error::Open)?;
         Ok((
             ByteSeries {
@@ -224,7 +224,7 @@ impl ByteSeries {
                             name.as_ref(),
                             payload_size,
                             &mut data,
-                            &corruption_callback,
+                            &mut corruption_callback,
                         )
                         .map_err(downsample::Error::OpenOrCreate)
                     })
@@ -301,7 +301,7 @@ impl ByteSeries {
         };
 
         self.data
-            .read_all(seek, &self.corruption_callback, decoder, timestamps, data)
+            .read_all(seek, &mut self.corruption_callback, decoder, timestamps, data)
             .map_err(Error::Reading)
     }
 
@@ -409,7 +409,7 @@ impl ByteSeries {
         optimal_data
             .read_resampling(
                 seek,
-                &self.corruption_callback,
+                &mut self.corruption_callback,
                 resampler,
                 bucket_size,
                 timestamps,
@@ -458,7 +458,7 @@ impl ByteSeries {
             .read_first_n(
                 n,
                 seek,
-                &self.corruption_callback,
+                &mut self.corruption_callback,
                 decoder,
                 timestamps,
                 data,
@@ -477,7 +477,7 @@ impl ByteSeries {
         D: Decoder + Clone,
         <D as Decoder>::Item: Clone,
     {
-        self.data.last_line(decoder, &self.corruption_callback)
+        self.data.last_line(decoder, &mut self.corruption_callback)
     }
 
     /// # Errors

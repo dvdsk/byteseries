@@ -74,7 +74,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
         seek: Pos,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<(), ReadError> {
         let mut last = 0;
         self.read_with_processor::<()>(seek, corruption_callback, |ts, payload| {
@@ -106,7 +106,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
         seek: Pos,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<(), ReadError> {
         #[derive(Debug)]
         struct ReachedN;
@@ -145,7 +145,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<u64>,
         data: &mut Vec<<R as Decoder>::Item>,
         seek: Pos,
-        corruption_callback: &Option<CorruptionCallback>,
+        corruption_callback: &mut Option<CorruptionCallback>,
     ) -> Result<(), ReadError> {
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
         self.read_with_processor::<()>(seek, corruption_callback, |ts, payload| {

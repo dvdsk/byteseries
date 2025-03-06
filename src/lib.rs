@@ -7,7 +7,7 @@ pub use seek::Pos;
 pub use series::{downsample, ByteSeries};
 
 pub type Timestamp = u64;
-type CorruptionCallback = Box<dyn Fn() -> bool + Send>;
+type CorruptionCallback = Box<dyn FnMut() -> bool + Send>;
 
 pub trait Decoder: core::fmt::Debug {
     type Item: core::fmt::Debug;
