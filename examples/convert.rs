@@ -94,7 +94,6 @@ fn copy_over_content(
             read_start..,
             &mut timestamps,
             &mut data,
-            false,
         ) {
             bar.finish();
             break Ok(report);

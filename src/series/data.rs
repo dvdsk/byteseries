@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tracing::{instrument, warn};
 
 use crate::file::{self, FileWithHeader, OffsetFile};
-use crate::{Decoder, Pos, Timestamp};
+use crate::{CorruptionCallback, Decoder, Pos, Timestamp};
 
 pub(crate) mod inline_meta;
 use inline_meta::FileWithInlineMeta;
@@ -97,7 +97,13 @@ pub enum ReadError {
     #[error("The file is empty")]
     NoData,
     #[error("{0}")]
-    Reading(std::io::Error),
+    Io(std::io::Error),
+    #[error(
+        "File must be corrupt, second line MUST also be meta. \
+        You can try to skip data until the next uncorrupted meta \
+        timestamp to do so enable `skipping_over_corrupted_data`"
+    )]
+    CorruptMetaSection,
 }
 
 impl Data {
@@ -129,11 +135,12 @@ impl Data {
         })
     }
 
-    #[instrument]
+    #[instrument(skip(corruption_callback))]
     pub(crate) fn open_existing(
         name: impl AsRef<Path> + fmt::Debug,
         file: OffsetFile,
         payload_size: PayloadSize,
+        corruption_callback: &Option<CorruptionCallback>,
     ) -> Result<Data, OpenError> {
         let mut file = FileWithInlineMeta::new(file, payload_size)
             .map_err(OpenError::CheckOrRepair)?;
@@ -153,13 +160,18 @@ impl Data {
                 }
             };
 
-        let last_time =
-            match last_line(&index, data_len, payload_size, &mut file, &mut EmptyDecoder)
-            {
-                Ok((time, _)) => Some(time),
-                Err(ReadError::NoData) => None,
-                Err(other) => return Err(OpenError::ReadLastTime(other)),
-            };
+        let last_time = match last_line(
+            &index,
+            data_len,
+            payload_size,
+            &mut file,
+            &mut EmptyDecoder,
+            corruption_callback,
+        ) {
+            Ok((time, _)) => Some(time),
+            Err(ReadError::NoData) => None,
+            Err(other) => return Err(OpenError::ReadLastTime(other)),
+        };
 
         let data = Self {
             file_handle: file,
@@ -178,6 +190,7 @@ impl Data {
     pub(crate) fn last_line<T: std::fmt::Debug + std::clone::Clone>(
         &mut self,
         decoder: &mut impl Decoder<Item = T>,
+        corruption_callback: &Option<CorruptionCallback>,
     ) -> Result<(Timestamp, T), ReadError> {
         last_line(
             &self.index,
@@ -185,6 +198,7 @@ impl Data {
             self.payload_size,
             &mut self.file_handle,
             decoder,
+            corruption_callback,
         )
     }
 
@@ -273,14 +287,13 @@ impl Data {
     pub(crate) fn read_all<D: Decoder>(
         &mut self,
         seek: Pos,
-        skip_corrupt_meta: bool,
+        corruption_callback: &Option<CorruptionCallback>,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), ReadError> {
         self.file_handle
-            .read(decoder, timestamps, data, seek, skip_corrupt_meta)
-            .map_err(ReadError::Reading)
+            .read(decoder, timestamps, data, seek, corruption_callback)
     }
 
     /// # Errors
@@ -290,29 +303,39 @@ impl Data {
         &mut self,
         n: usize,
         seek: Pos,
-        skip_corrupt_meta: bool,
+        corruption_callback: &Option<CorruptionCallback>,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
     ) -> Result<(), ReadError> {
-        self.file_handle
-            .read_first_n(n, decoder, timestamps, data, seek, skip_corrupt_meta)
-            .map_err(ReadError::Reading)
+        self.file_handle.read_first_n(
+            n,
+            decoder,
+            timestamps,
+            data,
+            seek,
+            corruption_callback,
+        )
     }
 
-    #[instrument(skip(self, resampler, timestamps, data), err)]
+    #[instrument(skip(self, resampler, timestamps, data, corruption_callback), err)]
     pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
         seek: Pos,
-        skip_corrupt_meta: bool,
+        corruption_callback: &Option<CorruptionCallback>,
         resampler: &mut R,
         bucket_size: usize,
         timestamps: &mut Vec<u64>,
         data: &mut Vec<<R as Decoder>::Item>,
     ) -> Result<(), ReadError> {
-        self.file_handle
-            .read_resampling(resampler, bucket_size, timestamps, data, seek, skip_corrupt_meta)
-            .map_err(ReadError::Reading)
+        self.file_handle.read_resampling(
+            resampler,
+            bucket_size,
+            timestamps,
+            data,
+            seek,
+            corruption_callback,
+        )
     }
 
     pub(crate) fn payload_size(&self) -> PayloadSize {
@@ -353,6 +376,7 @@ fn last_line<T>(
     payload_size: PayloadSize,
     file_handle: &mut FileWithInlineMeta<OffsetFile>,
     decoder: &mut impl Decoder<Item = T>,
+    corruption_callback: &Option<CorruptionCallback>,
 ) -> Result<(Timestamp, T), ReadError> {
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
@@ -363,9 +387,13 @@ fn last_line<T>(
         start: LinePos(data_len - payload_size.line_size() as u64),
         end: data_len,
     };
-    file_handle
-        .read(decoder, &mut timestamps, &mut data, seek, true)
-        .map_err(ReadError::Reading)?;
+    file_handle.read(
+        decoder,
+        &mut timestamps,
+        &mut data,
+        seek,
+        corruption_callback,
+    )?;
 
     let ts = timestamps.pop().ok_or(ReadError::NoData)?;
     let item = data.pop().ok_or(ReadError::NoData)?;

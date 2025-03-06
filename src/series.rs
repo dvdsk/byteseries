@@ -1,4 +1,5 @@
 use core::fmt;
+use std::fmt::Debug;
 use std::ops::{Bound, RangeBounds};
 use std::path::Path;
 
@@ -15,7 +16,7 @@ use data::Data;
 
 use crate::builder::PayloadSizeOption;
 use crate::seek::{self, Estimate};
-use crate::{builder, Decoder, Resampler, Timestamp};
+use crate::{builder, CorruptionCallback, Decoder, Resampler, Timestamp};
 
 use self::downsample::DownSampledData;
 
@@ -74,13 +75,24 @@ impl From<TimeRange> for Option<std::ops::RangeInclusive<Timestamp>> {
     }
 }
 
-#[derive(Debug)]
 #[allow(clippy::module_name_repetitions)]
 pub struct ByteSeries {
     pub(crate) data: Data,
     downsampled: Vec<Box<dyn DownSampled>>,
+    corruption_callback: Option<CorruptionCallback>,
 
     pub(crate) range: TimeRange,
+}
+
+impl Debug for ByteSeries {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ByteSeries")
+            .field("data", &self.data)
+            .field("downsampled", &self.downsampled)
+            .field("corruption_callback", &self.corruption_callback.is_some())
+            .field("range", &self.range)
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -122,13 +134,14 @@ impl ByteSeries {
         builder::ByteSeriesBuilder::<false, false, true, true, EmptyResampler>::new()
     }
 
-    #[instrument]
+    #[instrument(skip(corruption_callback))]
     pub(crate) fn new_with_resamplers<R>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: usize,
         user_header: &[u8],
         resampler: R,
         resample_configs: Vec<downsample::Config>,
+        corruption_callback: Option<CorruptionCallback>,
     ) -> Result<ByteSeries, Error>
     where
         R: Resampler + Clone + Send + 'static,
@@ -155,6 +168,7 @@ impl ByteSeries {
                         name.as_ref(),
                         payload_size,
                         &mut data,
+                        &corruption_callback,
                     )
                     .map_err(downsample::Error::Creating)
                 })
@@ -163,6 +177,7 @@ impl ByteSeries {
                 .collect::<Result<Vec<_>, downsample::Error>>()
                 .map_err(Error::Downsampled)?,
             data,
+            corruption_callback,
         })
     }
 
@@ -174,12 +189,13 @@ impl ByteSeries {
     /// process) and the cache did not the library can panic. This should be
     /// exceedingly rare. Please let me know if this hits you and I'll see into
     /// fixing this behavior.
-    #[instrument]
+    #[instrument(skip(corruption_callback))]
     pub(crate) fn open_existing_with_resampler<R>(
         name: impl AsRef<Path> + fmt::Debug,
         payload_size: PayloadSizeOption,
         resampler: R,
         resample_configs: Vec<downsample::Config>,
+        corruption_callback: Option<CorruptionCallback>,
     ) -> Result<(ByteSeries, Vec<u8>), Error>
     where
         R: Resampler + Clone + Send + 'static,
@@ -194,7 +210,8 @@ impl ByteSeries {
             file_header::check_and_split_off_user_header(header.clone(), payload_size)?;
 
         let mut data =
-            Data::open_existing(&name, file, payload_size).map_err(Error::Open)?;
+            Data::open_existing(&name, file, payload_size, &corruption_callback)
+                .map_err(Error::Open)?;
         Ok((
             ByteSeries {
                 range: TimeRange::from_data(&mut data),
@@ -207,6 +224,7 @@ impl ByteSeries {
                             name.as_ref(),
                             payload_size,
                             &mut data,
+                            &corruption_callback,
                         )
                         .map_err(downsample::Error::OpenOrCreate)
                     })
@@ -215,6 +233,7 @@ impl ByteSeries {
                     .collect::<Result<Vec<_>, downsample::Error>>()
                     .map_err(Error::Downsampled)?,
                 data,
+                corruption_callback,
             },
             user_header,
         ))
@@ -264,7 +283,6 @@ impl ByteSeries {
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
-        skip_corrupt_meta: bool,
     ) -> Result<(), Error> {
         let Some(seek) = seek::RoughPos::new(
             &self.data,
@@ -283,7 +301,7 @@ impl ByteSeries {
         };
 
         self.data
-            .read_all(seek, skip_corrupt_meta, decoder, timestamps, data)
+            .read_all(seek, &self.corruption_callback, decoder, timestamps, data)
             .map_err(Error::Reading)
     }
 
@@ -391,7 +409,7 @@ impl ByteSeries {
         optimal_data
             .read_resampling(
                 seek,
-                skip_corrupt_meta,
+                &self.corruption_callback,
                 resampler,
                 bucket_size,
                 timestamps,
@@ -419,7 +437,6 @@ impl ByteSeries {
         range: impl RangeBounds<Timestamp>,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
-        skip_corrupt_meta: bool,
     ) -> Result<(), Error> {
         let Some(seek) = seek::RoughPos::new(
             &self.data,
@@ -438,7 +455,14 @@ impl ByteSeries {
         };
 
         self.data
-            .read_first_n(n, seek, skip_corrupt_meta, decoder, timestamps, data)
+            .read_first_n(
+                n,
+                seek,
+                &self.corruption_callback,
+                decoder,
+                timestamps,
+                data,
+            )
             .map_err(Error::Reading)
     }
 
@@ -453,7 +477,7 @@ impl ByteSeries {
         D: Decoder + Clone,
         <D as Decoder>::Item: Clone,
     {
-        self.data.last_line(decoder)
+        self.data.last_line(decoder, &self.corruption_callback)
     }
 
     /// # Errors

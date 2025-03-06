@@ -48,7 +48,6 @@ fn beyond_range(#[case] step: u64) {
         &mut EmptyDecoder,
         &mut Vec::new(),
         &mut Vec::new(),
-        false,
     );
 
     match read_res {
@@ -100,7 +99,7 @@ fn within_range(#[case] step: u64) {
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_all(t1..=t2, &mut EmptyDecoder, &mut timestamps, &mut data, false)
+    bs.read_all(t1..=t2, &mut EmptyDecoder, &mut timestamps, &mut data, )
         .unwrap();
 
     let first = timestamps.first().unwrap();
@@ -132,7 +131,6 @@ fn before_range() {
         &mut EmptyDecoder,
         &mut timestamps,
         &mut data,
-        false,
     )
     .unwrap();
 
@@ -172,7 +170,6 @@ fn into_gap(#[case] read_start: Timestamp, #[case] read_end: Timestamp) {
         &mut EmptyDecoder,
         &mut timestamps,
         &mut data,
-        false,
     )
     .unwrap();
 

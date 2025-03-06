@@ -46,7 +46,7 @@ fn truncated_index(#[case] bytes_removed: u64) {
         .unwrap();
     let mut timestamps = Vec::new();
     series
-        .read_all(.., &mut EmptyDecoder, &mut timestamps, &mut Vec::new(), false)
+        .read_all(.., &mut EmptyDecoder, &mut timestamps, &mut Vec::new(), )
         .unwrap();
     assert_eq!(timestamps, [42, 100_000, 500_000]);
 }

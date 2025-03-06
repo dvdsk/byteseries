@@ -6,7 +6,7 @@ use super::data::Data;
 use super::Config;
 use crate::seek::{self, RoughPos};
 use crate::series::data;
-use crate::Resampler;
+use crate::{CorruptionCallback, Resampler};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -24,12 +24,13 @@ pub enum Error {
     AppendingToDownsampled(#[source] data::PushError),
 }
 
-#[instrument]
+#[instrument(skip(corruption_callback))]
 pub(super) fn add_missing_data(
     source: &mut Data,
     downsampled: &mut Data,
     config: &Config,
     resampler: &mut impl Resampler,
+    corruption_callback: &Option<CorruptionCallback>,
 ) -> Result<(), Error> {
     let start_bound = match downsampled.last_time() {
         Some(ts) => Bound::Excluded(ts),
@@ -53,7 +54,7 @@ pub(super) fn add_missing_data(
     source
         .read_resampling(
             seek,
-            true,
+            corruption_callback,
             resampler,
             config.bucket_size,
             &mut timestamps,

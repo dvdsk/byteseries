@@ -56,7 +56,6 @@ fn read_in_chunks(mut input_series: ByteSeries) -> Result<Vec<u64>> {
             read_start..,
             &mut timestamps,
             &mut data,
-            false,
         ) {
             return Ok(timestamps);
         }
@@ -72,7 +71,7 @@ fn read_all(mut input_series: ByteSeries) -> Result<Vec<u64>> {
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
     input_series
-        .read_all(.., &mut EmptyDecoder, &mut timestamps, &mut data, false)
+        .read_all(.., &mut EmptyDecoder, &mut timestamps, &mut data)
         .wrap_err("Could not read all data")?;
     Ok(timestamps)
 }

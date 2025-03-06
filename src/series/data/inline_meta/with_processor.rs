@@ -2,31 +2,22 @@ use core::fmt;
 use std::io::{Read, Seek, SeekFrom};
 use tracing::{instrument, warn};
 
-use crate::Pos;
+use crate::{CorruptionCallback, Pos};
 
 use super::{meta, FileWithInlineMeta, SetLen, Timestamp};
 
+// to make it easy for users writing Processors this does
+// not implement std::core::Error
 #[derive(Debug)]
 pub(crate) enum Error<E> {
     Io(std::io::Error),
     Processor(E),
+    CorruptMetaSection,
 }
 
 impl<E> From<std::io::Error> for Error<E> {
     fn from(value: std::io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl<E: fmt::Debug> Error<E> {
-    pub fn unwrap_io(self) -> std::io::Error {
-        match self {
-            Error::Io(e) => e,
-            Error::Processor(e) => panic!(
-                "Attempt to unwrap with_processor::Error as \
-                Io error but was Processor error: {e:?}"
-            ),
-        }
     }
 }
 
@@ -38,11 +29,11 @@ fn ts_from(line: &[u8], full_ts: u64) -> u64 {
 }
 
 impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
-    #[instrument(level = "debug", skip(processor))]
+    #[instrument(level = "debug", skip(processor, corruption_callback))]
     pub(crate) fn read_with_processor<E: std::fmt::Debug>(
         &mut self,
         seek: Pos,
-        skip_corrupt_meta: bool,
+        corruption_callback: &Option<CorruptionCallback>,
         mut processor: impl FnMut(Timestamp, &[u8]) -> Result<(), E>,
     ) -> Result<(), Error<E>> {
         let mut to_read = seek.end - seek.start.raw_offset();
@@ -87,15 +78,14 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                 // the break with needed_overlap ensures a new read always starts
                 // before a meta section and never in between.
                 if next_line[..2] != meta::PREAMBLE {
-                    if skip_corrupt_meta {
-                        skipping_over_corrupted_data = true;
-                        continue;
+                    if let Some(corruption_accepted) = corruption_callback {
+                        if corruption_accepted() {
+                            continue;
+                        } else {
+                            return Err(Error::CorruptMetaSection);
+                        }
                     } else {
-                        panic!(
-                            "File must be corrupt, second line MUST also be meta. 
-                            You can try to skip data until the next uncorrupted meta 
-                            timestamp to do so enable `skipping_over_corrupted_data`"
-                        );
+                        return Err(Error::CorruptMetaSection);
                     }
                 }
 

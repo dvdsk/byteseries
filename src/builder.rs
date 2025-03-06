@@ -52,6 +52,7 @@ pub struct ByteSeriesBuilder<
     ignore_header: bool,
     resampler: R,
     resample_configs: Vec<downsample::Config>,
+    corruption_callback: Option<Box<dyn Fn() -> bool + Send>>,
 }
 
 impl<
@@ -78,6 +79,7 @@ where
             ignore_header: self.ignore_header,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
+            corruption_callback: self.corruption_callback,
             create_new,
         }
     }
@@ -98,6 +100,7 @@ where
             ignore_header: self.ignore_header,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
+            corruption_callback: self.corruption_callback,
             create_new: self.create_new,
         }
     }
@@ -122,6 +125,7 @@ where
             ignore_header: false,
             resampler: EmptyResampler,
             resample_configs: Vec::new(),
+            corruption_callback: None,
             create_new: false,
         }
     }
@@ -135,6 +139,7 @@ where
             ignore_header: self.ignore_header,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
+            corruption_callback: self.corruption_callback,
             create_new: self.create_new,
         }
     }
@@ -156,6 +161,7 @@ where
             ignore_header: false,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
+            corruption_callback: self.corruption_callback,
             create_new: self.create_new,
         }
     }
@@ -171,6 +177,7 @@ where
             ignore_header: true,
             resampler: self.resampler,
             resample_configs: self.resample_configs,
+            corruption_callback: self.corruption_callback,
             create_new: self.create_new,
         }
     }
@@ -192,7 +199,26 @@ where
             resampler,
             resample_configs: configs,
             create_new: self.create_new,
+            corruption_callback: self.corruption_callback,
         }
+    }
+    /// Normally running into a corrupt metadata section means the operation
+    /// is aborted and a
+    /// [`ReadError::CorruptMetaSection`](crate::series::data::ReadError) or
+    /// [`CreateError::CorruptMetaSection`](crate::series::downsample::CreateError)
+    /// is returned encountered. 
+    ///
+    /// - If the callback returns true we try and recover by skipping lines
+    /// until we reach a not corrupted metadata section.
+    ///
+    /// - If instead it returns false then reading is aborted and one of the
+    /// errors above is returned. 
+    pub fn with_callback_on_recoverable_corruption(
+        mut self,
+        callback: Box<dyn Fn() -> bool + Send>,
+    ) -> Self {
+        self.corruption_callback = Some(callback);
+        self
     }
 }
 
@@ -261,6 +287,7 @@ where
                 self.header.as_bytes(),
                 self.resampler,
                 self.resample_configs,
+                self.corruption_callback,
             )?;
             Ok((bs, self.header.into_bytes()))
         } else {
@@ -269,6 +296,7 @@ where
                 self.payload_size,
                 self.resampler,
                 self.resample_configs,
+                self.corruption_callback,
             )?;
 
             let header = match self.header {
@@ -311,6 +339,7 @@ where
             self.payload_size,
             self.resampler,
             self.resample_configs,
+            self.corruption_callback,
         )?;
 
         let header = match self.header {

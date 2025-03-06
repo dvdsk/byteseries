@@ -29,7 +29,6 @@ fn reported_crash2() {
         &mut FakeFloatResampler { payload_size: 204 },
         &mut Vec::new(),
         &mut Vec::new(),
-        false,
     )
     .unwrap();
 }

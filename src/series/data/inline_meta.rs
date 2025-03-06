@@ -6,9 +6,9 @@ use std::iter;
 use tracing::{instrument, warn};
 use with_processor::Error;
 
-use crate::{Pos, Resampler};
+use crate::{CorruptionCallback, Pos, Resampler};
 
-use super::{Decoder, Timestamp};
+use super::{Decoder, ReadError, Timestamp};
 pub(crate) mod meta;
 pub(crate) mod with_processor;
 
@@ -64,17 +64,20 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         &mut self.file_handle
     }
 
-    #[instrument(level = "debug", skip(self, decoder, timestamps, data))]
+    #[instrument(
+        level = "debug",
+        skip(self, decoder, timestamps, data, corruption_callback)
+    )]
     pub(crate) fn read<D: Decoder>(
         &mut self,
         decoder: &mut D,
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
         seek: Pos,
-        skip_corrupt_meta: bool,
-    ) -> Result<(), std::io::Error> {
+        corruption_callback: &Option<CorruptionCallback>,
+    ) -> Result<(), ReadError> {
         let mut last = 0;
-        self.read_with_processor::<()>(seek, skip_corrupt_meta, |ts, payload| {
+        self.read_with_processor::<()>(seek, corruption_callback, |ts, payload| {
             let item = decoder.decode_payload(payload);
             data.push(item);
             timestamps.push(ts);
@@ -83,10 +86,19 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
             last = ts;
             Ok(())
         })
-        .map_err(Error::unwrap_io)
+        .map_err(|e| match e {
+            Error::Io(error) => ReadError::Io(error),
+            Error::Processor(_) => {
+                panic!("impossible, this processor never returns an error")
+            }
+            Error::CorruptMetaSection => ReadError::CorruptMetaSection,
+        })
     }
 
-    #[instrument(level = "debug", skip(self, decoder, timestamps, data))]
+    #[instrument(
+        level = "debug",
+        skip(self, decoder, timestamps, data, corruption_callback)
+    )]
     pub(crate) fn read_first_n<D: Decoder>(
         &mut self,
         n: usize,
@@ -94,14 +106,14 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<Timestamp>,
         data: &mut Vec<D::Item>,
         seek: Pos,
-        skip_corrupt_meta: bool,
-    ) -> Result<(), std::io::Error> {
+        corruption_callback: &Option<CorruptionCallback>,
+    ) -> Result<(), ReadError> {
         #[derive(Debug)]
         struct ReachedN;
 
         let mut n_read = 0;
         let mut prev_ts = 0;
-        let res = self.read_with_processor(seek, skip_corrupt_meta, |ts, payload| {
+        let res = self.read_with_processor(seek, corruption_callback, |ts, payload| {
             prev_ts = ts;
             let item = decoder.decode_payload(payload);
             data.push(item);
@@ -117,11 +129,15 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
 
         match res {
             Ok(()) | Err(Error::Processor(ReachedN)) => Ok(()),
-            Err(Error::Io(e)) => Err(e),
+            Err(Error::CorruptMetaSection) => Err(ReadError::CorruptMetaSection),
+            Err(Error::Io(e)) => Err(ReadError::Io(e)),
         }
     }
 
-    #[instrument(level = "debug", skip(self, resampler, timestamps, data))]
+    #[instrument(
+        level = "debug",
+        skip(self, resampler, timestamps, data, corruption_callback)
+    )]
     pub(crate) fn read_resampling<R: crate::Resampler>(
         &mut self,
         resampler: &mut R,
@@ -129,14 +145,20 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         timestamps: &mut Vec<u64>,
         data: &mut Vec<<R as Decoder>::Item>,
         seek: Pos,
-        skip_corrupt_meta: bool,
-    ) -> Result<(), std::io::Error> {
+        corruption_callback: &Option<CorruptionCallback>,
+    ) -> Result<(), ReadError> {
         let mut sampler = Sampler::new(resampler, bucket_size, timestamps, data);
-        self.read_with_processor::<()>(seek, skip_corrupt_meta, |ts, payload| {
+        self.read_with_processor::<()>(seek, corruption_callback, |ts, payload| {
             sampler.process(ts, payload);
             Ok(())
         })
-        .map_err(Error::unwrap_io)
+        .map_err(|e| match e {
+            Error::Io(error) => ReadError::Io(error),
+            Error::Processor(_) => {
+                panic!("impossible, this processor never returns an error")
+            }
+            Error::CorruptMetaSection => ReadError::CorruptMetaSection,
+        })
     }
 }
 

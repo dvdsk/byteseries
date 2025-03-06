@@ -12,7 +12,7 @@ use super::data::index::{MetaPos, PayloadSize};
 use super::data::{self, Data};
 use super::DownSampled;
 use crate::seek::RoughPos;
-use crate::{file, Pos, ResampleState, Resampler, Timestamp};
+use crate::{file, CorruptionCallback, Pos, ResampleState, Resampler, Timestamp};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -29,7 +29,11 @@ impl Config {
     }
     fn header(&self, name: &OsStr) -> String {
         let name = name.to_string_lossy();
-        format!("This is a cache of averages from {name}. It contains no new data and can sefly be deleted. This config was used to sample the data: {self:?}")
+        format!(
+            "This is a cache of averages from {name}. It contains no \
+            new data and can sefly be deleted. This config was used to \
+            sample the data: {self:?}"
+        )
     }
 }
 
@@ -63,6 +67,12 @@ pub enum CreateError {
     ReadSource(std::io::Error),
     #[error("Could not write out downsampled pre existing data: {0}")]
     WriteOut(#[source] data::PushError),
+    #[error(
+        "File must be corrupt, second line MUST also be meta. \
+        You can try to skip data until the next uncorrupted meta \
+        timestamp to do so enable `skipping_over_corrupted_data`"
+    )]
+    CorruptMetaSection,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -124,13 +134,14 @@ where
         })
     }
 
-    #[instrument(level = "debug", skip(resampler))]
+    #[instrument(level = "debug", skip(resampler, corruption_callback))]
     pub(crate) fn open(
         mut resampler: R,
         config: Config,
         source_path: &Path,
         source: &mut Data,
         payload_size: PayloadSize,
+        corruption_callback: &Option<CorruptionCallback>,
     ) -> Result<Self, OpenError> {
         let source_name = source_path.file_name().unwrap_or_default();
         let mut resampled_name = source_name.to_owned();
@@ -147,10 +158,17 @@ where
             .map_err(OpenError::Data)?;
         let (file, _) = file.split_off_header();
         let mut data =
-            Data::open_existing(path, file, payload_size).map_err(OpenError::Data)?;
+            Data::open_existing(path, file, payload_size, &corruption_callback)
+                .map_err(OpenError::Data)?;
 
-        repair::add_missing_data(source, &mut data, &config, &mut resampler)
-            .map_err(OpenError::Repair)?;
+        repair::add_missing_data(
+            source,
+            &mut data,
+            &config,
+            &mut resampler,
+            &corruption_callback,
+        )
+        .map_err(OpenError::Repair)?;
 
         Ok(Self {
             data,
@@ -163,13 +181,14 @@ where
         })
     }
 
-    #[instrument(level = "debug", skip(source))]
+    #[instrument(level = "debug", skip(source, corruption_callback))]
     pub(crate) fn create(
         resampler: R,
         config: Config,
         source_path: &Path,
         payload_size: PayloadSize,
         source: &mut Data,
+        corruption_callback: &Option<CorruptionCallback>,
     ) -> Result<Self, CreateError> {
         let mut empty = Self::new(resampler, config, source_path, payload_size)
             .map_err(CreateError::CreateData)?;
@@ -183,13 +202,15 @@ where
             first_full_ts,
         };
         let mut prev_ts = 0;
-        let res = source
-            .file_handle
-            .read_with_processor(seek, true, |ts, line| {
+        let res = source.file_handle.read_with_processor(
+            seek,
+            corruption_callback,
+            |ts, line| {
                 assert!(ts > prev_ts || prev_ts == 0, "ts: {ts}, prev_ts: {prev_ts}");
                 prev_ts = ts;
                 empty.process(ts, line)
-            });
+            },
+        );
 
         match res {
             Ok(()) => Ok(empty),
@@ -199,16 +220,20 @@ where
             Err(data::inline_meta::with_processor::Error::Processor(e)) => {
                 Err(CreateError::WriteOut(e))
             }
+            Err(data::inline_meta::with_processor::Error::CorruptMetaSection) => {
+                Err(CreateError::CorruptMetaSection)
+            }
         }
     }
 
-    #[instrument(level = "debug", skip(source))]
+    #[instrument(level = "debug", skip(source, corruption_callback))]
     pub(crate) fn open_or_create(
         resampler: R,
         config: Config,
         source_path: &Path,
         payload_size: PayloadSize,
         source: &mut Data,
+        corruption_callback: &Option<CorruptionCallback>,
     ) -> Result<Self, OpenOrCreateError> {
         match Self::open(
             resampler.clone(),
@@ -216,6 +241,7 @@ where
             source_path,
             source,
             payload_size,
+            corruption_callback,
         ) {
             Ok(downsampled) => return Ok(downsampled),
             Err(OpenError::Data(data::OpenError::File {
@@ -227,8 +253,15 @@ where
             Err(e) => return Err(OpenOrCreateError::Open(e)),
         }
 
-        Self::create(resampler, config, source_path, payload_size, source)
-            .map_err(OpenOrCreateError::Create)
+        Self::create(
+            resampler,
+            config,
+            source_path,
+            payload_size,
+            source,
+            corruption_callback,
+        )
+        .map_err(OpenOrCreateError::Create)
     }
 }
 
