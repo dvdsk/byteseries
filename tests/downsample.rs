@@ -72,8 +72,15 @@ fn ideal_downsampled_cache() {
 
     let mut timestamps = Vec::new();
     let mut data = Vec::new();
-    bs.read_n(10, T1..T2, &mut FloatResampler, &mut timestamps, &mut data, false)
-        .unwrap();
+    bs.read_n(
+        10,
+        T1..T2,
+        &mut FloatResampler,
+        &mut timestamps,
+        &mut data,
+        false,
+    )
+    .unwrap();
     assert_slope_ok(&timestamps, &data)
 }
 

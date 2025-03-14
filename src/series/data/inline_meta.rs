@@ -112,9 +112,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         struct ReachedN;
 
         let mut n_read = 0;
-        let mut prev_ts = 0;
         let res = self.read_with_processor(seek, corruption_callback, |ts, payload| {
-            prev_ts = ts;
             let item = decoder.decode_payload(payload);
             data.push(item);
             timestamps.push(ts);

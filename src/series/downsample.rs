@@ -157,9 +157,8 @@ where
             })
             .map_err(OpenError::Data)?;
         let (file, _) = file.split_off_header();
-        let mut data =
-            Data::open_existing(path, file, payload_size, corruption_callback)
-                .map_err(OpenError::Data)?;
+        let mut data = Data::open_existing(path, file, payload_size, corruption_callback)
+            .map_err(OpenError::Data)?;
 
         repair::add_missing_data(
             source,

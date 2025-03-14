@@ -301,7 +301,13 @@ impl ByteSeries {
         };
 
         self.data
-            .read_all(seek, &mut self.corruption_callback, decoder, timestamps, data)
+            .read_all(
+                seek,
+                &mut self.corruption_callback,
+                decoder,
+                timestamps,
+                data,
+            )
             .map_err(Error::Reading)
     }
 

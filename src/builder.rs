@@ -206,13 +206,13 @@ where
     /// is aborted and a
     /// [`ReadError::CorruptMetaSection`](crate::series::data::ReadError) or
     /// [`CreateError::CorruptMetaSection`](crate::series::downsample::CreateError)
-    /// is returned encountered. 
+    /// is returned encountered.
     ///
     /// - If the callback returns true we try and recover by skipping lines
     /// until we reach a not corrupted metadata section.
     ///
     /// - If instead it returns false then reading is aborted and one of the
-    /// errors above is returned. 
+    /// errors above is returned.
     pub fn with_callback_on_recoverable_corruption(
         mut self,
         callback: CorruptionCallback,
