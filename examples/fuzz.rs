@@ -22,9 +22,15 @@ impl Decoder for CopyDecoder {
 #[derive(Debug, Clone)]
 enum Action {
     // 50% chance
-    WriteShortInterval { seed: u64, num_lines: usize },
+    WriteShortInterval {
+        seed: u64,
+        num_lines: usize,
+        minimum: u64,
+    },
     // 1% chance
-    WriteLongInterval { interval: u32 },
+    WriteLongInterval {
+        interval: u32,
+    },
     // 40% chance
     ReOpen,
     // 9% chance
@@ -46,11 +52,12 @@ impl ActionGen {
             rng: Xoshiro128StarStar::seed_from_u64(0),
         }
     }
-    fn next(&mut self) -> Action {
+    fn next(&mut self, last_generated: u64) -> Action {
         match self.rng.random_range(0..100) {
             0..50 => Action::WriteShortInterval {
                 seed: self.rng.random(),
                 num_lines: self.rng.random_range(1..10_000),
+                minimum: last_generated,
             },
             50..51 => Action::WriteLongInterval {
                 interval: self.rng.random_range(1_000..100_000),
@@ -67,7 +74,7 @@ fn main() {
 
     let mut action_gen = ActionGen::new();
     let mut recent_actions = VecDeque::new();
-    let mut ts_gen = TsGen::new();
+    let mut ts_gen = TsGen::from_seed_and_minimum(0, 0);
     let mut checker = Checker::new();
     let mut progress = Progress::default();
 
@@ -83,17 +90,19 @@ fn main() {
     loop {
         progress.print_report_once_in_a_while();
 
-        let action = action_gen.next();
+        let action = action_gen.next(ts_gen.minimum);
         recent_actions.push_front(action.clone());
         recent_actions.truncate(10);
 
         match action {
-            Action::WriteShortInterval { seed, num_lines } => {
+            Action::WriteShortInterval {
+                seed, num_lines, ..
+            } => {
                 ts_gen.reset_rng(seed);
                 add_lines(&mut ts_gen, &mut series, num_lines, &recent_actions);
             }
             Action::WriteLongInterval { interval } => {
-                add_line(&mut ts_gen, &mut series, interval)
+                add_line(&mut ts_gen, &mut series, interval);
             }
             Action::ReOpen => series = re_open(series, &test_path),
             Action::ReOpenTruncated => series = re_open_trunctated(series, &test_path),
@@ -101,11 +110,12 @@ fn main() {
         progress.update(&action);
         checker.since_last_check.push(action);
 
-        if let Err(CheckError { expected, read }) =
+        if let Err(CheckError { expected, read, ts_before }) =
             checker.check_once_in_a_while(&mut series)
         {
             eprintln!("");
             eprintln!("Expected {expected} instead read {read:?}");
+            eprintln!("Timestamps just before: {ts_before:?}");
             eprintln!("Recent actions:");
             print_recent_actions(&mut recent_actions, false);
             panic!();
@@ -114,18 +124,27 @@ fn main() {
 }
 
 fn print_recent_actions(recent_actions: &VecDeque<Action>, failed_mid_action: bool) {
-    for (i, action) in recent_actions.iter().rev().enumerate() {
+    for (i, action) in recent_actions.iter().enumerate() {
         if i == 0 && failed_mid_action {
-            eprint!("\t{} (current)", i + 1);
+            eprint!("\t{} (current) ", i + 1);
         } else if i == 0 {
-            eprint!("\t{} (last)", i + 1);
+            eprint!("\t{} (last) ", i + 1);
         } else {
             eprint!("\t{} ", i + 1);
         }
 
         match action {
-            Action::WriteShortInterval { seed, num_lines } => {
-                eprint!("wrote {num_lines} lines, ts gen seed: {seed}")
+            Action::WriteShortInterval {
+                seed,
+                num_lines,
+                minimum,
+            } => {
+                let mut gen = TsGen::from_seed_and_minimum(*seed, *minimum);
+                eprint!(
+                    "wrote {num_lines} lines, gen seed: {seed}, ts range: {}..{}",
+                    gen.next(),
+                    gen.nth(num_lines - 2).unwrap(),
+                )
             }
             Action::WriteLongInterval { interval } => {
                 eprint!("wrote 1 line at {interval} from last")
@@ -182,12 +201,13 @@ struct Checker {
 struct CheckError {
     expected: u64,
     read: Option<u64>,
+    ts_before: Vec<u64>,
 }
 
 impl Checker {
     fn new() -> Self {
         Self {
-            ts_gen: TsGen::new(),
+            ts_gen: TsGen::from_seed_and_minimum(0, 0),
             timestamps: Vec::new(),
             data: Vec::new(),
             counter: 0,
@@ -200,6 +220,7 @@ impl Checker {
         &mut self,
         series: &mut ByteSeries,
     ) -> Result<(), CheckError> {
+        self.counter += 1;
         if self.counter % 10 == 0 {
             self.check(series)
         } else {
@@ -213,7 +234,9 @@ impl Checker {
         for window in actions.windows(2) {
             let [action, next_action] = [&window[0], &window[1]];
             match action {
-                A::WriteShortInterval { seed, num_lines } => {
+                A::WriteShortInterval {
+                    seed, num_lines, ..
+                } => {
                     self.check_short_interval(*seed, *num_lines, series, next_action)?;
                 }
                 A::WriteLongInterval { interval } => {
@@ -250,6 +273,7 @@ impl Checker {
             Err(CheckError {
                 expected: self.ts_gen.next(),
                 read: self.timestamps.first().copied(),
+                ts_before: Vec::new(),
             })
         } else {
             Ok(())
@@ -265,12 +289,11 @@ impl Checker {
     ) -> Result<(), CheckError> {
         self.ts_gen.reset_rng(seed);
         let start = self.ts_gen.peek();
-        let end = self.ts_gen.clone().nth(num_lines).unwrap();
         series
             .read_first_n(
                 num_lines as usize,
                 &mut CopyDecoder,
-                start..end,
+                start..,
                 &mut self.timestamps,
                 &mut self.data,
             )
@@ -279,27 +302,33 @@ impl Checker {
         self.last_timestamp_read = Some(*self.timestamps.last().unwrap());
         let mut timestamps = self.timestamps.iter();
 
-        for _ in 0..(num_lines - 1) {
+        for i in 0..(num_lines - 1) {
             let read = timestamps.next().copied();
             if read != Some(self.ts_gen.next()) {
                 return Err(CheckError {
                     expected: self.ts_gen.next(),
                     read,
+                    ts_before: self.timestamps[i.saturating_sub(10)..i].to_vec(),
                 });
             }
         }
 
         // check last element that should have been inserted
         match timestamps.next().copied() {
-            Some(ts) if ts == self.ts_gen.peek() => Ok(()),
+            Some(ts) if ts == self.ts_gen.peek() => {
+                self.ts_gen.next();
+                Ok(())
+            }
             Some(read) => Err(CheckError {
-                expected: self.ts_gen.next(),
+                expected: self.ts_gen.peek(),
                 read: Some(read),
+                ts_before: self.timestamps[num_lines.saturating_sub(10)..].to_vec(),
             }),
             None if next_action.is_truncate() => Ok(()),
             None => Err(CheckError {
                 expected: self.ts_gen.peek(),
                 read: None,
+                ts_before: self.timestamps[num_lines.saturating_sub(10)..].to_vec(),
             }),
         }
     }
@@ -337,9 +366,14 @@ fn re_open(series: ByteSeries, test_path: &Path) -> ByteSeries {
     series
 }
 
-fn add_lines(ts_gen: &mut TsGen, series: &mut ByteSeries, num_lines: usize, recent_actions: &VecDeque<Action>) {
+fn add_lines(
+    ts_gen: &mut TsGen,
+    series: &mut ByteSeries,
+    num_lines: usize,
+    recent_actions: &VecDeque<Action>,
+) {
     for _ in 0..num_lines {
-        let ts_before = ts_gen.last_generated;
+        let ts_before = ts_gen.minimum;
         let ts = ts_gen.next();
         if let Err(e) = series.push_line(ts, &[]) {
             eprintln!("");
@@ -353,15 +387,15 @@ fn add_lines(ts_gen: &mut TsGen, series: &mut ByteSeries, num_lines: usize, rece
 }
 
 fn add_line(ts_gen: &mut TsGen, series: &mut ByteSeries, interval: u32) {
-    let ts = ts_gen.last_generated + interval as u64;
-    ts_gen.last_generated = ts;
+    let ts = ts_gen.minimum + interval as u64;
+    ts_gen.minimum = ts;
     series.push_line(ts, &[]).unwrap()
 }
 
 #[derive(Debug, Clone)]
 struct TsGen {
     rng: Xoshiro128StarStar,
-    last_generated: u64,
+    minimum: u64,
 }
 
 impl Iterator for TsGen {
@@ -373,22 +407,22 @@ impl Iterator for TsGen {
 }
 
 impl TsGen {
-    fn new() -> Self {
+    fn from_seed_and_minimum(seed: u64, minimum: u64) -> Self {
         Self {
-            rng: Xoshiro128StarStar::seed_from_u64(0),
-            last_generated: 0,
+            rng: Xoshiro128StarStar::seed_from_u64(seed),
+            minimum,
         }
     }
 
     fn next(&mut self) -> u64 {
-        let start = self.last_generated + 1;
+        let start = self.minimum + 1;
 
         let distr = rand_distr::Normal::new(0.0, 0.5).unwrap();
         let random: f32 = distr.sample(&mut self.rng);
         let interval = (random.abs() * 10.0) as u64;
         let next = start + interval;
 
-        self.last_generated = next;
+        self.minimum = next;
         next
     }
 
