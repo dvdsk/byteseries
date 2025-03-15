@@ -38,9 +38,8 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
     ) -> Result<(), Error<E>> {
         let mut to_read = seek.end - seek.start.raw_offset();
         let chunk_size = 16384usize.next_multiple_of(self.payload_size.line_size());
-        // meta section decoding can read at most 3 lines, reading a 4th will always
-        // conclude with a successful decode
-        let max_needed_overlap = 3 * self.payload_size.line_size();
+        // meta section decoding can need at most 5 lines of overlap.
+        let max_needed_overlap = (3 + 2) * self.payload_size.line_size();
         let mut buf = vec![0; chunk_size + max_needed_overlap];
 
         self.file_handle
@@ -49,12 +48,17 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
         let mut skipping_over_corrupted_data = false;
         let mut needed_overlap = 0;
         let mut meta_ts = seek.first_full_ts;
+        let mut read_size = 0;
+
         while to_read > 0 {
-            let read_size =
-                chunk_size.min(usize::try_from(to_read).unwrap_or(usize::MAX));
+            // move needed overlap to start of next read
+            let overlap = (read_size - needed_overlap)..read_size;
+            buf.copy_within(overlap, 0);
+
+            read_size = chunk_size.min(usize::try_from(to_read).unwrap_or(usize::MAX));
+            to_read -= read_size as u64;
             self.file_handle
                 .read_exact(&mut buf[needed_overlap..needed_overlap + read_size])?;
-            to_read -= read_size as u64;
             let mut lines = buf[..needed_overlap + read_size]
                 .chunks_exact(self.payload_size.line_size());
 
@@ -95,7 +99,7 @@ impl<F: fmt::Debug + Read + Seek + SetLen> FileWithInlineMeta<F> {
                         meta_ts = u64::from_le_bytes(meta);
                     }
                     meta::Result::OutOfLines { consumed_lines } => {
-                        break consumed_lines * self.payload_size.line_size();
+                        break (2 + consumed_lines) * self.payload_size.line_size();
                     }
                 };
             };

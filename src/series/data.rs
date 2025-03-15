@@ -246,9 +246,7 @@ impl Data {
                 }
             });
 
-        let small_ts = if let Some(small_ts) = small_ts {
-            small_ts
-        } else {
+        let small_ts = small_ts.map(Ok).unwrap_or_else(|| {
             tracing::debug!(
                 "inserting full timestamp and updating index\
                 , timestamp: {ts}"
@@ -260,8 +258,8 @@ impl Data {
             let written = meta::write(&mut self.file_handle, meta, self.payload_size)
                 .map_err(PushError::Meta)?;
             self.data_len += written;
-            0 // value does not matter, full timestamp just ahead is used
-        };
+            Ok(0) // value does not matter, full timestamp just ahead is used
+        })?;
 
         self.file_handle
             .write_all(&small_ts.to_le_bytes())
