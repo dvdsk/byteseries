@@ -1,29 +1,9 @@
-use std::collections::VecDeque;
-
 use byteseries::ByteSeries;
-use byteseries_test_support::{print_recent_actions, Action, CheckError, Checker};
+use byteseries_test_support::{print_recent_actions, Action, CheckError, Checker, RecentActions};
 use temp_dir::TempDir;
 
-#[test]
-fn one() {
-    let mut recent_actions = VecDeque::new();
-
-    let actions = [
-        // last to apply first
-        // Action::ReOpenTruncated,
-        Action::WriteShortInterval {
-            seed: 14520734064206991880,
-            num_lines: 9042,
-            minimum: 28754,
-        },
-        Action::ReOpen,
-        Action::WriteShortInterval {
-            seed: 14004595328206938198,
-            num_lines: 6412,
-            minimum: 0,
-        },
-    ];
-
+fn test_fuzz(actions: &[Action]) {
+    let mut recent_actions = RecentActions::with_max_length(10);
     let test_dir = TempDir::new().unwrap();
     let test_path = test_dir.child("fuzz_one");
 
@@ -48,7 +28,7 @@ fn one() {
     let mut checker = Checker::init_from(*first_seed, *first_minimum);
 
     for action in actions.iter().rev() {
-        recent_actions.push_front(action.clone());
+        recent_actions.push(action.clone());
 
         series = action.perform(series, &recent_actions, &test_path, &mut 0);
         checker.since_last_check.push(action.clone());
@@ -67,4 +47,68 @@ fn one() {
             panic!();
         }
     }
+}
+
+#[test]
+fn one() {
+    let actions = [
+        // last to apply first
+        // Action::ReOpenTruncated,
+        Action::WriteShortInterval {
+            seed: 14520734064206991880,
+            num_lines: 9042,
+            minimum: 28754,
+        },
+        Action::ReOpen,
+        Action::WriteShortInterval {
+            seed: 14004595328206938198,
+            num_lines: 6412,
+            minimum: 0,
+        },
+    ];
+    test_fuzz(&actions);
+}
+
+#[test]
+fn two() {
+    let actions = [
+        // last to apply first
+        Action::ReOpen,
+        Action::WriteShortInterval {
+            seed: 7275941297628290141,
+            num_lines: 5017,
+            minimum: 106013,
+        },
+        Action::ReOpenTruncated,
+        Action::ReOpen,
+        Action::ReOpen,
+        Action::ReOpen,
+        Action::ReOpen,
+        Action::WriteShortInterval {
+            seed: 6377996370679194661,
+            num_lines: 8190,
+            minimum: 69419,
+        },
+        Action::ReOpenTruncated,
+        Action::ReOpen,
+        Action::ReOpenTruncated,
+        Action::WriteShortInterval {
+            seed: 14520734064206991880,
+            num_lines: 9042,
+            minimum: 28754,
+        },
+        Action::ReOpen,
+        Action::ReOpen,
+        Action::ReOpen,
+        Action::WriteShortInterval {
+            seed: 14004595328206938198,
+            num_lines: 6412,
+            minimum: 0,
+        },
+        Action::ReOpen,
+        Action::ReOpen,
+        Action::ReOpen,
+        Action::ReOpen,
+    ];
+    test_fuzz(&actions);
 }

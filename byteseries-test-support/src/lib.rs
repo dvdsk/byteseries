@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{vec_deque, VecDeque};
 use std::mem;
 use std::path::Path;
 
@@ -15,6 +15,28 @@ impl Decoder for CopyDecoder {
 
     fn decode_payload(&mut self, payload: &[u8]) -> Self::Item {
         payload.to_vec()
+    }
+}
+
+pub struct RecentActions {
+    ring: VecDeque<Action>,
+    max_len: usize,
+}
+
+impl RecentActions {
+    pub fn with_max_length(max_len: usize) -> Self {
+        Self {
+            ring: VecDeque::new(),
+            max_len,
+        }
+    }
+    pub fn iter(&self) -> vec_deque::Iter<Action> {
+        self.ring.iter()
+    }
+
+    pub fn push(&mut self, item: Action) {
+        self.ring.push_front(item);
+        self.ring.truncate(self.max_len);
     }
 }
 
@@ -45,7 +67,7 @@ impl Action {
     pub fn perform(
         &self,
         mut series: ByteSeries,
-        recent_actions: &VecDeque<Action>,
+        recent_actions: &RecentActions,
         test_path: &Path,
         curr_minimum: &mut u64,
     ) -> ByteSeries {
@@ -71,6 +93,7 @@ impl Action {
 
 pub struct Checker {
     ts_gen: TsGen,
+    ts_before: VecDeque<u64>,
     pub since_last_check: Vec<Action>,
     last_timestamp_read: Option<u64>,
     timestamps: Vec<u64>,
@@ -93,6 +116,7 @@ impl Checker {
             counter: 0,
             since_last_check: Vec::new(),
             last_timestamp_read: None,
+            ts_before: VecDeque::new(),
         }
     }
 
@@ -162,13 +186,16 @@ impl Checker {
             Err(e) => panic!("{e}"),
         };
 
-        if self.timestamps[0] != start + interval as u64 && !next_action.is_truncate() {
+        let expected_ts = start + interval as u64;
+        if self.timestamps[0] != expected_ts && !next_action.is_truncate() {
             Err(CheckError {
                 expected: self.ts_gen.next(),
                 read: self.timestamps.first().copied(),
-                ts_before: Vec::new(),
+                ts_before: self.ts_before.iter().copied().collect(),
             })
         } else {
+            self.ts_before.push_front(expected_ts);
+            self.ts_before.truncate(10);
             Ok(())
         }
     }
@@ -198,33 +225,37 @@ impl Checker {
         self.last_timestamp_read = Some(*self.timestamps.last().unwrap());
         let mut timestamps = self.timestamps.iter();
 
-        for i in 0..(num_lines - 1) {
+        for _ in 0..(num_lines - 1) {
             let read = timestamps.next().copied();
             if read != Some(self.ts_gen.next()) {
                 return Err(CheckError {
                     expected: self.ts_gen.next(),
                     read,
-                    ts_before: self.timestamps[i.saturating_sub(10)..i].to_vec(),
+                    ts_before: self.ts_before.iter().copied().collect(),
                 });
+            } else {
+                self.ts_before.push_front(read.unwrap());
+                self.ts_before.truncate(10);
             }
         }
 
         // check last element that should have been inserted
         match timestamps.next().copied() {
             Some(ts) if ts == self.ts_gen.peek() => {
-                self.ts_gen.next();
+                self.ts_before.push_front(self.ts_gen.next());
+                self.ts_before.truncate(10);
                 Ok(())
             }
             Some(read) => Err(CheckError {
                 expected: self.ts_gen.peek(),
                 read: Some(read),
-                ts_before: self.timestamps[num_lines.saturating_sub(10)..].to_vec(),
+                ts_before: self.ts_before.iter().copied().collect(),
             }),
             None if next_action.is_truncate() => Ok(()),
             None => Err(CheckError {
                 expected: self.ts_gen.peek(),
                 read: None,
-                ts_before: self.timestamps[num_lines.saturating_sub(10)..].to_vec(),
+                ts_before: self.ts_before.iter().copied().collect(),
             }),
         }
     }
@@ -266,7 +297,7 @@ fn add_lines(
     mut ts_gen: TsGen,
     series: &mut ByteSeries,
     num_lines: usize,
-    recent_actions: &VecDeque<Action>,
+    recent_actions: &RecentActions,
 ) -> u64 {
     for _ in 0..num_lines {
         let ts_before = ts_gen.minimum;
@@ -332,7 +363,7 @@ impl TsGen {
     }
 }
 
-pub fn print_recent_actions(recent_actions: &VecDeque<Action>, failed_mid_action: bool) {
+pub fn print_recent_actions(recent_actions: &RecentActions, failed_mid_action: bool) {
     for (i, action) in recent_actions.iter().enumerate() {
         if i == 0 && failed_mid_action {
             eprint!("\t{} (current) ", i + 1);

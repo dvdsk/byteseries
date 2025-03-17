@@ -1,11 +1,9 @@
-use std::collections::VecDeque;
-
 use byteseries::ByteSeries;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro128StarStar;
 use temp_dir::TempDir;
 
-use byteseries_test_support::{print_recent_actions, Action, CheckError, Checker};
+use byteseries_test_support::{print_recent_actions, Action, CheckError, Checker, RecentActions};
 
 struct ActionGen {
     rng: Xoshiro128StarStar,
@@ -40,7 +38,7 @@ fn main() {
 
     let mut curr_minimum = 0;
     let mut action_gen = ActionGen::new();
-    let mut recent_actions = VecDeque::new();
+    let mut recent_actions = RecentActions::with_max_length(30);
     let mut checker = Checker::init_from(0, curr_minimum);
     let mut progress = Progress::default();
 
@@ -57,8 +55,7 @@ fn main() {
         progress.print_report_once_in_a_while();
 
         let action = action_gen.next(curr_minimum);
-        recent_actions.push_front(action.clone());
-        recent_actions.truncate(10);
+        recent_actions.push(action.clone());
 
         series = action.perform(series, &recent_actions, &test_path, &mut curr_minimum);
         progress.update(&action);
